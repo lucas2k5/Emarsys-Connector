@@ -39,11 +39,11 @@ app.get('/health', (req, res) => res.status(200).json({ ok: true }))
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
+  res.status(500).json({ error: 'Openflow - Emarsys - internal_error', detail: err.message });
 });
 
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({ error: 'Openflow - Emarsys - Route not found' });
 });
 
 module.exports = app;

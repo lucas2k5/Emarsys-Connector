@@ -337,17 +337,119 @@ router.get('/:id', async (req, res) => {
 
 /**
  * @route POST /api/vtex/products/sync
- * @desc Sincroniza produtos da VTEX
+ * @desc Sincroniza produtos da VTEX em background
  * @access Public
  */
 router.post('/sync', async (req, res) => {
   try {
-    console.log(`🚀 Iniciando sincronização de produtos`);
+    console.log(`🚀 Iniciando sincronização de produtos em background`);
     
-    const result = await vtexProductService.syncProducts();
+    const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.body || {};
     
-    res.json(result);
+    // Gerar ID único para o job
+    const jobId = `sync-products-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Usar o sistema de background jobs existente
+    const backgroundJobsModule = require('./backgroundJobs');
+    
+    // Simular uma requisição para o endpoint de background
+    const mockReq = {
+      body: { maxProducts, forceRefresh, batchSize }
+    };
+    
+    const mockRes = {
+      json: (data) => {
+        // Retornar resposta imediata
+        res.json({
+          success: true,
+          jobId: data.jobId,
+          message: 'Sincronização iniciada em background - o processo continuará mesmo se você fechar esta janela',
+          checkStatus: `/api/background/status/${data.jobId}`,
+          backgroundEndpoint: `/api/background/sync-products`,
+          config: { maxProducts, forceRefresh, batchSize },
+          instructions: {
+            pt: 'Use o endpoint checkStatus para acompanhar o progresso',
+            en: 'Use the checkStatus endpoint to track progress'
+          },
+          timestamp: new Date().toISOString()
+        });
+      },
+      status: (code) => ({
+        json: (data) => res.status(code).json(data)
+      })
+    };
+    
+    // Executar a lógica de background job diretamente
+    const backgroundRouter = require('./backgroundJobs');
+    
+    // Armazenamento temporário para status dos jobs (copiado do backgroundJobs.js)
+    if (!global.jobStatus) {
+      global.jobStatus = new Map();
+    }
+    
+    const jobStatus = global.jobStatus;
+    
+    // Inicializar status do job
+    jobStatus.set(jobId, {
+      id: jobId,
+      type: 'sync-products',
+      status: 'starting',
+      progress: 0,
+      startTime: new Date().toISOString(),
+      config: { maxProducts, forceRefresh, batchSize }
+    });
+    
+    // Executar sincronização diretamente em background
+    setImmediate(async () => {
+      try {
+        // Atualizar status para running
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'running',
+          progress: 5
+        });
+        
+        const result = await vtexProductService.syncProducts({ maxProducts, forceRefresh, batchSize });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result
+        });
+        
+        console.log(`✅ [Background] Sincronização ${jobId} concluída com sucesso`);
+      } catch (error) {
+        console.error(`❌ [Background] Erro no sync de produtos ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
+      }
+    });
+    
+    // Retornar resposta imediata
+    res.json({
+      success: true,
+      jobId,
+      message: 'Sincronização iniciada em background - o processo continuará mesmo se você fechar esta janela',
+      checkStatus: `/api/background/status/${jobId}`,
+      backgroundEndpoint: `/api/background/sync-products`,
+      config: { maxProducts, forceRefresh, batchSize },
+      instructions: {
+        pt: 'Use o endpoint checkStatus para acompanhar o progresso',
+        en: 'Use the checkStatus endpoint to track progress'
+      },
+      timestamp: new Date().toISOString()
+    });
+    
   } catch (error) {
+    console.error(`❌ Erro ao iniciar sincronização em background:`, error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -358,15 +460,94 @@ router.post('/sync', async (req, res) => {
 
 /**
  * @route GET /api/vtex/products/sync
- * @desc Sincroniza produtos da VTEX (modo GET, sem body) — útil em ambientes serverless
+ * @desc Sincroniza produtos da VTEX em background (modo GET, sem body) — útil em ambientes serverless
  * @access Publica
  */
 router.get('/sync', async (req, res) => {
   try {
-    console.log(`🚀 Iniciando sincronização de produtos [GET]`);
-    const result = await vtexProductService.syncProducts();
-    res.json(result);
+    console.log(`🚀 Iniciando sincronização de produtos em background [GET]`);
+    
+    const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.query;
+    
+    // Gerar ID único para o job
+    const jobId = `sync-products-get-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Armazenamento temporário para status dos jobs
+    if (!global.jobStatus) {
+      global.jobStatus = new Map();
+    }
+    
+    const jobStatus = global.jobStatus;
+    
+    // Inicializar status do job
+    jobStatus.set(jobId, {
+      id: jobId,
+      type: 'sync-products-get',
+      status: 'starting',
+      progress: 0,
+      startTime: new Date().toISOString(),
+      config: { maxProducts: parseInt(maxProducts), forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) }
+    });
+    
+    // Executar sincronização diretamente em background
+    setImmediate(async () => {
+      try {
+        // Atualizar status para running
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'running',
+          progress: 5
+        });
+        
+        const result = await vtexProductService.syncProducts({ 
+          maxProducts: parseInt(maxProducts), 
+          forceRefresh: forceRefresh === 'true', 
+          batchSize: parseInt(batchSize) 
+        });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result
+        });
+        
+        console.log(`✅ [Background] Sincronização GET ${jobId} concluída com sucesso`);
+      } catch (error) {
+        console.error(`❌ [Background] Erro no sync GET de produtos ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
+      }
+    });
+    
+    // Retornar resposta imediata
+    res.json({
+      success: true,
+      jobId,
+      message: 'Sincronização iniciada em background [GET] - o processo continuará mesmo se você fechar esta janela',
+      checkStatus: `/api/background/status/${jobId}`,
+      backgroundEndpoint: `/api/background/sync-products`,
+      config: { 
+        maxProducts: parseInt(maxProducts), 
+        forceRefresh: forceRefresh === 'true', 
+        batchSize: parseInt(batchSize) 
+      },
+      instructions: {
+        pt: 'Use o endpoint checkStatus para acompanhar o progresso',
+        en: 'Use the checkStatus endpoint to track progress'
+      },
+      timestamp: new Date().toISOString()
+    });
+    
   } catch (error) {
+    console.error(`❌ Erro ao iniciar sincronização GET em background:`, error.message);
     res.status(500).json({
       success: false,
       error: error.message,
