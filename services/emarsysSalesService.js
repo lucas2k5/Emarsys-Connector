@@ -6,22 +6,15 @@ const path = require('path');
 
 class EmarsysSalesService {
   constructor() {
-    // URL específica do HAPI conforme documentação da Emarsys
     this.baseURL = process.env.EMARSYS_HAPI_URL;
-    
-    // Coleta o token no constructor
     this.bearerToken = process.env.EMARSYS_BEARER_TOKEN;
-    
-    // Logs para debug
+    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     console.log('🔧 [EmarsysSalesService] Constructor inicializado:');
     console.log('   🌐 BaseURL:', this.baseURL);
     console.log('   🔑 BearerToken configurado:', this.bearerToken ? 'Sim' : 'Não');
     console.log('   📁 ExportsDir:', this.exportsDir);
-    console.log('   🔑 SALES_DATA_TOKEN:', process.env.SALES_DATA_TOKEN ? 'Configurado' : 'NÃO CONFIGURADO');
-    console.log('   🔑 EMARSYS_SALES_TOKEN:', process.env.EMARSYS_SALES_TOKEN ? 'Configurado' : 'NÃO CONFIGURADO');
-    // Configuração de diretórios
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
-    this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
+    console.log('   🔑 EMARSYS_BEARER_TOKEN:', process.env.EMARSYS_BEARER_TOKEN ? 'Configurado' : 'NÃO CONFIGURADO');
   }
 
   getAuthToken() {
@@ -39,7 +32,6 @@ class EmarsysSalesService {
     try {
       const files = await fs.readdir(this.exportsDir);
       
-      // Filtra apenas arquivos CSV de orders (que contêm 'orders-data' no nome)
       const orderCsvFiles = files
         .filter(file => file.endsWith('.csv') && file.includes('orders-data'))
         .map(filename => {
@@ -47,7 +39,6 @@ class EmarsysSalesService {
           return { filename, filePath };
         })
         .sort((a, b) => {
-          // Ordena por timestamp no nome do arquivo (mais recente primeiro)
           const timestampA = a.filename.match(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}/);
           const timestampB = b.filename.match(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}/);
           
@@ -73,7 +64,7 @@ class EmarsysSalesService {
         ...latestFile,
         size: stats.size,
         modified: stats.mtime,
-        content: null // Será carregado quando necessário
+        content: null
       };
     } catch (error) {
       console.error('❌ Erro ao buscar último arquivo CSV:', error.message);

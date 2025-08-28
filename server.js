@@ -35,67 +35,7 @@ app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
 app.use('/api/cron-management', cronManagementRoutes);
 
-app.get('/health', async (req, res) => {
-  try {
-    const healthData = {
-      status: 'OK',
-      timestamp: getBrazilianTimestamp(),
-      server: {
-        port: PORT,
-        environment: process.env.NODE_ENV || 'development'
-      }
-    };
-   
-    if (process.env.EMARSYS_CLIENT_ID && process.env.EMARSYS_CLIENT_SECRET) {
-      try {
-        const tokenData = await generateOAuth2TokenFromEnv();
-        const settings = await getEmarsysSettings(tokenData.access_token);
-        
-        healthData.emarsys = {
-          status: 'connected',
-          token_type: tokenData.token_type,
-          expires_in: tokenData.expires_in,
-          settings: settings
-        };
-      } catch (emarsysError) {
-        healthData.emarsys = {
-          status: 'error',
-          error: emarsysError.message
-        };
-      }
-    } else {
-      healthData.emarsys = {
-        status: 'not_configured',
-        message: 'EMARSYS_CLIENT_ID e EMARSYS_CLIENT_SECRET não configurados'
-      };
-    }
-
-    healthData.vtex = {
-      cron: {
-        provider: 'Native Node.js Cron Jobs',
-        status: 'active',
-        schedules: {
-          'products-sync': '0 */2 * * * (a cada 2 horas)',
-          'orders-sync': '0 */2 * * * (a cada 2 horas)'
-        },
-        endpoints: {
-          'products-sync': '/api/vtex/products/sync',
-          'orders-sync': '/api/integration/orders-extract-all'
-        },
-        jobs: cronService.getStatus()
-      },
-      ordersUrl: process.env.VTEX_ORDERS_URL
-    };
-
-    res.json(healthData);
-  } catch (error) {
-    res.status(500).json({
-      status: 'ERROR',
-      timestamp: getBrazilianTimestamp(),
-      error: error.message
-    });
-  }
-});
+app.get('/health', (req, res) => res.status(200).json({ ok: true }))
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
