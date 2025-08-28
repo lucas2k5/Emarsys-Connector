@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { inngest } = require('../lib/inngest');
 
 // Armazenamento temporário para status dos jobs (em produção, usar Redis ou banco)
 const jobStatus = new Map();
@@ -32,14 +31,29 @@ router.post('/sync-products', async (req, res) => {
       config: { maxProducts, forceRefresh, batchSize }
     });
     
-    // Enviar evento para Inngest
-    await inngest.send({
-      name: "vtex.sync.start",
-      data: { 
-        maxProducts, 
-        forceRefresh, 
-        batchSize,
-        jobId 
+    // Executar sincronização diretamente em background
+    setImmediate(async () => {
+      try {
+        const vtexProductService = require('../services/vtexProductService');
+        const result = await vtexProductService.syncProducts({ maxProducts, forceRefresh, batchSize });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result
+        });
+      } catch (error) {
+        console.error(`❌ Erro no sync de produtos ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
       }
     });
     
@@ -88,14 +102,30 @@ router.post('/sync-orders', async (req, res) => {
       config: { maxOrders, dateFrom, dateTo }
     });
     
-    // Enviar evento para Inngest
-    await inngest.send({
-      name: "vtex.orders.sync",
-      data: { 
-        maxOrders, 
-        dateFrom, 
-        dateTo,
-        jobId 
+    // Executar sincronização de orders diretamente em background
+    setImmediate(async () => {
+      try {
+        const VtexOrdersService = require('../services/vtexOrdersService');
+        const vtexOrdersService = new VtexOrdersService();
+        const result = await vtexOrdersService.syncOrders({ maxOrders, dateFrom, dateTo });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result
+        });
+      } catch (error) {
+        console.error(`❌ Erro no sync de orders ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
       }
     });
     
@@ -144,13 +174,41 @@ router.post('/sync-complete', async (req, res) => {
       config: { maxProducts, maxOrders }
     });
     
-    // Enviar evento para Inngest
-    await inngest.send({
-      name: "vtex.sync.complete",
-      data: { 
-        maxProducts, 
-        maxOrders,
-        jobId 
+    // Executar sincronização completa diretamente em background
+    setImmediate(async () => {
+      try {
+        // Primeiro sincroniza produtos
+        const vtexProductService = require('../services/vtexProductService');
+        const productsResult = await vtexProductService.syncProducts({ maxProducts });
+        
+        // Aguarda um pouco antes de sincronizar orders
+        await new Promise(resolve => setTimeout(resolve, 30000)); // 30 segundos
+        
+        // Depois sincroniza orders
+        const VtexOrdersService = require('../services/vtexOrdersService');
+        const vtexOrdersService = new VtexOrdersService();
+        const ordersResult = await vtexOrdersService.syncOrders({ maxOrders });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result: {
+            products: productsResult,
+            orders: ordersResult
+          }
+        });
+      } catch (error) {
+        console.error(`❌ Erro no sync completo ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
       }
     });
     
@@ -363,7 +421,7 @@ router.get('/health', (req, res) => {
       runningJobs: Array.from(jobStatus.values()).filter(job => job.status === 'running').length,
       completedJobs: Array.from(jobStatus.values()).filter(job => job.status === 'completed').length,
       failedJobs: Array.from(jobStatus.values()).filter(job => job.status === 'failed').length,
-      inngestConnected: !!inngest
+      mode: 'native-background-jobs'
     };
     
     res.json({

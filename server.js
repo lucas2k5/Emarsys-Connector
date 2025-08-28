@@ -11,11 +11,16 @@ const emarsysCsvRoutes = require('./routes/emarsysCsv');
 const integrationRoutes = require('./routes/integration');
 const backgroundJobsRoutes = require('./routes/backgroundJobs');
 const cronJobsRoutes = require('./routes/cronJobs');
+const cronManagementRoutes = require('./routes/cronManagement');
 const { generateOAuth2TokenFromEnv, getEmarsysSettings } = require('./utils/emarsysAuth');
 const { getBrazilianTimestamp } = require('./utils/dateUtils');
+const CronService = require('./utils/cronService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Instância do serviço de cron
+const cronService = new CronService();
 
 // Middleware
 app.use(helmet());
@@ -33,6 +38,7 @@ app.use('/api/emarsys/csv', emarsysCsvRoutes);
 app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
+app.use('/api/cron-management', cronManagementRoutes);
 
 // Health check com configurações da Emarsys
 app.get('/health', async (req, res) => {
@@ -71,23 +77,20 @@ app.get('/health', async (req, res) => {
       };
     }
 
-    // Status dos cron jobs do Vercel
+    // Status dos cron jobs nativos
     healthData.vtex = {
       cron: {
-        provider: 'Vercel Cron Jobs',
+        provider: 'Native Node.js Cron Jobs',
         status: 'active',
         schedules: {
-          'sync-orders-batched': '0 */10 * * * (a cada 10 horas)',
-          'sync-orders': '0 */12 * * * (a cada 12 horas)',
-          'sync-products': '0 */14 * * * (a cada 14 horas)',
-          'products-csv': '15 * * * * (a cada hora, 15 minutos)'
+          'products-sync': '0 */8 * * * (a cada 8 horas)',
+          'orders-sync': '0 */5 * * * (a cada 5 horas)'
         },
         endpoints: {
-          'sync-orders-batched': '/api/cron/sync-orders-batched',
-          'sync-orders': '/api/cron/sync-orders',
-          'sync-products': '/api/vtex/products/sync',
-          'products-csv': '/api/cron/products-csv'
-        }
+          'products-sync': '/api/vtex/products/sync',
+          'orders-sync': '/api/integration/orders-extract-all'
+        },
+        jobs: cronService.getStatus()
       },
       ordersUrl: process.env.VTEX_ORDERS_URL || 'https://ems--piccadilly.myvtex.com/_v/orders/list'
     };
@@ -130,6 +133,25 @@ if (require.main === module) {
     console.log(`Background Jobs API: http://localhost:${PORT}/api/background`);
     console.log(`Cron Jobs API: http://localhost:${PORT}/api/cron`);
     
-    console.log('🚀 Usando Vercel Cron Jobs nativos para sincronização automática');
+    console.log('🚀 Iniciando cron jobs nativos para sincronização automática...');
+    
+    // Disponibiliza o cronService para as rotas
+    app.set('cronService', cronService);
+    
+    // Inicia os cron jobs após o servidor estar rodando
+    cronService.startAll();
   });
 }
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 Recebido SIGTERM, parando cron jobs...');
+  cronService.stopAll();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Recebido SIGINT, parando cron jobs...');
+  cronService.stopAll();
+  process.exit(0);
+});
