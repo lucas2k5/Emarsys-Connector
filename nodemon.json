@@ -1,0 +1,25 @@
+{
+  "watch": [
+    "server.js",
+    "routes/",
+    "services/",
+    "utils/"
+  ],
+  "ignore": [
+    "node_modules/",
+    "data/",
+    "exports/",
+    "logs/",
+    "*.log",
+    "*.csv",
+    "*.json.tmp",
+    "*-checkpoint.json",
+    "processing-checkpoint.json"
+  ],
+  "ext": "js,json",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": "2000",
+  "verbose": true
+}
