@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
-
-// Armazenamento temporário para status dos jobs (em produção, usar Redis ou banco)
-const jobStatus = new Map();
+// Usar armazenamento global para compatibilidade com outros endpoints
+if (!global.jobStatus) {
+  global.jobStatus = new Map();
+}
+const jobStatus = global.jobStatus;
 
 // Middleware para log de requisições
 router.use((req, res, next) => {
