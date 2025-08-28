@@ -17,30 +17,24 @@ const { getBrazilianTimestamp } = require('./utils/dateUtils');
 const CronService = require('./utils/cronService');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Instância do serviço de cron
+const PORT = process.env.PORT;
+const HOST = process.env.HOST;
 const cronService = new CronService();
 
-// Middleware
 app.use(helmet());
 app.use(cors());
-// Body parsers com limites seguros para serverless
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// Routes
 app.use('/api/emarsys', emarsysRoutes);
 app.use('/api/vtex/products', vtexProductRoutes);
 app.use('/api/emarsys/sales', emarsysSalesRoutes);
 app.use('/api/emarsys/csv', emarsysCsvRoutes);
-
 app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
 app.use('/api/cron-management', cronManagementRoutes);
 
-// Health check com configurações da Emarsys
 app.get('/health', async (req, res) => {
   try {
     const healthData = {
@@ -51,8 +45,7 @@ app.get('/health', async (req, res) => {
         environment: process.env.NODE_ENV || 'development'
       }
     };
-
-    // Tentar buscar configurações da Emarsys se as credenciais OAuth2 estiverem disponíveis
+   
     if (process.env.EMARSYS_CLIENT_ID && process.env.EMARSYS_CLIENT_SECRET) {
       try {
         const tokenData = await generateOAuth2TokenFromEnv();
@@ -77,14 +70,13 @@ app.get('/health', async (req, res) => {
       };
     }
 
-    // Status dos cron jobs nativos
     healthData.vtex = {
       cron: {
         provider: 'Native Node.js Cron Jobs',
         status: 'active',
         schedules: {
-          'products-sync': '0 */8 * * * (a cada 8 horas)',
-          'orders-sync': '0 */5 * * * (a cada 5 horas)'
+          'products-sync': '0 */2 * * * (a cada 2 horas)',
+          'orders-sync': '0 */2 * * * (a cada 2 horas)'
         },
         endpoints: {
           'products-sync': '/api/vtex/products/sync',
@@ -92,7 +84,7 @@ app.get('/health', async (req, res) => {
         },
         jobs: cronService.getStatus()
       },
-      ordersUrl: process.env.VTEX_ORDERS_URL || 'https://ems--piccadilly.myvtex.com/_v/orders/list'
+      ordersUrl: process.env.VTEX_ORDERS_URL
     };
 
     res.json(healthData);
@@ -105,24 +97,21 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Exporta app para uso serverless
 module.exports = app;
 
-// Executa listen apenas em ambiente local
 if (require.main === module) {
-  app.listen(PORT, () => {
+  app.listen(PORT, HOST, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`Up on ${HOST}:${PORT}`)
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Emarsys API: http://localhost:${PORT}/api/emarsys`);
     console.log(`VTEX API: http://localhost:${PORT}/api/vtex`);
@@ -134,16 +123,12 @@ if (require.main === module) {
     console.log(`Cron Jobs API: http://localhost:${PORT}/api/cron`);
     
     console.log('🚀 Iniciando cron jobs nativos para sincronização automática...');
-    
-    // Disponibiliza o cronService para as rotas
     app.set('cronService', cronService);
     
-    // Inicia os cron jobs após o servidor estar rodando
     cronService.startAll();
   });
 }
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('🛑 Recebido SIGTERM, parando cron jobs...');
   cronService.stopAll();

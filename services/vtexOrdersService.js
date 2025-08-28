@@ -7,7 +7,7 @@ require('dotenv').config();
 
 class VtexOrdersService {
   constructor() {
-    this.ordersUrl = process.env.VTEX_ORDERS_URL || 'https://ems--piccadilly.myvtex.com/_v/orders/list';
+    this.ordersUrl = process.env.VTEX_ORDERS_URL;
     
     const headers = {
       'Accept': 'application/json',
