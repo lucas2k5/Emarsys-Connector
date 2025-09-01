@@ -559,7 +559,7 @@ router.get('/orders-extract-all', async (req, res) => {
         try {
           console.log(`🔍 Buscando detalhes do pedido ${orderId} (${i + 1}/${ordersList.length})`);
           const orderDetail = await vtexOrdersService.getOrderById(orderId);
-          
+          console.log('orderDetail | 01/09 |', orderDetail);
           if (orderDetail) {
             detailedOrders.push(orderDetail);
             console.log(`✅ Pedido ${orderId} processado (${detailedOrders.length}/${ordersList.length})`);
