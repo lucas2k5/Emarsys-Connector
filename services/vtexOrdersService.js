@@ -892,6 +892,42 @@ class VtexOrdersService {
         totalOrders: orders.length,
         success: result.success
       });
+
+      // Após envio bem-sucedido, limpa a base de orders
+      if (result && result.success) {
+        try {
+          const baseUrlEnv = (process.env.BASE_URL || process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
+          if (!baseUrlEnv) {
+            console.warn('⚠️ BASE_URL/VTEX_BASE_URL não configurada; limpeza pós-envio não executada');
+          } else {
+            console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
+            const cleanupResponse = await axios({
+              method: 'DELETE',
+              url: `${baseUrlEnv}/_v/orders/all`,
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              data: {
+                confirm: 'DELETE_ALL_ORDERS'
+              },
+              timeout: 60000
+            });
+
+            if (cleanupResponse.status >= 200 && cleanupResponse.status < 300) {
+              console.log('✅ Base de orders limpa com sucesso');
+            } else {
+              console.warn(`⚠️ Limpeza de orders retornou status inesperado: ${cleanupResponse.status}`);
+            }
+          }
+        } catch (cleanupError) {
+          const status = cleanupError?.response?.status;
+          if (status === 504) {
+            console.log('✅ Operação de limpeza iniciada. 504 indica execução em segundo plano. Verifique os logs.');
+          } else {
+            console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
+          }
+        }
+      }
       
       return result;
     } catch (error) {
