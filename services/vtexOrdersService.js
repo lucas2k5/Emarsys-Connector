@@ -505,7 +505,7 @@ class VtexOrdersService {
     let skippedMarketplace = 0;
     
     for (const order of orders) {
-      const orderId = order.order || order.orderId || order.id || '';
+      const orderId = order.order;
       
       // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
       const orderIdPattern = /^\d{13}-01$/;
@@ -514,7 +514,7 @@ class VtexOrdersService {
         skippedMarketplace++;
         continue;
       }
-      
+      console.log('order | 01/09 |', order);
       // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
       const saleRecord = {
         order: orderId,
@@ -620,8 +620,46 @@ class VtexOrdersService {
       // Gera o conteúdo CSV
       const csvContent = this.generateEmarsysCsvContent(ordersToProcess);
 
+      // Verifica se o CSV tem conteúdo válido antes de salvar
+      const lines = csvContent.split('\n').filter(line => line.trim() !== '');
+      console.log(`📊 CSV final: ${lines.length} linhas (incluindo header)`);
+      
+      // Valida que todas as linhas tenham exatamente 10 colunas
+      const invalidLines = [];
+      lines.forEach((line, index) => {
+        const columns = line.split(',');
+        if (columns.length !== 10) {
+          invalidLines.push({
+            lineNumber: index + 1,
+            columns: columns.length,
+            content: line.substring(0, 100) + (line.length > 100 ? '...' : '')
+          });
+        }
+      });
+      
+      let cleanCsvContent;
+      
+      if (invalidLines.length > 0) {
+        console.error(`❌ ${invalidLines.length} linhas com número incorreto de colunas:`);
+        invalidLines.slice(0, 5).forEach(invalid => {
+          console.error(`   Linha ${invalid.lineNumber}: ${invalid.columns} colunas - ${invalid.content}`);
+        });
+        
+        // Remove linhas inválidas
+        const validLines = lines.filter((line, index) => {
+          return line.split(',').length === 10;
+        });
+        console.log(`🔄 Filtradas ${lines.length - validLines.length} linhas inválidas. Restaram ${validLines.length} linhas válidas.`);
+        
+        // Reconstrói o CSV apenas com linhas válidas
+        cleanCsvContent = validLines.join('\n');
+      } else {
+        // Reconstrói o CSV sem linhas vazias
+        cleanCsvContent = lines.join('\n');
+      }
+      
       // Salva o arquivo com BOM para UTF-8
-      const csvWithBom = '\ufeff' + csvContent;
+      const csvWithBom = '\ufeff' + cleanCsvContent;
       await fs.writeFile(filePath, csvWithBom, 'utf8');
 
       console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
@@ -742,20 +780,11 @@ class VtexOrdersService {
    */
   generateEmarsysCsvContent(orders) {
     // Headers baseados no schema oficial da Emarsys Smart Insight
-    // Posição 1: order (String) - ID do pedido
-    // Posição 2: item (String) - SKU do produto  
-    // Posição 3: email (String) - Email do cliente
-    // Posição 4: quantity (Float) - Quantidade
-    // Posição 5: timestamp (Date) - Data/hora do pedido
-    // Posição 6: price (Float) - Preço unitário
-    // Posição 7: s_channel_source (String) - Canal de origem
-    // Posição 8: s_store_id (String) - ID da loja
-    // Posição 9: s_sales_channel (String) - Canal de vendas
-    // Posição 10: s_discount (String) - Desconto aplicado
+    // IMPORTANTE: A ordem das colunas deve seguir exatamente o schema da Emarsys
     const headers = [
       'order',              // Posição 1 - ID do pedido
       'item',               // Posição 2 - SKU do produto
-      'email',              // Posição 3 - Email do cliente
+      'email',              // Posição 3 - Email do cliente (OBRIGATÓRIO)
       'quantity',           // Posição 4 - Quantidade
       'timestamp',          // Posição 5 - Data/hora do pedido
       'price',              // Posição 6 - Preço unitário
@@ -765,33 +794,63 @@ class VtexOrdersService {
       's_discount'          // Posição 10 - Desconto aplicado
     ];
 
+    console.log(`📊 Gerando CSV com ${orders.length} pedidos...`);
     let csvContent = headers.join(',') + '\n';
+    let processedCount = 0;
 
-    for (const order of orders) {
-      // Validação de campos obrigatórios conforme schema da Emarsys
-      const requiredFields = ['order', 'item', 'email', 'quantity', 'timestamp', 'price'];
-      const missingFields = requiredFields.filter(field => !order[field]);
-      console.log('📄 missingFields... | order | 22/08 |', order);
-      if (missingFields.length > 0) {
-        console.warn(`⚠️ Pedido ${order.order || 'sem ID'} está faltando campos obrigatórios: ${missingFields.join(', ')}`);
-        continue; // Pula pedidos inválidos
+    for (let i = 0; i < orders.length; i++) {
+      const order = orders[i];
+      
+      try {
+        // Validação de campos obrigatórios conforme schema da Emarsys
+        const requiredFields = ['order', 'item', 'email', 'quantity', 'timestamp', 'price'];
+        const missingFields = requiredFields.filter(field => !order[field]);
+        
+        if (missingFields.length > 0) {
+          console.warn(`⚠️ Pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
+          continue; // Pula pedidos inválidos
+        }
+
+        const row = [
+          this.sanitizeField(order.order, 25, 'order'),                     // Posição 1 - order
+          this.sanitizeField(order.item, 25, 'item'),                       // Posição 2 - item
+          this.sanitizeField(order.email, 0, 'email'),                      // Posição 3 - email (sem limite de tamanho)
+          this.sanitizeField(order.quantity, 25, 'quantity'),               // Posição 4 - quantity
+          this.sanitizeField(order.timestamp, 25, 'timestamp'),             // Posição 5 - timestamp
+          this.sanitizeField(order.price, 25, 'price'),                     // Posição 6 - price
+          this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'), // Posição 7 - s_channel_source
+          this.sanitizeField(order.s_store_id || 'piccadilly', 25, 's_store_id'), // Posição 8 - s_store_id
+          this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'), // Posição 9 - s_sales_channel
+          this.sanitizeField(order.s_discount || '0', 25, 's_discount')     // Posição 10 - s_discount
+        ];
+        
+        // Validação adicional para garantir que a linha tem exatamente 10 campos
+        if (row.length !== 10) {
+          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
+          continue;
+        }
+        
+        // Verifica se algum campo obrigatório ficou vazio após sanitização
+        if (!row[0] || !row[1] || !row[2] || !row[3] || !row[4] || !row[5]) {
+          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
+          continue;
+        }
+        
+        // Adiciona a linha ao CSV
+        csvContent += row.join(',') + '\n';
+        processedCount++;
+        
+      } catch (error) {
+        console.error(`❌ Erro ao processar pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}):`, error.message);
+        continue;
       }
-
-      const row = [
-        this.sanitizeField(order.order, 25, 'order'),                     // Posição 1 - order
-        this.sanitizeField(order.item, 25, 'item'),                       // Posição 2 - item
-        this.sanitizeField(order.email, 25, 'email'),                     // Posição 3 - email
-        this.sanitizeField(order.quantity, 25, 'quantity'),               // Posição 4 - quantity
-        this.sanitizeField(order.timestamp, 25, 'timestamp'),             // Posição 5 - timestamp
-        this.sanitizeField(order.price, 25, 'price'),                     // Posição 6 - price
-        this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'), // Posição 7 - s_channel_source
-        this.sanitizeField(order.s_store_id || 'piccadilly', 25, 's_store_id'), // Posição 8 - s_store_id
-        this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'), // Posição 9 - s_sales_channel
-        this.sanitizeField(order.s_discount || '0', 25, 's_discount')     // Posição 10 - s_discount
-      ];
-      csvContent += row.join(',') + '\n';
     }
 
+    // Remove qualquer linha vazia no final
+    csvContent = csvContent.trim();
+    
+    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${orders.length} pedidos processados`);
+    
     return csvContent;
   }
 
@@ -824,12 +883,18 @@ class VtexOrdersService {
      // Converte para string e remove caracteres problemáticos
      let cleanValue = String(value)
        .replace(/"/g, '')           // Remove aspas duplas
-       .replace(/,/g, ' ')          // Substitui vírgulas por espaços
        .replace(/\r?\n/g, ' ')      // Remove quebras de linha
        .trim();                     // Remove espaços extras
      
-     // Trunca se necessário (exceto para email que não tem limite)
-     if (fieldName !== 'email' && cleanValue.length > maxLength) {
+     // Para email, não substitui vírgulas, apenas remove se houver (emails válidos não têm vírgulas)
+     if (fieldName === 'email') {
+       cleanValue = cleanValue.replace(/,/g, ''); // Remove vírgulas do email
+     } else {
+       cleanValue = cleanValue.replace(/,/g, ' '); // Substitui vírgulas por espaços em outros campos
+     }
+     
+     // Trunca se necessário (maxLength = 0 significa sem limite, como para email)
+     if (maxLength > 0 && cleanValue.length > maxLength) {
        cleanValue = cleanValue.substring(0, maxLength);
      }
      
@@ -1093,7 +1158,7 @@ class VtexOrdersService {
       }
       
       // 3. Transformar dados para formato Emarsys
-      console.log('🔄 Transformando dados para formato Emarsys...');
+      console.log('🔄 Transformando dados para formato Emarsys...', orders);
       const transformedOrders = this.transformOrdersForEmarsys(orders);
       
       // 4. Gerar CSV
