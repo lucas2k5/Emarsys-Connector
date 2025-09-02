@@ -518,8 +518,8 @@ class VtexOrdersService {
       // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
       const saleRecord = {
         order: orderId,
-        item: order.item || '',
-        email: order.customer_email || order.email || '',
+        item: order.item,
+        email: order.customer_email,
         quantity: order.quantity,
         timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
         price: order.price || '0',
@@ -907,25 +907,7 @@ class VtexOrdersService {
    * @param {Array} headers - Headers personalizados (opcional)
    * @returns {string} Conteúdo CSV
    */
-  generateSimpleCsvContent(orders, headers = null) {
-    // Headers padrão baseados no schema do Smart Insight da Emarsys
-    const defaultHeaders = [
-      'item', 'price', 'order', 'timestamp', 'customer', 'quantity',
-      's_channel_source', 's_store_id', 's_sales_channel', 's_discount'
-    ];
-    
-    const csvHeaders = headers || defaultHeaders;
-    let csvContent = csvHeaders.join(',') + '\n';
 
-      for (const order of orders) {
-        const row = csvHeaders.map(header => 
-          this.sanitizeField(order[header] || '', 25, header)
-        );
-        csvContent += row.join(',') + '\n';
-      }
-
-    return csvContent;
-  }
 
   /**
    * Envia pedidos para Emarsys
@@ -958,40 +940,45 @@ class VtexOrdersService {
         success: result.success
       });
 
-      // Após envio bem-sucedido, limpa a base de orders
+      // Após envio bem-sucedido, tenta limpar a base de orders (não bloqueia o retorno)
       if (result && result.success) {
-        try {
-          const baseUrlEnv = (process.env.BASE_URL || process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
-          if (!baseUrlEnv) {
-            console.warn('⚠️ BASE_URL/VTEX_BASE_URL não configurada; limpeza pós-envio não executada');
-          } else {
+        // Captura a referência do axios antes da função assíncrona
+        const axiosInstance = axios;
+        
+        // Executa a limpeza de forma assíncrona sem bloquear o retorno
+        setImmediate(async () => {
+          try {
             console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
-            const cleanupResponse = await axios({
+            
+            // Usa axios diretamente com configuração completa
+            const cleanupResponse = await axiosInstance({
               method: 'DELETE',
-              url: `${baseUrlEnv}/_v/orders/all`,
+              url: `${process.env.VTEX_BASE_URL}/_v/orders/all`,
               headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
               },
               data: {
                 confirm: 'DELETE_ALL_ORDERS'
               },
               timeout: 60000
             });
-
+            console.log('🧹 Limpeza de orders retornou status:', cleanupResponse);
             if (cleanupResponse.status >= 200 && cleanupResponse.status < 300) {
               console.log('✅ Base de orders limpa com sucesso');
             } else {
               console.warn(`⚠️ Limpeza de orders retornou status inesperado: ${cleanupResponse.status}`);
             }
+          } catch (cleanupError) {
+            const status = cleanupError?.response?.status;
+            if (status === 504) {
+              console.log('✅ Operação de limpeza iniciada. 504 indica execução em segundo plano. Verifique os logs.');
+            } else {
+              console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
+            }
           }
-        } catch (cleanupError) {
-          const status = cleanupError?.response?.status;
-          if (status === 504) {
-            console.log('✅ Operação de limpeza iniciada. 504 indica execução em segundo plano. Verifique os logs.');
-          } else {
-            console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
-          }
-        }
+        });
       }
       
       return result;
@@ -1206,6 +1193,36 @@ class VtexOrdersService {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');
       }
       
+      // 5. Enviar CSV para Emarsys
+      let emarsysSendResult = null;
+      try {
+        console.log('📤 Enviando CSV para Emarsys...');
+        const axios = require('axios');
+        const emarsysResponse = await axios({
+          method: 'POST',
+          url: 'http://localhost:3000/api/emarsys/sales/send-csv-file',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 120000 // 2 minutos para envio
+        });
+        
+        console.log('✅ CSV enviado para Emarsys com sucesso:', emarsysResponse.status);
+        emarsysSendResult = {
+          success: true,
+          status: emarsysResponse.status,
+          data: emarsysResponse.data
+        };
+        
+      } catch (emarsysError) {
+        console.error('❌ Erro ao enviar CSV para Emarsys:', emarsysError?.message);
+        emarsysSendResult = {
+          success: false,
+          error: emarsysError?.message,
+          status: emarsysError?.response?.status
+        };
+      }
+
       const duration = Date.now() - startTime;
       
       console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
@@ -1217,6 +1234,7 @@ class VtexOrdersService {
         orders: orders,
         saveResult: saveResult,
         csvResult: csvResult,
+        emarsysSendResult: emarsysSendResult,
         duration: duration,
         timestamp: getBrazilianTimestamp()
       };
