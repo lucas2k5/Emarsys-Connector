@@ -3,23 +3,7 @@ const path = require('path');
 const { getBrazilianTimestampForFilename, getBrazilianTimestamp } = require('../utils/dateUtils');
 
 class EmarsysCsvService {
-  constructor() {
-    // Headers conforme Smart Insight da Emarsys
-    // https://help.sap.com/docs/SAP_EMARSYS/5d44574160f44536b0130abf58cb87cc/fdf6fbc574c11014855de082fd7ded5b.html
-    this.csvHeaders = [
-      'order',           // order* (obrigatório)
-      'item',            // item* (obrigatório)
-      'customer',        // customer* (obrigatório)
-      'quantity',        // quantity* (obrigatório)
-      'timestamp',       // timestamp* (obrigatório)
-      'price',           // price* (obrigatório)
-      's_channel_source', // s_channel_source* (obrigatório)
-      's_store_id',      // s_store_id* (obrigatório)
-      's_sales_channel', // s_sales_channel* (obrigatório)
-      's_discount'       // s_discount* (obrigatório)
-    ];
-  }
-
+  constructor() {}
   /**
    * Gera arquivo CSV de catálogo (produtos) para Emarsys
    * @param {Array} products - Array de produtos

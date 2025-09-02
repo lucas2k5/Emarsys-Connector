@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const emarsysSalesService = require('../services/emarsysSalesService');
 const VtexOrdersService = require('../services/vtexOrdersService');
 
@@ -97,7 +98,7 @@ router.post('/send-csv-file', async (req, res) => {
   try {
     const { filename } = req.body || {};
     
-    console.log(`📤 [ROUTE] Enviando arquivo CSV para Emarsys...`);
+    console.log(`📤 [ROUTE] Enviando arquivo CSV para Emarsys... 01/9`);
     if (filename) {
       console.log(`📄 Arquivo específico solicitado: ${filename}`);
     } else {
@@ -106,20 +107,73 @@ router.post('/send-csv-file', async (req, res) => {
     
     const result = await emarsysSalesService.sendCsvFileToEmarsys(filename);
     
-    if (result.success) {
-      res.json({
-        success: true,
-        message: 'Arquivo CSV enviado para Emarsys',
-        result: result
-      });
-    } else {
-      // Se não foi bem-sucedido, retorna o erro
-      res.status(400).json({
-        success: false,
-        error: result.error,
-        timestamp: new Date().toISOString()
-      });
+    let cleanupResult = null;
+    
+    // Se o envio foi bem-sucedido, executa limpeza da base de orders
+    if (result && result.success) {
+      // Limpeza da base de orders
+      try {
+        console.log('🧹 Limpando base de orders após sincronização...');
+        
+        const baseUrlEnv = (process.env.VTEX_BASE_URL).replace(/\/$/, '');
+        if (!baseUrlEnv) {
+          console.warn('⚠️ BASE_URL/VTEX_BASE_URL não configurada; limpeza pós-envio não executada');
+          cleanupResult = { success: false, error: 'BASE_URL não configurada' };
+        } else {
+          console.log(`🔗 URL da limpeza: ${baseUrlEnv}/_v/orders/all`);
+          
+          const cleanupResponse = await axios({
+            method: 'DELETE',
+            url: `${baseUrlEnv}/_v/orders/all`,
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            data: {
+              confirm: 'DELETE_ALL_ORDERS'
+            },
+            timeout: 60000
+          });
+          
+          console.log('🧹 Limpeza de orders retornou status:', cleanupResponse.status);
+          
+          if (cleanupResponse.status >= 200 && cleanupResponse.status < 300) {
+            console.log('✅ Base de orders limpa com sucesso');
+            cleanupResult = { success: true, status: cleanupResponse.status };
+          } else {
+            console.warn(`⚠️ Limpeza de orders retornou status inesperado: ${cleanupResponse.status}`);
+            cleanupResult = { success: false, status: cleanupResponse.status };
+          }
+        }
+      } catch (cleanupError) {
+        const status = cleanupError?.response?.status;
+        console.error('❌ Detalhes do erro de limpeza:', {
+          message: cleanupError?.message,
+          status: status,
+          data: cleanupError?.response?.data,
+          url: cleanupError?.config?.url
+        });
+        
+        if (status === 504) {
+          console.log('✅ Operação de limpeza iniciada. 504 indica execução em segundo plano. Verifique os logs.');
+          cleanupResult = { success: true, status: 504, note: 'Executando em segundo plano' };
+        } else if (status === 404) {
+          console.warn('⚠️ Rota de limpeza não encontrada. Verifique se /_v/orders/all existe.');
+          cleanupResult = { success: false, error: 'Rota de limpeza não encontrada', status: 404 };
+        } else {
+          console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
+          cleanupResult = { success: false, error: cleanupError?.message, status: status };
+        }
+      }
     }
+    
+    // Finalmente: Retorna resposta completa ao Postman
+    res.json({
+      success: true,
+      message: 'Fluxo executado: Envio → Limpeza',
+      emarsysResult: result,
+      cleanupResult: cleanupResult,
+      timestamp: new Date().toISOString()
+    });
     
   } catch (error) {
     console.error('❌ [ROUTE] Erro ao enviar CSV:', error);

@@ -606,11 +606,42 @@ router.get('/orders-extract-all', async (req, res) => {
 
       console.log(`✅ ETAPA 3 concluída: ${hookResults.success}/${hookResults.total} enviados com sucesso (${hookResults.failed} falhas)`);
       console.log('🎉 Fluxo concluído, enviando resposta...');
+
+      // ETAPA 4: Sincronização de orders via cron
+      let syncOrdersResult = null;
+      try {
+        console.log('🔄 Executando sincronização de orders após envio para hook...');
+        
+        const axios = require('axios');
+        const syncResponse = await axios({
+          method: 'POST',
+          url: 'http://localhost:3000/api/cron/sync-orders',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 120000 // 2 minutos para sincronização
+        });
+        
+        console.log('✅ Sincronização de orders concluída:', syncResponse.status);
+        syncOrdersResult = {
+          success: true,
+          status: syncResponse.status,
+          data: syncResponse.data
+        };
+        
+      } catch (syncError) {
+        console.error('❌ Erro na sincronização de orders:', syncError?.message);
+        syncOrdersResult = {
+          success: false,
+          error: syncError?.message,
+          status: syncError?.response?.status
+        };
+      }
  
       // Resposta final
       res.json({
         success: true,
-        message: 'Pedidos extraídos e enviados para o hook com sucesso',
+        message: 'Fluxo completo executado: Extração → Hook → Sincronização',
         data: {
           totalOrdersDetailed: detailedOrders.length,
           period: {
@@ -625,9 +656,11 @@ router.get('/orders-extract-all', async (req, res) => {
             ordersWithDetails: detailedOrders.length,
             ordersFailed: ordersList.length - detailedOrders.length,
             hookSent: hookResults.success,
-            hookFailed: hookResults.failed
+            hookFailed: hookResults.failed,
+            syncSuccess: syncOrdersResult?.success || false
           },
-          hookErrorsSample: hookResults.errors.slice(0, 5)
+          hookErrorsSample: hookResults.errors.slice(0, 5),
+          syncOrdersResult: syncOrdersResult
         },
         timestamp: new Date().toISOString()
       });
