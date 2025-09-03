@@ -1887,7 +1887,6 @@ class ContactService {
         // Campos do cliente (CL) - removendo campos desnecessários
         'email',
         'integrado',
-        'optIn',
         'document',
         'birthDate',
         'phone',
@@ -2265,7 +2264,6 @@ class ContactService {
                      // Campos do cliente (CL) - apenas campos necessários
                      this.sanitizeFieldForCSV(record.email || ''),
                      this.sanitizeFieldForCSV(record.integrado || false),
-                     this.sanitizeFieldForCSV(record.optIn || false),
                      this.sanitizeFieldForCSV(record.document || ''),
                      this.sanitizeFieldForCSV(record.birthDate || ''),
                      this.sanitizeFieldForCSV(this.getPhoneNumber(record)),

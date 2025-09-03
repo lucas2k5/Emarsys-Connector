@@ -7,6 +7,7 @@ const emarsysRoutes = require('./routes/emarsys');
 const vtexProductRoutes = require('./routes/vtexProducts');
 const emarsysSalesRoutes = require('./routes/emarsysSales');
 const emarsysCsvRoutes = require('./routes/emarsysCsv');
+const emarsysContactsRoutes = require('./routes/emarsysContacts');
 const emsClientsRoutes = require('./routes/emsClients');
 
 const integrationRoutes = require('./routes/integration');
@@ -31,6 +32,7 @@ app.use('/api/emarsys', emarsysRoutes);
 app.use('/api/vtex/products', vtexProductRoutes);
 app.use('/api/emarsys/sales', emarsysSalesRoutes);
 app.use('/api/emarsys/csv', emarsysCsvRoutes);
+app.use('/api/emarsys/contacts', emarsysContactsRoutes);
 app.use('/api/emarsys/ems-clients', emsClientsRoutes);
 app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
@@ -60,6 +62,7 @@ if (require.main === module) {
     console.log(`VTEX Products API: http://localhost:${PORT}/api/vtex/products`);
     console.log(`Emarsys Sales API: http://localhost:${PORT}/api/emarsys/sales`);
     console.log(`Emarsys CSV API: http://localhost:${PORT}/api/emarsys/csv`);
+    console.log(`Emarsys Contacts API: http://localhost:${PORT}/api/emarsys/contacts`);
     console.log(`Integration API: http://localhost:${PORT}/api/integration`);
     console.log(`Background Jobs API: http://localhost:${PORT}/api/background`);
     console.log(`Cron Jobs API: http://localhost:${PORT}/api/cron`);
