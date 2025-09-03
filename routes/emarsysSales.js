@@ -105,7 +105,7 @@ router.post('/send-csv-file', async (req, res) => {
       console.log(`📄 Usando arquivo mais recente`);
     }
     
-    const result = 'TESTE';//await emarsysSalesService.sendCsvFileToEmarsys(filename);//BUG
+    const result = await emarsysSalesService.sendCsvFileToEmarsys(filename);
     
     let cleanupResult = null;
     

@@ -1626,24 +1626,25 @@ class ContactService {
       
       console.log(`📊 Buscando endereços para ${records.length} usuários...`);
 
-             // Headers incluindo campos de endereço (padrão Emarsys)
-       const headers = [
-         // Campos do cliente (CL) - removendo campos desnecessários
-         'email',
-         'integrado',
-         'optIn',
-         'document',
-         'birthDate',
-         'phone',
-         'postalCode',
-         'state',
-         'country',
-         'city',
-         'street',
-         'neighborhood',
-         'number',
-         'complement'
-       ];
+                   // Headers incluindo campos de endereço (padrão Emarsys)
+      const headers = [
+        // Campos do cliente (CL) - apenas campos necessários para Emarsys
+        'email',
+        'firstName',
+        'lastName',
+        'document', // CPF
+        'birthDate', // Data de nascimento
+        'phone', // Telefone
+        // Campos de endereço (AD) - apenas campos necessários para Emarsys
+        'postalCode', // CEP
+        'state', // Estado
+        'country', // País
+        'city', // Cidade
+        'street', // Rua
+        'neighborhood', // Bairro
+        'number', // Número da casa
+        'complement' // Complemento
+      ];
       
       // Configurações para divisão de arquivos
       const maxFileSizeMB = options.maxFileSizeMB || 99; // Máximo 99MB por arquivo (limite Emarsys)
@@ -1715,22 +1716,22 @@ class ContactService {
         
                  // Cria linha com todos os campos (apenas campos necessários)
          const row = [
-           // Campos do cliente (CL) - apenas campos necessários
+           // Campos do cliente (CL) - apenas campos necessários para Emarsys
            this.sanitizeFieldForCSV(record.email || ''),
-           this.sanitizeFieldForCSV(record.integrado || false),
-           this.sanitizeFieldForCSV(record.optIn || false),
-           this.sanitizeFieldForCSV(record.document || ''),
-           this.sanitizeFieldForCSV(record.birthDate || ''),
-           this.sanitizeFieldForCSV(this.getPhoneNumber(record)),
-           // Campos de endereço (AD) - apenas campos necessários
-           this.sanitizeFieldForCSV(primaryAddress.postalCode || ''),
-           this.sanitizeFieldForCSV(primaryAddress.state || ''),
-           this.sanitizeFieldForCSV(primaryAddress.country || ''),
-           this.sanitizeFieldForCSV(primaryAddress.city || ''),
-           this.sanitizeFieldForCSV(primaryAddress.street || ''),
-           this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''),
-           this.sanitizeFieldForCSV(primaryAddress.number || ''),
-           this.sanitizeFieldForCSV(primaryAddress.complement || '')
+           this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
+           this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
+           this.sanitizeFieldForCSV(record.document || ''), // CPF
+           this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+           this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
+           // Campos de endereço (AD) - apenas campos necessários para Emarsys
+           this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+           this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
+           this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
+           this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
+           this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
+           this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
+           this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
+           this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
          ];
         
         const rowContent = row.join(',') + '\n';
@@ -1884,21 +1885,21 @@ class ContactService {
       
       // Headers incluindo campos de endereço (padrão Emarsys)
       const headers = [
-        // Campos do cliente (CL) - removendo campos desnecessários
+        // Campos do cliente (CL) - apenas campos necessários para Emarsys
         'email',
-        'integrado',
-        'document',
-        'birthDate',
-        'phone',
-        // Campos de endereço (AD) - removendo campos desnecessários
-        'postalCode',
-        'state',
-        'country',
-        'city',
-        'street',
-        'neighborhood',
-        'number',
-        'complement'
+        'firstName',
+        'lastName',
+        'document', // CPF
+        'birthDate', // Data de nascimento
+        'phone', // Telefone
+        'postalCode', // CEP
+        'state', // Estado
+        'country', // País
+        'city', // Cidade
+        'street', // Rua
+        'neighborhood', // Bairro
+        'number', // Número da casa
+        'complement' // Complemento
       ];
       
       // Cria o diretório de saída se não existir
@@ -2128,22 +2129,22 @@ class ContactService {
            
            // Cria linha com todos os campos
            const row = [
-             // Campos do cliente (CL) - apenas campos necessários
+             // Campos do cliente (CL) - apenas campos necessários para Emarsys
              this.sanitizeFieldForCSV(record.email || ''),
-             this.sanitizeFieldForCSV(record.integrado || false),
-             this.sanitizeFieldForCSV(record.optIn || false),
-             this.sanitizeFieldForCSV(record.document || ''),
-             this.sanitizeFieldForCSV(record.birthDate || ''),
-             this.sanitizeFieldForCSV(this.getPhoneNumber(record)),
-             // Campos de endereço (AD) - apenas campos necessários
-             this.sanitizeFieldForCSV(primaryAddress.postalCode || ''),
-             this.sanitizeFieldForCSV(primaryAddress.state || ''),
-             this.sanitizeFieldForCSV(primaryAddress.country || ''),
-             this.sanitizeFieldForCSV(primaryAddress.city || ''),
-             this.sanitizeFieldForCSV(primaryAddress.street || ''),
-             this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''),
-             this.sanitizeFieldForCSV(primaryAddress.number || ''),
-             this.sanitizeFieldForCSV(primaryAddress.complement || '')
+             this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
+             this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
+             this.sanitizeFieldForCSV(record.document || ''), // CPF
+             this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+             this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
+             // Campos de endereço (AD) - apenas campos necessários para Emarsys
+             this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+             this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
+             this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
+             this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
+             this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
+             this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
+             this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
+             this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
            ];
            
            const rowContent = row.join(',') + '\n';
@@ -2261,21 +2262,22 @@ class ContactService {
                    
                    // Cria linha com todos os campos
                    const row = [
-                     // Campos do cliente (CL) - apenas campos necessários
+                     // Campos do cliente (CL) - apenas campos necessários para Emarsys
                      this.sanitizeFieldForCSV(record.email || ''),
-                     this.sanitizeFieldForCSV(record.integrado || false),
-                     this.sanitizeFieldForCSV(record.document || ''),
-                     this.sanitizeFieldForCSV(record.birthDate || ''),
-                     this.sanitizeFieldForCSV(this.getPhoneNumber(record)),
-                     // Campos de endereço (AD) - apenas campos necessários
-                     this.sanitizeFieldForCSV(primaryAddress.postalCode || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.state || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.country || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.city || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.street || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.number || ''),
-                     this.sanitizeFieldForCSV(primaryAddress.complement || '')
+                     this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
+                     this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
+                     this.sanitizeFieldForCSV(record.document || ''), // CPF
+                     this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+                     this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
+                     // Campos de endereço (AD) - apenas campos necessários para Emarsys
+                     this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+                     this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
+                     this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
+                     this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
+                     this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
+                     this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
+                     this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
+                     this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
                    ];
                    
                    const rowContent = row.join(',') + '\n';
@@ -2708,6 +2710,159 @@ class ContactService {
       
     } catch (error) {
       console.error('❌ Erro no teste de extração:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: getBrazilianTimestamp()
+      };
+    }
+  }
+
+  /**
+   * Gera CSV específico para importação no Emarsys com mapeamento correto das colunas
+   * @param {Array} records - Array de registros da CL
+   * @param {Object} options - Opções de configuração
+   * @returns {Promise<Object>} Resultado da operação
+   */
+  async generateEmarsysContactsCsv(records, options = {}) {
+    try {
+      console.log('📊 Gerando arquivo CSV específico para importação no Emarsys...');
+      
+      if (!records || records.length === 0) {
+        console.warn('⚠️ Nenhum registro fornecido para gerar CSV');
+        return {
+          success: false,
+          error: 'Nenhum registro fornecido',
+          timestamp: getBrazilianTimestamp()
+        };
+      }
+
+      // Gera nome do arquivo com timestamp de Brasília
+      const timestamp = getBrazilianTimestampForFilename();
+      const filename = options.filename || `contatos_vtex_emarsys-${timestamp}.csv`;
+      
+      // Adiciona extensão .csv se não tiver
+      if (!filename.endsWith('.csv')) {
+        filename += '.csv';
+      }
+
+      // Cria o diretório de saída se não existir
+      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      let outputDir = process.env.EXPORTS_DIR || defaultExports;
+      
+      try {
+        await fs.mkdir(outputDir, { recursive: true });
+        console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
+      } catch (error) {
+        console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
+        if (process.env.VERCEL) {
+          const fallbackDir = '/tmp';
+          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
+          try {
+            await fs.mkdir(fallbackDir, { recursive: true });
+            outputDir = fallbackDir;
+          } catch (fallbackError) {
+            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
+            throw fallbackError;
+          }
+        } else {
+          throw error;
+        }
+      }
+
+      const filePath = path.join(outputDir, filename);
+
+      // Headers específicos para Emarsys (mapeamento correto)
+      const headers = [
+        'email',
+        'firstName',
+        'lastName',
+        'document', // CPF
+        'birthDate', // Data de nascimento
+        'phone', // Telefone
+        'postalCode', // CEP
+        'state', // Estado
+        'country', // País
+        'city', // Cidade
+        'street', // Rua
+        'neighborhood', // Bairro
+        'number', // Número da casa
+        'complement' // Complemento
+      ];
+      
+      const csvWithBom = '\ufeff' + headers.join(',') + '\n';
+      await fs.writeFile(filePath, csvWithBom, 'utf8');
+      
+      // Processa registros em lotes de 1000 para evitar problemas de memória
+      const batchSize = 1000;
+      let totalProcessed = 0;
+      let csvContent = '';
+      
+      for (let i = 0; i < records.length; i += batchSize) {
+        const batch = records.slice(i, i + batchSize);
+        console.log(`📝 Processando lote ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${batch.length} registros)...`);
+        
+        for (const record of batch) {
+          // Busca endereços do usuário
+          const userAddresses = await this.addressService.fetchAddressesByUserId(record.id);
+          const primaryAddress = userAddresses.length > 0 ? userAddresses[0] : {};
+          
+          // Cria linha com mapeamento correto para Emarsys
+          const row = [
+            // Campos do cliente (CL) - mapeamento correto
+            this.sanitizeField(record.email || '', 100, 'email'),
+            this.sanitizeField(record.firstName || record.firstname || '', 50, 'firstName'),
+            this.sanitizeField(record.lastName || record.lastname || '', 50, 'lastName'),
+            this.sanitizeField(record.document || '', 20, 'document'), // CPF
+            this.sanitizeField(record.birthDate || '', 20, 'birthDate'), // Data de nascimento
+            this.sanitizeField(this.getPhoneNumber(record), 20, 'phone'), // Telefone
+            // Campos de endereço (AD) - mapeamento correto
+            this.sanitizeField(primaryAddress.postalCode || '', 20, 'postalCode'), // CEP
+            this.sanitizeField(primaryAddress.state || '', 10, 'state'), // Estado
+            this.sanitizeField(primaryAddress.country || 'BRA', 10, 'country'), // País (padrão Brasil)
+            this.sanitizeField(primaryAddress.city || '', 50, 'city'), // Cidade
+            this.sanitizeField(primaryAddress.street || '', 100, 'street'), // Rua
+            this.sanitizeField(primaryAddress.neighborhood || '', 50, 'neighborhood'), // Bairro
+            this.sanitizeField(primaryAddress.number || '', 20, 'number'), // Número da casa
+            this.sanitizeField(primaryAddress.complement || '', 50, 'complement') // Complemento
+          ];
+          
+          csvContent += row.join(',') + '\n';
+          totalProcessed++;
+        }
+        
+        // A cada 5000 registros, escreve no arquivo e limpa a memória
+        if (csvContent.length > 100000) { // Aproximadamente 5000 registros
+          await fs.appendFile(filePath, csvContent, 'utf8');
+          console.log(`💾 Escrito ${totalProcessed} registros no arquivo...`);
+          csvContent = '';
+        }
+      }
+      
+      // Escreve o restante dos dados
+      if (csvContent.length > 0) {
+        await fs.appendFile(filePath, csvContent, 'utf8');
+      }
+
+      console.log(`✅ Arquivo CSV para Emarsys gerado: ${filePath}`);
+      console.log(`📊 Total de registros processados: ${totalProcessed}`);
+
+      const result = {
+        success: true,
+        filename: filename,
+        filePath: filePath,
+        timestamp: getBrazilianTimestamp(),
+        totalRecords: totalProcessed,
+        totalRecordsExpected: records.length,
+        format: 'SAP Emarsys Contacts Import',
+        headers: headers,
+        documentation: 'https://help.sap.com/docs/SAP_EMARSYS/f8e2fafeea804018a954a8857d9dfff3/fde8076374c11014b351dcadd185eb1f.html?locale=en-US'
+      };
+
+      return result;
+
+    } catch (error) {
+      console.error('❌ Erro ao gerar CSV para Emarsys:', error);
       return {
         success: false,
         error: error.message,
