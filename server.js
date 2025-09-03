@@ -7,6 +7,7 @@ const emarsysRoutes = require('./routes/emarsys');
 const vtexProductRoutes = require('./routes/vtexProducts');
 const emarsysSalesRoutes = require('./routes/emarsysSales');
 const emarsysCsvRoutes = require('./routes/emarsysCsv');
+const emsClientsRoutes = require('./routes/emsClients');
 
 const integrationRoutes = require('./routes/integration');
 const backgroundJobsRoutes = require('./routes/backgroundJobs');
@@ -30,6 +31,7 @@ app.use('/api/emarsys', emarsysRoutes);
 app.use('/api/vtex/products', vtexProductRoutes);
 app.use('/api/emarsys/sales', emarsysSalesRoutes);
 app.use('/api/emarsys/csv', emarsysCsvRoutes);
+app.use('/api/emarsys/ems-clients', emsClientsRoutes);
 app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
