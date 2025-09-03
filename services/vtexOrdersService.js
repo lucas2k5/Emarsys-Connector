@@ -33,6 +33,7 @@ class VtexOrdersService {
     this.ordersFile = path.join(this.dataDir, 'orders.json');
     this.lastSyncFile = path.join(this.dataDir, 'last-sync.json');
     this.emarsysSyncFile = path.join(this.dataDir, 'emarsys-sync.json');
+    this.errorLogFile = path.join(this.dataDir, 'sync-errors.json');
   }
 
   async _initializeAxiosRetry() {
@@ -65,8 +66,26 @@ class VtexOrdersService {
       orderBy: options.orderBy || 'creationDate,asc',
       f_status: options.f_status || undefined
     };
+    
+    // Log detalhado para debug de datas
+    console.log('🔍 DEBUG FILTRO DE DATAS:');
+    console.log(`   📅 Data inicial recebida: ${startDateISO}`);
+    console.log(`   📅 Data final recebida: ${endDateISO}`);
+    console.log(`   🔍 Filtro aplicado: ${params.f_creationDate}`);
+    console.log(`   📄 Página: ${page}`);
+    
     try {
       const res = await this.client.get(url, { params });
+      
+      // Log da resposta para debug
+      if (res.data && res.data.list && res.data.list.length > 0) {
+        const firstOrder = res.data.list[0];
+        const lastOrder = res.data.list[res.data.list.length - 1];
+        console.log(`   ✅ ${res.data.list.length} pedidos encontrados`);
+        console.log(`   📅 Primeiro pedido: ${firstOrder.orderId} - ${firstOrder.creationDate}`);
+        console.log(`   📅 Último pedido: ${lastOrder.orderId} - ${lastOrder.creationDate}`);
+      }
+      
       return res.data;
     } catch (error) {
       console.error('Erro ao buscar pedidos (OMS):', error?.response?.data || error.message);
@@ -144,6 +163,203 @@ class VtexOrdersService {
     } catch (error) {
       console.error('❌ Erro ao buscar todos os pedidos:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Salva log de erro local em JSON
+   * @param {Object} errorData - Dados do erro para salvar
+   */
+  async saveErrorLog(errorData) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const timestamp = getBrazilianTimestamp();
+      const errorEntry = {
+        timestamp,
+        ...errorData
+      };
+
+      // Lê logs existentes ou cria array vazio
+      let existingLogs = [];
+      try {
+        if (fs.existsSync(this.errorLogFile)) {
+          const fileContent = await fs.readFile(this.errorLogFile, 'utf8');
+          existingLogs = JSON.parse(fileContent);
+        }
+      } catch (readError) {
+        console.warn('⚠️ Erro ao ler arquivo de log existente:', readError.message);
+        existingLogs = [];
+      }
+
+      // Adiciona novo log
+      existingLogs.push(errorEntry);
+
+      // Mantém apenas os últimos 1000 logs para evitar arquivo muito grande
+      if (existingLogs.length > 1000) {
+        existingLogs = existingLogs.slice(-1000);
+      }
+
+      // Salva arquivo atualizado
+      await fs.writeFile(this.errorLogFile, JSON.stringify(existingLogs, null, 2));
+      
+      console.log('📝 Log de erro salvo:', errorEntry.type || 'erro-generico');
+    } catch (error) {
+      console.error('❌ Erro ao salvar log de erro:', error.message);
+    }
+  }
+
+  /**
+   * Salva estatísticas detalhadas da sincronização
+   * @param {Object} stats - Estatísticas da sincronização
+   */
+  async saveSyncStats(stats) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const statsFile = path.join(this.dataDir, 'sync-stats.json');
+      const timestamp = getBrazilianTimestamp();
+      
+      const statsEntry = {
+        timestamp,
+        ...stats
+      };
+
+      // Lê estatísticas existentes
+      let existingStats = [];
+      try {
+        if (fs.existsSync(statsFile)) {
+          const fileContent = await fs.readFile(statsFile, 'utf8');
+          existingStats = JSON.parse(fileContent);
+        }
+      } catch (readError) {
+        existingStats = [];
+      }
+
+      // Adiciona nova estatística
+      existingStats.push(statsEntry);
+
+      // Mantém apenas os últimos 100 registros
+      if (existingStats.length > 100) {
+        existingStats = existingStats.slice(-100);
+      }
+
+      await fs.writeFile(statsFile, JSON.stringify(existingStats, null, 2));
+      console.log('📊 Estatísticas de sincronização salvas');
+    } catch (error) {
+      console.error('❌ Erro ao salvar estatísticas:', error.message);
+    }
+  }
+
+  /**
+   * Lê e retorna logs de erro salvos
+   * @param {Object} options - Opções de filtro (tipo, fase, limite)
+   * @returns {Array} Array de logs de erro
+   */
+  async getErrorLogs(options = {}) {
+    try {
+      const { type, phase, limit = 50 } = options;
+      
+      if (!fs.existsSync(this.errorLogFile)) {
+        return [];
+      }
+
+      const fileContent = await fs.readFile(this.errorLogFile, 'utf8');
+      let logs = JSON.parse(fileContent);
+
+      // Aplica filtros se especificados
+      if (type) {
+        logs = logs.filter(log => log.type === type);
+      }
+      
+      if (phase) {
+        logs = logs.filter(log => log.phase === phase);
+      }
+
+      // Ordena por timestamp mais recente primeiro
+      logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+      // Limita quantidade de resultados
+      return logs.slice(0, limit);
+
+    } catch (error) {
+      console.error('❌ Erro ao ler logs de erro:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Lê e retorna estatísticas de sincronização
+   * @param {Object} options - Opções de filtro (fase, limite)
+   * @returns {Array} Array de estatísticas
+   */
+  async getSyncStats(options = {}) {
+    try {
+      const { phase, limit = 20 } = options;
+      const statsFile = path.join(this.dataDir, 'sync-stats.json');
+      
+      if (!fs.existsSync(statsFile)) {
+        return [];
+      }
+
+      const fileContent = await fs.readFile(statsFile, 'utf8');
+      let stats = JSON.parse(fileContent);
+
+      // Aplica filtros se especificados
+      if (phase) {
+        stats = stats.filter(stat => stat.phase === phase);
+      }
+
+      // Ordena por timestamp mais recente primeiro
+      stats.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+      return stats.slice(0, limit);
+
+    } catch (error) {
+      console.error('❌ Erro ao ler estatísticas:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Gera relatório resumido dos logs de erro
+   * @returns {Object} Relatório com estatísticas dos erros
+   */
+  async generateErrorReport() {
+    try {
+      const logs = await this.getErrorLogs({ limit: 1000 });
+      
+      if (logs.length === 0) {
+        return {
+          totalErrors: 0,
+          message: 'Nenhum erro encontrado nos logs'
+        };
+      }
+
+      // Agrupa erros por tipo
+      const errorsByType = {};
+      const errorsByPhase = {};
+      const recentErrors = logs.slice(0, 10);
+
+      logs.forEach(log => {
+        errorsByType[log.type] = (errorsByType[log.type] || 0) + 1;
+        if (log.phase) {
+          errorsByPhase[log.phase] = (errorsByPhase[log.phase] || 0) + 1;
+        }
+      });
+
+      return {
+        totalErrors: logs.length,
+        errorsByType,
+        errorsByPhase,
+        recentErrors,
+        oldestError: logs[logs.length - 1]?.timestamp,
+        newestError: logs[0]?.timestamp
+      };
+
+    } catch (error) {
+      console.error('❌ Erro ao gerar relatório:', error.message);
+      return { error: error.message };
     }
   }
 
@@ -500,42 +716,121 @@ class VtexOrdersService {
    * @param {Array} orders - Array de pedidos da VTEX
    * @returns {Array} Array com dados no formato da Emarsys
    */
-  transformOrdersForEmarsys(orders) {
+  async transformOrdersForEmarsys(orders) {
     const emarsysData = [];
     let skippedMarketplace = 0;
+    const skippedOrders = [];
+    const processedOrders = [];
+    const errorOrders = [];
+    
+    console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
     for (const order of orders) {
-      const orderId = order.order;
-      
-      // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
-      const orderIdPattern = /^\d{13}-01$/;
-      if (!orderIdPattern.test(orderId)) {
-        console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
-        skippedMarketplace++;
-        continue;
-      }
-      console.log('order | 01/09 |', order);
-      // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
-      const saleRecord = {
-        order: orderId,
-        item: order.item,
-        email: order.customer_email,
-        quantity: order.quantity,
-        timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        price: order.price || '0',
-        s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
-        s_store_id: order.s_store_id || 'piccadilly',
-        s_sales_channel: order.s_sales_channel || 'ecommerce',
-        s_discount: order.s_discount || '0'
-      };
+      try {
+        const orderId = order.order;
+        
+        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
+        const orderIdPattern = /^\d{13}-01$/;
+        if (!orderIdPattern.test(orderId)) {
+          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
+          skippedMarketplace++;
+          skippedOrders.push({
+            orderId,
+            reason: 'marketplace_order_pattern',
+            pattern: orderId,
+            originalOrder: order
+          });
+          continue;
+        }
 
-      emarsysData.push(saleRecord);
+        // Validações de campos obrigatórios
+        const missingFields = [];
+        if (!order.email) missingFields.push('email');
+        if (!order.item) missingFields.push('item');
+        if (!order.quantity) missingFields.push('quantity');
+        if (!order.price) missingFields.push('price');
+
+        if (missingFields.length > 0) {
+          console.warn(`⚠️ Pedido ${orderId} com campos faltando: ${missingFields.join(', ')}`);
+          errorOrders.push({
+            orderId,
+            reason: 'missing_required_fields',
+            missingFields,
+            originalOrder: order
+          });
+          
+          // Salva log de erro
+          await this.saveErrorLog({
+            type: 'missing_fields',
+            orderId,
+            missingFields,
+            order: order
+          });
+        }
+
+        // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
+        const saleRecord = {
+          order: orderId,
+          item: order.item,
+          email: order.email,
+          quantity: order.quantity,
+          timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+          price: order.price || '0',
+          s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
+          s_store_id: order.s_store_id || 'piccadilly',
+          s_sales_channel: order.s_sales_channel || 'ecommerce',
+          s_discount: order.s_discount || '0'
+        };
+
+        emarsysData.push(saleRecord);
+        processedOrders.push({
+          orderId,
+          status: 'processed'
+        });
+
+      } catch (error) {
+        console.error(`❌ Erro ao processar pedido ${order.order}:`, error.message);
+        errorOrders.push({
+          orderId: order.order,
+          reason: 'processing_error',
+          error: error.message,
+          originalOrder: order
+        });
+
+        // Salva log de erro
+        await this.saveErrorLog({
+          type: 'processing_error',
+          orderId: order.order,
+          error: error.message,
+          stack: error.stack,
+          order: order
+        });
+      }
     }
 
+    // Salva estatísticas detalhadas
+    const stats = {
+      totalInput: orders.length,
+      totalProcessed: emarsysData.length,
+      skippedMarketplace,
+      errorCount: errorOrders.length,
+      successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
+    };
+
+    await this.saveSyncStats({
+      phase: 'transformation',
+      ...stats,
+      skippedOrders: skippedOrders.length > 0 ? skippedOrders.slice(0, 10) : [], // Primeiros 10 para não sobrecarregar
+      errorOrders: errorOrders.length > 0 ? errorOrders.slice(0, 10) : []
+    });
+
     console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${errorOrders.length} com erro`);
+    
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
     }
+    
     return emarsysData;
   }
 
@@ -593,7 +888,16 @@ class VtexOrdersService {
       if (validationResult.errors.length > 0) {
         console.error(`❌ ${validationResult.errors.length} erros de validação encontrados:`);
         console.error('Primeiros 10 erros:', validationResult.errors.slice(0, 10));
-        
+
+        // Salva log dos erros de validação
+        await this.saveErrorLog({
+          type: 'validation_errors',
+          phase: 'csv_generation',
+          totalErrors: validationResult.errors.length,
+          errors: validationResult.errors.slice(0, 50), // Primeiros 50 erros
+          totalOrders: ordersToProcess.length
+        });
+
         // Filtra apenas pedidos válidos
         const validOrders = ordersToProcess.filter((order, index) => {
           const lineNum = index + 2;
@@ -603,9 +907,29 @@ class VtexOrdersService {
         
         console.log(`🔄 Filtrando pedidos: ${ordersToProcess.length} -> ${validOrders.length} válidos`);
         
+        // Salva estatísticas da validação
+        await this.saveSyncStats({
+          phase: 'csv_validation',
+          totalInput: ordersToProcess.length,
+          totalValid: validOrders.length,
+          totalInvalid: ordersToProcess.length - validOrders.length,
+          validationErrors: validationResult.errors.length,
+          successRate: ((validOrders.length / ordersToProcess.length) * 100).toFixed(2) + '%'
+        });
+        
         if (validOrders.length === 0) {
           console.error('❌ Nenhum pedido válido encontrado após validação. Verifique os dados de origem.');
           console.error('📊 Exemplo de pedido com erro:', ordersToProcess[0]);
+          
+          // Salva log crítico
+          await this.saveErrorLog({
+            type: 'critical_error',
+            phase: 'csv_validation',
+            message: 'Nenhum pedido válido encontrado após validação',
+            totalOrders: ordersToProcess.length,
+            sampleError: ordersToProcess[0]
+          });
+          
           throw new Error('Nenhum pedido válido encontrado após validação. Verifique os dados de origem.');
         }
         
@@ -942,13 +1266,19 @@ class VtexOrdersService {
 
       // Após envio bem-sucedido, tenta limpar a base de orders (não bloqueia o retorno)
       if (result && result.success) {
-        // Captura a referência do axios antes da função assíncrona
-        const axiosInstance = axios;
+        // Verifica se a limpeza está habilitada via variável de ambiente
+        const cleanupEnabled = process.env.ENABLE_ORDER_CLEANUP !== 'false';
         
-        // Executa a limpeza de forma assíncrona sem bloquear o retorno
-        setImmediate(async () => {
-          try {
-            console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
+        if (!cleanupEnabled) {
+          console.log('⏸️ Limpeza de orders pausada via ENABLE_ORDER_CLEANUP=false');
+        } else {
+          // Captura a referência do axios antes da função assíncrona
+          const axiosInstance = axios;
+          
+          // Executa a limpeza de forma assíncrona sem bloquear o retorno
+          setImmediate(async () => {
+            try {
+              console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
             
             // Usa axios diretamente com configuração completa
             const cleanupResponse = await axiosInstance({
@@ -979,6 +1309,7 @@ class VtexOrdersService {
             }
           }
         });
+        }
       }
       
       return result;
@@ -1182,7 +1513,7 @@ class VtexOrdersService {
       
       // 3. Transformar dados para formato Emarsys
       console.log('🔄 Transformando dados para formato Emarsys...', orders);
-      const transformedOrders = this.transformOrdersForEmarsys(orders);
+      const transformedOrders = await this.transformOrdersForEmarsys(orders);
       
       // 4. Gerar CSV
       console.log('📄 Gerando CSV...| 22/08 |');
@@ -1225,11 +1556,27 @@ class VtexOrdersService {
 
       const duration = Date.now() - startTime;
       
+      // Salva estatísticas finais da sincronização
+      const finalStats = {
+        phase: 'sync_complete',
+        totalOrders: orders.length,
+        transformedOrders: transformedOrders.length,
+        csvGenerated: csvResult.success,
+        emarsysSent: emarsysSendResult.success,
+        duration: duration,
+        saveSuccess: saveResult.success,
+        overallSuccess: true
+      };
+
+      await this.saveSyncStats(finalStats);
+      
       console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
+      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.length} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
         success: true,
         totalOrders: orders.length,
+        transformedOrders: transformedOrders.length,
         message: 'Sincronização de pedidos concluída com sucesso',
         orders: orders,
         saveResult: saveResult,
@@ -1241,6 +1588,16 @@ class VtexOrdersService {
       
     } catch (error) {
       console.error('❌ Erro na sincronização de pedidos:', error);
+      
+      // Salva log do erro crítico
+      await this.saveErrorLog({
+        type: 'sync_critical_error',
+        phase: 'sync_orders',
+        error: error.message,
+        stack: error.stack,
+        timestamp: getBrazilianTimestamp()
+      });
+
       return {
         success: false,
         error: error.message,

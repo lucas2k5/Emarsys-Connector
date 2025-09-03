@@ -476,21 +476,45 @@ router.post('/orders-extract', async (req, res) => {
 /**
  * @route GET /api/integration/orders-extract-all
  * @desc Extrai TODOS os pedidos do período (com paginação automática)
+ * @param {string} brazilianDate - Data brasileira (YYYY-MM-DD) OU
+ * @param {string} startDate - Data inicial UTC (ISO)
+ * @param {string} toDate - Data final UTC (ISO)
+ * @param {string} startTime - Horário inicial brasileiro (HH:MM, opcional, padrão: 00:00)
+ * @param {string} endTime - Horário final brasileiro (HH:MM, opcional, padrão: 23:59)
+ * @example /orders-extract-all?brazilianDate=2025-09-03
+ * @example /orders-extract-all?brazilianDate=2025-09-03&startTime=08:00&endTime=18:00
  * @access Public
  */
 router.get('/orders-extract-all', async (req, res) => {
   try {
     // Parâmetros da query
-    const startDate = req.query.startDate;
-    const toDate = req.query.toDate;
+    let startDate = req.query.startDate;
+    let toDate = req.query.toDate;
+    const brazilianDate = req.query.brazilianDate;
+    const startTime = req.query.startTime;
+    const endTime = req.query.endTime;
     const perPage = parseInt(req.query.per_page);
     const useBatching = req.query.batching === 'true';
     const daysPerBatch = parseInt(req.query.daysPerBatch) || 7;
 
-    if (!startDate || !toDate) {
+    // Novo: Suporte para data brasileira
+    if (brazilianDate) {
+      const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
+      startDate = range.startUTC;
+      toDate = range.endUTC;
+      
+      console.log('🇧🇷 Usando data brasileira:', {
+        brazilianDate,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        convertedStartUTC: startDate,
+        convertedEndUTC: toDate
+      });
+    } else if (!startDate || !toDate) {
       return res.status(400).json({
         success: false,
-        error: 'startDate e toDate são obrigatórios (formato ISO: 2025-08-01T00:00:00Z)'
+        error: 'Forneça startDate+toDate (UTC) OU brazilianDate (ex: brazilianDate=2025-09-03&startTime=08:00&endTime=18:00)'
       });
     }
 
@@ -509,12 +533,20 @@ router.get('/orders-extract-all', async (req, res) => {
       // ETAPA 1: Buscar todos os pedidos por período (só IDs)
       console.log('📦 ETAPA 1: Buscando pedidos por período...');
       
+      // Calcula a diferença em dias para decidir automaticamente a estratégia
+      const startDateObj = new Date(startDate);
+      const toDateObj = new Date(toDate);
+      const diffInDays = Math.ceil((toDateObj - startDateObj) / (1000 * 60 * 60 * 24));
+      
+      // Decide automaticamente: períodos > 30 dias usam lotes
+      const shouldUseBatching = diffInDays > 30 || useBatching; // Mantém compatibilidade temporária
+      
       let ordersList;
-      if (useBatching) {
-        console.log('🔄 Usando busca em lotes para evitar limite de páginas...');
+      if (shouldUseBatching) {
+        console.log(`🔄 Período longo detectado (${diffInDays} dias), usando busca em lotes para evitar limite de páginas...`);
         ordersList = await vtexOrdersService.getAllOrdersInPeriodBatched(startDate, toDate, daysPerBatch);
       } else {
-        console.log('🔄 Usando busca normal...');
+        console.log(`🔄 Período curto (${diffInDays} dias), usando busca normal...`);
         ordersList = await vtexOrdersService.getAllOrdersInPeriod(startDate, toDate, false);
       }
       
@@ -693,15 +725,32 @@ router.get('/orders-extract-all', async (req, res) => {
 router.get('/orders-extract-test', async (req, res) => {
   try {
     // Parâmetros da query
-    const startDate = req.query.startDate;
-    const toDate = req.query.toDate;
+    let startDate = req.query.startDate;
+    let toDate = req.query.toDate;
+    const brazilianDate = req.query.brazilianDate;
+    const startTime = req.query.startTime;
+    const endTime = req.query.endTime;
     const useBatching = req.query.batching === 'true';
     const daysPerBatch = parseInt(req.query.daysPerBatch) || 7;
 
-    if (!startDate || !toDate) {
+    // Suporte para data brasileira
+    if (brazilianDate) {
+      const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
+      startDate = range.startUTC;
+      toDate = range.endUTC;
+      
+      console.log('🇧🇷 [TESTE] Usando data brasileira:', {
+        brazilianDate,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        convertedStartUTC: startDate,
+        convertedEndUTC: toDate
+      });
+    } else if (!startDate || !toDate) {
       return res.status(400).json({
         success: false,
-        error: 'startDate e toDate são obrigatórios (formato ISO: 2025-08-01T00:00:00Z)'
+        error: 'Forneça startDate+toDate (UTC) OU brazilianDate (ex: brazilianDate=2025-09-03&startTime=08:00&endTime=18:00)'
       });
     }
 
@@ -795,15 +844,32 @@ router.get('/orders-extract-test', async (req, res) => {
 router.get('/orders-extract-test-details', async (req, res) => {
   try {
     // Parâmetros da query
-    const startDate = req.query.startDate;
-    const toDate = req.query.toDate;
+    let startDate = req.query.startDate;
+    let toDate = req.query.toDate;
+    const brazilianDate = req.query.brazilianDate;
+    const startTime = req.query.startTime;
+    const endTime = req.query.endTime;
     const useBatching = req.query.batching === 'true';
     const daysPerBatch = parseInt(req.query.daysPerBatch) || 7;
 
-    if (!startDate || !toDate) {
+    // Suporte para data brasileira
+    if (brazilianDate) {
+      const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
+      startDate = range.startUTC;
+      toDate = range.endUTC;
+      
+      console.log('🇧🇷 [TESTE DETALHES] Usando data brasileira:', {
+        brazilianDate,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        convertedStartUTC: startDate,
+        convertedEndUTC: toDate
+      });
+    } else if (!startDate || !toDate) {
       return res.status(400).json({
         success: false,
-        error: 'startDate e toDate são obrigatórios (formato ISO: 2025-08-01T00:00:00Z)'
+        error: 'Forneça startDate+toDate (UTC) OU brazilianDate (ex: brazilianDate=2025-09-03&startTime=08:00&endTime=18:00)'
       });
     }
 
@@ -1626,6 +1692,77 @@ router.get('/export-cl-with-addresses', async (req, res) => {
     }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para acessar logs de erro
+router.get('/sync/error-logs', async (req, res) => {
+  try {
+    const { type, phase, limit } = req.query;
+    const vtexOrdersService = new VtexOrdersService();
+    
+    const options = {};
+    if (type) options.type = type;
+    if (phase) options.phase = phase;
+    if (limit) options.limit = parseInt(limit);
+
+    const logs = await vtexOrdersService.getErrorLogs(options);
+    
+    res.json({
+      success: true,
+      data: logs,
+      total: logs.length,
+      filters: options
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Rota para acessar estatísticas de sincronização
+router.get('/sync/stats', async (req, res) => {
+  try {
+    const { phase, limit } = req.query;
+    const vtexOrdersService = new VtexOrdersService();
+    
+    const options = {};
+    if (phase) options.phase = phase;
+    if (limit) options.limit = parseInt(limit);
+
+    const stats = await vtexOrdersService.getSyncStats(options);
+    
+    res.json({
+      success: true,
+      data: stats,
+      total: stats.length,
+      filters: options
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Rota para gerar relatório de erros
+router.get('/sync/error-report', async (req, res) => {
+  try {
+    const vtexOrdersService = new VtexOrdersService();
+    const report = await vtexOrdersService.generateErrorReport();
+    
+    res.json({
+      success: true,
+      report: report
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
