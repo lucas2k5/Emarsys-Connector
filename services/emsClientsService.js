@@ -4,16 +4,17 @@ const path = require('path');
 const moment = require('moment');
 const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../utils/dateUtils');
 const emarsysService = require('./emarsysContactService');
+const EmarsysWebdavService = require('./emarsysWebdavService');
 
 require('dotenv').config();
 
 class EmsClientsService {
   constructor() {
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
-    this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
+    this.exportsDir = process.env.EXPORTS_DIR || path.join(__dirname, '..', 'exports');
     this.vtexBaseUrl = (process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
     this.entity = process.env.EMS_ENTITY_ID || 'emsClientsV2';
     this.lookbackHours = parseInt(process.env.EMS_SYNC_LOOKBACK_HOURS || '5', 10);
+    this.emarsysWebdav = new EmarsysWebdavService();
   }
 
   getVtexHeaders() {
@@ -133,25 +134,13 @@ class EmsClientsService {
   }
 
   mapToEmarsysContact(contact) {
-    // Map VTEX fields to Emarsys standard field IDs: 1=first name, 2=last name, 3=email
-    const payload = {
+    // Map obrigatório: 1=first name, 2=last name, 3=email
+    return {
       key_id: '3',
       '1': contact.firstName || '',
       '2': contact.lastName || '',
       '3': contact.email || ''
     };
-    // Optional custom fields mapping via env, e.g., DOCUMENT_FIELD_ID, PHONE_FIELD_ID, CITY_FIELD_ID, STATE_FIELD_ID, OPTIN_FIELD_ID
-    const docField = process.env.EMARSYS_FIELD_DOCUMENT_ID;
-    const phoneField = process.env.EMARSYS_FIELD_PHONE_ID;
-    const cityField = process.env.EMARSYS_FIELD_CITY_ID;
-    const stateField = process.env.EMARSYS_FIELD_STATE_ID;
-    const optinField = process.env.EMARSYS_FIELD_OPTIN_ID;
-    if (docField) payload[String(docField)] = contact.document || '';
-    if (phoneField) payload[String(phoneField)] = contact.homePhone || '';
-    if (cityField) payload[String(cityField)] = contact.city || '';
-    if (stateField) payload[String(stateField)] = contact.state || '';
-    if (optinField) payload[String(optinField)] = contact.optin === true ? 1 : 0;
-    return payload;
   }
 
   async generateContactsCsv(contacts, filenameBase = 'emarsys-contacts-import') {
@@ -162,15 +151,9 @@ class EmsClientsService {
     const timestamp = getBrazilianTimestampForFilename();
     const filename = `${filenameBase}-${timestamp}.csv`;
     const filePath = path.join(this.exportsDir, filename);
-    // Header: at least email and name fields; Emarsys can map by header names in contact import; safer is field IDs
+    // Header com IDs dos campos padrão Emarsys
     const headers = ['3','1','2'];
-    const extra = [];
-    if (process.env.EMARSYS_FIELD_DOCUMENT_ID) extra.push(String(process.env.EMARSYS_FIELD_DOCUMENT_ID));
-    if (process.env.EMARSYS_FIELD_PHONE_ID) extra.push(String(process.env.EMARSYS_FIELD_PHONE_ID));
-    if (process.env.EMARSYS_FIELD_CITY_ID) extra.push(String(process.env.EMARSYS_FIELD_CITY_ID));
-    if (process.env.EMARSYS_FIELD_STATE_ID) extra.push(String(process.env.EMARSYS_FIELD_STATE_ID));
-    if (process.env.EMARSYS_FIELD_OPTIN_ID) extra.push(String(process.env.EMARSYS_FIELD_OPTIN_ID));
-    const headerRow = headers.concat(extra).join(',');
+    const headerRow = headers.join(',');
     let csv = '\ufeff' + headerRow + '\n';
     for (const c of contacts) {
       const row = [
@@ -178,9 +161,6 @@ class EmsClientsService {
         c['1'] || '',
         c['2'] || ''
       ];
-      for (const h of extra) {
-        row.push(c[h] != null ? String(c[h]).replace(/[\r\n,\"]+/g, ' ').trim() : '');
-      }
       csv += row.join(',') + '\n';
     }
     await fs.writeFile(filePath, csv, 'utf8');
@@ -216,20 +196,16 @@ class EmsClientsService {
     }
     // 4) Map to emarsys contact payloads
     const contacts = pending.map(p => this.mapToEmarsysContact(p));
-    // 5) Generate CSV (optional) and 6) Send in batch using API contact endpoint iteratively
-    const csvResult = await this.generateContactsCsv(contacts);
-    // Emarsys contact API has only single-contact endpoint; for batch, iterate with rate limits
-    let successCount = 0;
-    let failCount = 0;
-    for (const contact of contacts) {
-      const result = await emarsysService.createContact(contact);
-      if (result.success) successCount++; else failCount++;
-      // small delay to avoid rate limit
-      await new Promise(r => setTimeout(r, 150));
+    // 5) Generate CSV e 6) Enviar via WebDAV (import de contatos em lote)
+    const csvResult = await this.generateContactsCsv(contacts, 'emarsys-contacts-import');
+    const remotePath = `/contact/${csvResult.filename}`;
+    const upload = await this.emarsysWebdav.uploadCatalogFile(csvResult.filePath, remotePath);
+    if (upload && upload.success) {
+      // 7) Marcar como sincronizado
+      await this.markAsSynced(pending);
+      return { success: true, sent: contacts.length, failed: 0, csv: csvResult, upload };
     }
-    // 7) Mark synced
-    await this.markAsSynced(pending);
-    return { success: true, sent: successCount, failed: failCount, csv: csvResult };
+    return { success: false, error: upload?.error || 'Falha no upload para Emarsys', csv: csvResult };
   }
 
   async sendSingleContact(body) {
