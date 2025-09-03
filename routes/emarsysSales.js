@@ -105,15 +105,22 @@ router.post('/send-csv-file', async (req, res) => {
       console.log(`📄 Usando arquivo mais recente`);
     }
     
-    const result = await emarsysSalesService.sendCsvFileToEmarsys(filename);
+    const result = 'TESTE';//await emarsysSalesService.sendCsvFileToEmarsys(filename);//BUG
     
     let cleanupResult = null;
     
-    // Se o envio foi bem-sucedido, executa limpeza da base de orders
+    // Se o envio foi bem-sucedido, executa limpeza da base de orders (se habilitada)
     if (result && result.success) {
-      // Limpeza da base de orders
-      try {
-        console.log('🧹 Limpando base de orders após sincronização...');
+      // Verifica se a limpeza está habilitada via variável de ambiente
+      const cleanupEnabled = process.env.ENABLE_ORDER_CLEANUP !== 'false';
+      
+      if (!cleanupEnabled) {
+        console.log('⏸️ Limpeza de orders pausada via ENABLE_ORDER_CLEANUP=false');
+        cleanupResult = { success: false, skipped: true, message: 'Limpeza pausada por configuração' };
+      } else {
+        // Limpeza da base de orders
+        try {
+          console.log('🧹 Limpando base de orders após sincronização...');
         
         const baseUrlEnv = (process.env.VTEX_BASE_URL).replace(/\/$/, '');
         if (!baseUrlEnv) {
@@ -124,7 +131,7 @@ router.post('/send-csv-file', async (req, res) => {
           
           const cleanupResponse = await axios({
             method: 'DELETE',
-            url: `${baseUrlEnv}/_v/orders/all`,
+            url: `${baseUrlEnv}/_v/sorders/all`,
             headers: {
               'Content-Type': 'application/json'
             },
@@ -163,6 +170,7 @@ router.post('/send-csv-file', async (req, res) => {
           console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
           cleanupResult = { success: false, error: cleanupError?.message, status: status };
         }
+      }
       }
     }
     

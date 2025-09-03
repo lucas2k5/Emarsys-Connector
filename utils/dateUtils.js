@@ -65,6 +65,70 @@ function convertToBrazilianTime(date) {
 }
 
 /**
+ * Converte uma data do fuso horário brasileiro para UTC
+ * Útil quando você quer buscar pedidos de um dia específico no Brasil
+ * @param {string} brazilianDateStr - Data no formato brasileiro (ex: "2025-09-03" ou "2025-09-03T10:30:00")
+ * @returns {string} Data convertida para UTC
+ */
+function convertBrazilianDateToUTC(brazilianDateStr) {
+  // Se só tem a data (sem hora), assume 00:00:00
+  let dateStr = brazilianDateStr;
+  if (!dateStr.includes('T')) {
+    dateStr += 'T00:00:00';
+  }
+  
+  // Cria a data assumindo que está no fuso brasileiro
+  const brazilianDate = new Date(dateStr + '-03:00'); // UTC-3 (Brasília)
+  return brazilianDate.toISOString();
+}
+
+/**
+ * Gera período completo de um dia no fuso brasileiro convertido para UTC
+ * @param {string} brazilianDate - Data no formato YYYY-MM-DD
+ * @returns {Object} {startUTC, endUTC} - Início e fim do dia em UTC
+ */
+function getBrazilianDayRangeInUTC(brazilianDate) {
+  const startUTC = convertBrazilianDateToUTC(`${brazilianDate}T00:00:00`);
+  const endUTC = convertBrazilianDateToUTC(`${brazilianDate}T23:59:59`);
+  
+  return {
+    startUTC,
+    endUTC
+  };
+}
+
+/**
+ * Converte data e horário brasileiro para UTC com range personalizado
+ * @param {string} brazilianDate - Data no formato YYYY-MM-DD
+ * @param {string} startTime - Horário inicial (HH:MM ou HH:MM:SS, padrão: "00:00:00")
+ * @param {string} endTime - Horário final (HH:MM ou HH:MM:SS, padrão: "23:59:59")
+ * @returns {Object} {startUTC, endUTC} - Período em UTC
+ */
+function getBrazilianTimeRangeInUTC(brazilianDate, startTime = "00:00:00", endTime = "23:59:59") {
+  // Normaliza os horários para HH:MM:SS
+  const normalizeTime = (time) => {
+    if (time.split(':').length === 2) {
+      return time + ':00'; // Adiciona segundos se não tiver
+    }
+    return time;
+  };
+  
+  const normalizedStartTime = normalizeTime(startTime);
+  const normalizedEndTime = normalizeTime(endTime);
+  
+  const startUTC = convertBrazilianDateToUTC(`${brazilianDate}T${normalizedStartTime}`);
+  const endUTC = convertBrazilianDateToUTC(`${brazilianDate}T${normalizedEndTime}`);
+  
+  return {
+    startUTC,
+    endUTC,
+    brazilianDate,
+    startTime: normalizedStartTime,
+    endTime: normalizedEndTime
+  };
+}
+
+/**
  * Verifica se uma data está no fuso horário correto
  * @param {string} dateString - String da data
  * @returns {boolean} True se estiver no fuso horário correto
@@ -80,5 +144,8 @@ module.exports = {
   getBrazilianTimestampForFilename,
   getBrazilianDate,
   convertToBrazilianTime,
+  convertBrazilianDateToUTC,
+  getBrazilianDayRangeInUTC,
+  getBrazilianTimeRangeInUTC,
   isBrazilianTimezone
 }; 
