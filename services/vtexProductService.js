@@ -104,16 +104,36 @@ class VtexProductService {
     }
   }
 
-  async _initializeAxiosRetry() {
+  _initializeAxiosRetry() {
     try {
-      const axiosRetry = (await import('axios-retry')).default;
-      axiosRetry(this.client, {
-        retries: 3,
-        retryDelay: axiosRetry.exponentialDelay,
-        retryCondition: err => (axiosRetry.isNetworkOrIdempotentRequestError(err) || err.response?.status >= 400)
-      });
+      // Configurar retry automático simples
+      this.client.interceptors.response.use(
+        response => response,
+        async error => {
+          const config = error.config;
+          config.retryCount = config.retryCount || 0;
+          
+          if (config.retryCount < 3 && (
+            !error.response || 
+            error.response.status >= 500 || 
+            error.code === 'ECONNRESET' ||
+            error.code === 'ETIMEDOUT'
+          )) {
+            config.retryCount++;
+            console.log(`🔄 Tentativa ${config.retryCount}/3 para ${config.url}`);
+            
+            // Aguarda antes de tentar novamente (backoff exponencial)
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, config.retryCount) * 1000));
+            
+            return this.client.request(config);
+          }
+          
+          return Promise.reject(error);
+        }
+      );
+      console.log('✅ Retry nativo configurado com sucesso');
     } catch (error) {
-      console.error('Failed to initialize axios-retry:', error);
+      console.error('Failed to initialize retry nativo:', error);
     }
   }
 

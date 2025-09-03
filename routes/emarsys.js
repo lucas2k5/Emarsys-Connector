@@ -372,4 +372,54 @@ router.post('/generate-csv', async (req, res) => {
   }
 });
 
+/**
+ * @route POST /api/emarsys/generate-contacts-csv
+ * @desc Gera arquivo CSV específico para importação de contatos no Emarsys
+ * @access Public
+ * @body {Array} records - Array de registros da CL
+ * @body {string} [filename] - Nome personalizado do arquivo
+ */
+router.post('/generate-contacts-csv', async (req, res) => {
+  try {
+    console.log('📊 Gerando arquivo CSV específico para importação de contatos no Emarsys...');
+    
+    const {
+      records,
+      filename
+    } = req.body;
+
+    if (!records || !Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Array de registros é obrigatório e não pode estar vazio'
+      });
+    }
+
+    const contactServiceInstance = new contactService();
+    
+    const result = await contactServiceInstance.generateEmarsysContactsCsv(records, {
+      filename
+    });
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Arquivo CSV para Emarsys gerado com sucesso',
+        data: result
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Erro ao gerar CSV para Emarsys:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router; 

@@ -79,7 +79,7 @@ class EmarsysWebdavService {
             console.log('🎯 RESPOSTA EMARSYS WEBDAV RECEBIDA:');
             console.log('   📊 Status: Sucesso');
             console.log('   📂 Caminho remoto: ' + finalRemotePath);
-            console.log('   📏 Bytes enviados: ' + bytesSent);
+            console.log('   📏 Bytes enviados: ' + stats.size);
             
             resolve({ 
               success: true, 
