@@ -21,7 +21,7 @@ class EmarsysWebdavService {
     this.clientPromise = (async () => {
       const { createClient } = await import('webdav');
       this.client = createClient(
-        process.env.WEBDAV_SERVER,
+        process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER,
         {
           username: process.env.WEBDAV_USER,
           password: process.env.WEBDAV_PASS

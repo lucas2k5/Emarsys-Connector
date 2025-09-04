@@ -6,7 +6,7 @@ const path = require('path');
 class EmarsysContactsService {
   constructor() {
     // Para contatos, vamos usar WebDAV como método principal
-    this.webdavUrl = process.env.WEBDAV_SERVER;
+    this.webdavUrl = process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER;
     this.webdavUser = process.env.WEBDAV_USER;
     this.webdavPass = process.env.WEBDAV_PASS;
     
@@ -189,8 +189,8 @@ class EmarsysContactsService {
       const EmarsysWebdavService = require('./emarsysWebdavService');
       const webdavService = new EmarsysWebdavService();
       
-      // Define o caminho remoto para contatos
-      const remotePath = `/contacts/${csvFile.filename}`;
+      // Define o caminho remoto para contatos (usando /export para compatibilidade com auto-import)
+      const remotePath = `/export/${csvFile.filename}`;
       
       const result = await webdavService.uploadCatalogFile(csvFile.filePath, remotePath);
       
