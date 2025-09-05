@@ -1763,8 +1763,6 @@ class ContactService {
     return cleanValue;
   }
 
-
-
   /**
    * Executa o fluxo completo de extração de contatos com endereços (processamento em tempo real)
    * @param {Object} options - Opções de configuração

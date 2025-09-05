@@ -58,6 +58,8 @@ class EmarsysWebdavService {
       // Use provided remote path or default
       const finalRemotePath = remotePath || `/catalog/${path.basename(filePath)}`;
       
+      console.log(`📂 Caminho remoto final: ${finalRemotePath}`);
+      
       const client = await this._getOrCreateClient();
       const stream = fs.createReadStream(filePath);
       
@@ -125,11 +127,29 @@ class EmarsysWebdavService {
 
   async testConnection() {
     try {
+      console.log('🧪 Testando conexão WebDAV...');
+      console.log(`🌐 URL: ${process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER}`);
+      console.log(`👤 User: ${process.env.WEBDAV_USER ? 'Configurado' : 'NÃO CONFIGURADO'}`);
+      
       const client = await this._getOrCreateClient();
-      await client.getDirectoryContents('/');
-      return { success: true, message: 'WebDAV connection established successfully' };
+      const contents = await client.getDirectoryContents('/');
+      
+      console.log('✅ Conexão WebDAV estabelecida com sucesso');
+      console.log(`📁 Diretórios encontrados: ${contents.length}`);
+      
+      return { 
+        success: true, 
+        message: 'WebDAV connection established successfully',
+        directories: contents.length,
+        url: process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER
+      };
     } catch (error) {
-      return { success: false, error: error.message };
+      console.error('❌ Erro na conexão WebDAV:', error.message);
+      return { 
+        success: false, 
+        error: error.message,
+        url: process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER
+      };
     }
   }
 }

@@ -204,6 +204,7 @@ class EmarsysContactImportService {
     // Verifica se tem email (obrigatório)
     const email = row.email || row.Email || row.EMAIL;
     if (!email || !this.isValidEmail(email)) {
+      console.log(`⚠️ Email inválido ou ausente: ${email}`);
       return null;
     }
 
@@ -221,17 +222,17 @@ class EmarsysContactImportService {
       contact['2'] = row.lastName || row.lastname || row.LASTNAME; // Campo 2 = Last Name
     }
 
-    // Campos customizados comuns
+    // Campos customizados comuns - usando os nomes exatos do CSV
     if (row.phone || row.Phone || row.PHONE) {
       contact['57'] = row.phone || row.Phone || row.PHONE; // Campo 57 = Phone (exemplo)
     }
 
-    if (row.birthDate || row.birth_date || row.BIRTH_DATE) {
-      contact['58'] = row.birthDate || row.birth_date || row.BIRTH_DATE; // Campo 58 = Birth Date (exemplo)
+    if (row.date_of_birth || row.birthDate || row.birth_date || row.BIRTH_DATE) {
+      contact['58'] = row.date_of_birth || row.birthDate || row.birth_date || row.BIRTH_DATE; // Campo 58 = Birth Date (exemplo)
     }
 
-    if (row.document || row.Document || row.DOCUMENT) {
-      contact['59'] = row.document || row.Document || row.DOCUMENT; // Campo customizado para documento
+    if (row.external_id || row.document || row.Document || row.DOCUMENT) {
+      contact['59'] = row.external_id || row.document || row.Document || row.DOCUMENT; // Campo customizado para documento
     }
 
     // Campos de endereço se disponíveis
@@ -243,10 +244,11 @@ class EmarsysContactImportService {
       contact['61'] = row.state || row.State || row.STATE;
     }
 
-    if (row.postalCode || row.postal_code || row.POSTAL_CODE) {
-      contact['62'] = row.postalCode || row.postal_code || row.POSTAL_CODE;
+    if (row.zip_code || row.postalCode || row.postal_code || row.POSTAL_CODE) {
+      contact['62'] = row.zip_code || row.postalCode || row.postal_code || row.POSTAL_CODE;
     }
 
+    console.log(`✅ Contato mapeado: ${email} -> ${JSON.stringify(contact)}`);
     return contact;
   }
 

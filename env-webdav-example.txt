@@ -1,0 +1,31 @@
+# Configurações WebDAV para Emarsys
+# Adicione estas variáveis ao seu arquivo .env
+
+# URL do servidor WebDAV do Emarsys (CORRIGIDA)
+# URL correta obtida do painel WebDAV do Emarsys
+WEBDAV_SERVER=https://suite60.emarsys.net/storage/piccadilly/
+# OU
+WEBDAV_FOLDER=https://suite60.emarsys.net/storage/piccadilly/
+
+# NOTA: Esta é a URL correta conforme mostrado no painel WebDAV
+
+# Credenciais WebDAV (usuários disponíveis no painel)
+# Opções disponíveis: piccadilly, openflow
+WEBDAV_USER=openflow
+WEBDAV_PASS=sua_senha_webdav
+
+# Configurações adicionais para contatos
+EMARSYS_CONTACTS_API_URL=https://api.emarsys.net/api/v2/contact/import
+EMARSYS_CONTACTS_TOKEN=seu_token_para_api_contatos
+
+# Configurações WSSE (alternativa para API v2)
+EMARSYS_USER=seu_username_emarsys
+EMARSYS_SECRET=sua_senha_emarsys
+EMARSYS_ENDPOINT=https://api.emarsys.net/api/v2
+
+# Configurações SFTP (para catálogo de produtos)
+SFTP_HOST=191.252.83.193
+SFTP_PORT=22
+SFTP_USERNAME=seu_usuario_sftp
+SFTP_PASSWORD=sua_senha_sftp
+SFTP_REMOTE_PATH=/catalog/catalog.csv.gz
