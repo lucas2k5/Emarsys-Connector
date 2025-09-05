@@ -175,7 +175,7 @@ class ContactService {
         
                  const params = {
            _size: size,
-           _fields: options.fields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+           _fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
            _sort: options.sort || 'createdIn DESC'
          };
         
@@ -442,7 +442,7 @@ class ContactService {
       
       const params = {
         _size: pageSize,
-        _fields: options.fields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+        _fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
         _sort: options.sort || 'createdIn DESC'
       };
       
@@ -601,7 +601,7 @@ class ContactService {
       const params = {
         _size: size,
         _from: offset,
-        _fields: options.fields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+        _fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
         _sort: options.sort || 'createdIn DESC'
       };
       
@@ -662,7 +662,7 @@ class ContactService {
       
       const params = {
         _size: end - start + 1,
-        _fields: options.fields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+        _fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
         _sort: options.sort || 'createdIn DESC'
       };
       
@@ -909,7 +909,7 @@ class ContactService {
         params: {
           _size: 10,
           _from: 0,
-          _fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+          _fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
           _sort: 'createdIn DESC'
         },
         headers: {
@@ -937,7 +937,7 @@ class ContactService {
         params: {
           _size: 10,
           _from: 10,
-          _fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+          _fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
           _sort: 'createdIn DESC'
         },
         headers: {
@@ -965,7 +965,7 @@ class ContactService {
         params: {
           _size: 10,
           _from: 20,
-          _fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+          _fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
           _sort: 'createdIn DESC'
         },
         headers: {
@@ -992,7 +992,7 @@ class ContactService {
         url: url,
         params: {
           _size: 10,
-          _fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+          _fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
           _sort: 'createdIn DESC'
         },
         headers: {
@@ -1024,7 +1024,7 @@ class ContactService {
           params: {
             _size: 10,
             _token: scrollToken,
-            _fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone',
+            _fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName',
             _sort: 'createdIn DESC'
           },
           headers: {
@@ -1156,7 +1156,7 @@ class ContactService {
       // Busca endereços para todos os usuários
       console.log('🔍 Buscando endereços para todos os usuários...');
       
-      // Primeiro, busca todos os endereços para criar um mapa de accountId -> userIds
+      // Primeiro, busca todos os endereços para criar um mapa de userId -> endereços
       console.log('📊 Buscando todos os endereços para criar mapa de relacionamento...');
       const allAddresses = await this.addressService.fetchAllAddresses({
         size: 1000,
@@ -1165,57 +1165,37 @@ class ContactService {
       
       console.log(`📊 Total de endereços encontrados: ${allAddresses.length}`);
       
-      // Cria mapa de accountId -> array de endereços
+      // Cria mapa de userId -> array de endereços
       const addressMap = {};
       allAddresses.forEach(address => {
-        const accountId = address.accountId;
-        if (accountId) {
-          if (!addressMap[accountId]) {
-            addressMap[accountId] = [];
+        const userId = address.userId;
+        if (userId) {
+          if (!addressMap[userId]) {
+            addressMap[userId] = [];
           }
-          addressMap[accountId].push(address);
+          addressMap[userId].push(address);
         }
       });
       
-      console.log(`📊 Mapa de endereços criado para ${Object.keys(addressMap).length} accountIds únicos`);
+      console.log(`📊 Mapa de endereços criado para ${Object.keys(addressMap).length} userIds únicos`);
 
       // Gera o conteúdo CSV em lotes para evitar problemas de memória
       console.log(`📝 Gerando CSV em lotes para ${records.length} registros...`);
       
-      // Headers incluindo campos de endereço
+      // Headers incluindo campos de endereço (padrão Emarsys)
       const headers = [
-        // Campos do cliente
-        'id',
+        // Campos do cliente (CL) - apenas campos necessários para Emarsys
         'email',
-        'accountId',
-        'accountName',
-        'dataEntityId',
-        'integrado',
-        'optIn',
-        'cpf',
-        'birthDate',
-        'phone',
-        'createdIn',
-        'updatedIn',
-        // Campos de endereço
-        'addressId',
-        'addressName',
-        'addressUserId',
-        'addressAccountId',
-        'addressAccountName',
-        'addressDataEntityId',
-        'postalCode',
-        'state',
-        'country',
-        'city',
-        'street',
-        'neighborhood',
-        'number',
-        'complement',
-        'receiverName',
-        'reference',
-        'addressType',
-        'addressLabel'
+        'firstName',
+        'lastName',
+        'external_id', // CPF (renomeado)
+        'date_of_birth', // Data de nascimento (renomeado)
+        'phone', // Telefone
+        // Campos de endereço (AD) - apenas campos necessários para Emarsys
+        'zip_code', // CEP (renomeado)
+        'state', // Estado
+        'country', // País
+        'city' // Cidade
       ];
       
       const csvWithBom = '\ufeff' + headers.join(',') + '\n';
@@ -1232,43 +1212,22 @@ class ContactService {
         
         for (const record of batch) {
           // Busca endereços do usuário
-          const userAddresses = addressMap[record.accountId] || [];
+          const userAddresses = addressMap[record.id] || [];
           const primaryAddress = userAddresses.length > 0 ? userAddresses[0] : {};
           
                      const row = [
-             // Campos do cliente
-             this.sanitizeField(record.id || '', 100, 'id'),
+             // Campos do cliente (CL) - apenas campos necessários para Emarsys
              this.sanitizeField(record.email || '', 100, 'email'),
-             this.sanitizeField(record.accountId || '', 100, 'accountId'),
-             this.sanitizeField(record.accountName || '', 100, 'accountName'),
-             this.sanitizeField(record.dataEntityId || '', 100, 'dataEntityId'),
-             this.sanitizeField(record.integrado || false, 10, 'integrado'),
-             this.sanitizeField(record.optIn || false, 10, 'optIn'),
-             this.sanitizeField(record.document || '', 20, 'document'),
-             this.sanitizeField(record.birthDate || '', 20, 'birthDate'),
+             this.sanitizeField(record.firstName || record.firstname || '', 50, 'firstName'),
+             this.sanitizeField(record.lastName || record.lastname || '', 50, 'lastName'),
+             this.sanitizeField(record.document || '', 20, 'external_id'),
+             this.sanitizeField(record.birthDate || '', 20, 'date_of_birth'),
              this.sanitizeField(record.phone || '', 20, 'phone'),
-             this.sanitizeField(record.createdIn || '', 100, 'createdIn'),
-             this.sanitizeField(record.updatedIn || '', 100, 'updatedIn'),
-             // Campos de endereço
-             this.sanitizeField(primaryAddress.id || '', 100, 'addressId'),
-             this.sanitizeField(primaryAddress.addressName || '', 100, 'addressName'),
-             this.sanitizeField(primaryAddress.userId || '', 100, 'addressUserId'),
-             this.sanitizeField(primaryAddress.accountId || '', 100, 'addressAccountId'),
-             this.sanitizeField(primaryAddress.accountName || '', 100, 'addressAccountName'),
-             this.sanitizeField(primaryAddress.dataEntityId || '', 100, 'addressDataEntityId'),
-             // Campos detalhados de endereço
-             this.sanitizeField(primaryAddress.postalCode || '', 20, 'postalCode'),
+             // Campos de endereço (AD) - apenas campos necessários para Emarsys
+             this.sanitizeField(primaryAddress.postalCode || '', 20, 'zip_code'),
              this.sanitizeField(primaryAddress.state || '', 10, 'state'),
              this.sanitizeField(primaryAddress.country || '', 10, 'country'),
-             this.sanitizeField(primaryAddress.city || '', 50, 'city'),
-             this.sanitizeField(primaryAddress.street || '', 100, 'street'),
-             this.sanitizeField(primaryAddress.neighborhood || '', 50, 'neighborhood'),
-             this.sanitizeField(primaryAddress.number || '', 20, 'number'),
-             this.sanitizeField(primaryAddress.complement || '', 50, 'complement'),
-             this.sanitizeField(primaryAddress.receiverName || '', 100, 'receiverName'),
-             this.sanitizeField(primaryAddress.reference || '', 100, 'reference'),
-             this.sanitizeField(primaryAddress.addressType || '', 20, 'addressType'),
-             this.sanitizeField(primaryAddress.addressLabel || '', 50, 'addressLabel')
+             this.sanitizeField(primaryAddress.city || '', 50, 'city')
            ];
           csvContent += row.join(',') + '\n';
           totalProcessed++;
@@ -1375,13 +1334,8 @@ class ContactService {
       const headers = [
         'id',
         'email',
-        'accountId',
-        'accountName',
-        'dataEntityId',
-        'integrado',
-        'optIn',
-        'cpf',
-        'birthDate',
+        'external_id',
+        'date_of_birth',
         'phone',
         'createdIn',
         'updatedIn'
@@ -1403,13 +1357,8 @@ class ContactService {
           const row = [
             this.sanitizeField(record.id || '', 100, 'id'),
             this.sanitizeField(record.email || '', 100, 'email'),
-            this.sanitizeField(record.accountId || '', 100, 'accountId'),
-            this.sanitizeField(record.accountName || '', 100, 'accountName'),
-            this.sanitizeField(record.dataEntityId || '', 100, 'dataEntityId'),
-            this.sanitizeField(record.integrado || false, 10, 'integrado'),
-            this.sanitizeField(record.optIn || false, 10, 'optIn'),
-            this.sanitizeField(record.document || '', 20, 'document'),
-            this.sanitizeField(record.birthDate || '', 20, 'birthDate'),
+            this.sanitizeField(record.document || '', 20, 'external_id'),
+            this.sanitizeField(record.birthDate || '', 20, 'date_of_birth'),
             this.sanitizeField(record.phone || '', 20, 'phone'),
             this.sanitizeField(record.createdIn || '', 100, 'createdIn'),
             this.sanitizeField(record.updatedIn || '', 100, 'updatedIn')
@@ -1465,13 +1414,8 @@ class ContactService {
     const headers = [
       'id',
       'email',
-      'accountId',
-      'accountName',
-      'dataEntityId',
-      'integrado',
-      'optIn',
-      'cpf',
-      'birthDate',
+      'external_id',
+      'date_of_birth',
       'phone',
       'createdIn',
       'updatedIn'
@@ -1483,13 +1427,8 @@ class ContactService {
       const row = [
         this.sanitizeField(record.id || '', 100, 'id'),
         this.sanitizeField(record.email || '', 100, 'email'),
-        this.sanitizeField(record.accountId || '', 100, 'accountId'),
-        this.sanitizeField(record.accountName || '', 100, 'accountName'),
-        this.sanitizeField(record.dataEntityId || '', 100, 'dataEntityId'),
-        this.sanitizeField(record.integrado || false, 10, 'integrado'),
-        this.sanitizeField(record.optIn || false, 10, 'optIn'),
-        this.sanitizeField(record.document || '', 20, 'document'),
-        this.sanitizeField(record.birthDate || '', 20, 'birthDate'),
+        this.sanitizeField(record.document || '', 20, 'external_id'),
+        this.sanitizeField(record.birthDate || '', 20, 'date_of_birth'),
         this.sanitizeField(record.phone || '', 20, 'phone'),
         this.sanitizeField(record.createdIn || '', 100, 'createdIn'),
         this.sanitizeField(record.updatedIn || '', 100, 'updatedIn')
@@ -1632,18 +1571,13 @@ class ContactService {
         'email',
         'firstName',
         'lastName',
-        'document', // CPF
-        'birthDate', // Data de nascimento
+        'external_id', // CPF (renomeado)
+        'date_of_birth', // Data de nascimento (renomeado)
         'phone', // Telefone
-        // Campos de endereço (AD) - apenas campos necessários para Emarsys
-        'postalCode', // CEP
+        'zip_code', // CEP (renomeado)
         'state', // Estado
         'country', // País
-        'city', // Cidade
-        'street', // Rua
-        'neighborhood', // Bairro
-        'number', // Número da casa
-        'complement' // Complemento
+        'city' // Cidade
       ];
       
       // Configurações para divisão de arquivos
@@ -1720,18 +1654,14 @@ class ContactService {
            this.sanitizeFieldForCSV(record.email || ''),
            this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
            this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-           this.sanitizeFieldForCSV(record.document || ''), // CPF
-           this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+           this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+           this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
            this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
            // Campos de endereço (AD) - apenas campos necessários para Emarsys
-           this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+           this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP -> zip_code
            this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
            this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
-           this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
-           this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
-           this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
-           this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
-           this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
+           this.sanitizeFieldForCSV(primaryAddress.city || '') // Cidade
          ];
         
         const rowContent = row.join(',') + '\n';
@@ -1833,8 +1763,6 @@ class ContactService {
     return cleanValue;
   }
 
-
-
   /**
    * Executa o fluxo completo de extração de contatos com endereços (processamento em tempo real)
    * @param {Object} options - Opções de configuração
@@ -1889,17 +1817,13 @@ class ContactService {
         'email',
         'firstName',
         'lastName',
-        'document', // CPF
-        'birthDate', // Data de nascimento
+        'external_id', // CPF (renomeado)
+        'date_of_birth', // Data de nascimento (renomeado)
         'phone', // Telefone
-        'postalCode', // CEP
+        'zip_code', // CEP (renomeado)
         'state', // Estado
         'country', // País
-        'city', // Cidade
-        'street', // Rua
-        'neighborhood', // Bairro
-        'number', // Número da casa
-        'complement' // Complemento
+        'city' // Cidade
       ];
       
       // Cria o diretório de saída se não existir
@@ -2055,7 +1979,7 @@ class ContactService {
             size: adPageSize,
             maxRequests: adMaxRequests,
             userLimit: adLimit, // Passa o limite para o AddressService
-            fields: 'userId,accountId,postalCode,state,country,city,street,neighborhood,number,complement'
+            fields: 'userId,postalCode,state,country,city'
           });
           
           // Cria mapa de userId -> endereço (primeiro endereço encontrado)
@@ -2098,7 +2022,7 @@ class ContactService {
       // Primeira requisição sem token
       console.log('🔄 Busca inicial (sem token)...');
       const initialResponse = await this.fetchCLWithVTEXScroll('', pageSize, {
-        fields: options.clFields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone'
+        fields: options.clFields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName'
       });
       
              if (initialResponse && initialResponse.data && Array.isArray(initialResponse.data)) {
@@ -2133,18 +2057,14 @@ class ContactService {
              this.sanitizeFieldForCSV(record.email || ''),
              this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
              this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-             this.sanitizeFieldForCSV(record.document || ''), // CPF
-             this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+             this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+             this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
              this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
              // Campos de endereço (AD) - apenas campos necessários para Emarsys
-             this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+             this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP -> zip_code
              this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
              this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
-             this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
-             this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
-             this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
-             this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
-             this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
+             this.sanitizeFieldForCSV(primaryAddress.city || '') // Cidade
            ];
            
            const rowContent = row.join(',') + '\n';
@@ -2230,7 +2150,7 @@ class ContactService {
           
           try {
             const response = await this.fetchCLWithVTEXScroll(currentToken, pageSize, {
-              fields: options.clFields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone'
+              fields: options.clFields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName'
             });
             
                          if (response && response.data && Array.isArray(response.data)) {
@@ -2266,18 +2186,14 @@ class ContactService {
                      this.sanitizeFieldForCSV(record.email || ''),
                      this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
                      this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-                     this.sanitizeFieldForCSV(record.document || ''), // CPF
-                     this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento
+                     this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+                     this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
                      this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
                      // Campos de endereço (AD) - apenas campos necessários para Emarsys
-                     this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP
+                     this.sanitizeFieldForCSV(primaryAddress.postalCode || ''), // CEP -> zip_code
                      this.sanitizeFieldForCSV(primaryAddress.state || ''), // Estado
                      this.sanitizeFieldForCSV(primaryAddress.country || 'BRA'), // País (padrão Brasil)
-                     this.sanitizeFieldForCSV(primaryAddress.city || ''), // Cidade
-                     this.sanitizeFieldForCSV(primaryAddress.street || ''), // Rua
-                     this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''), // Bairro
-                     this.sanitizeFieldForCSV(primaryAddress.number || ''), // Número da casa
-                     this.sanitizeFieldForCSV(primaryAddress.complement || '') // Complemento
+                     this.sanitizeFieldForCSV(primaryAddress.city || '') // Cidade
                    ];
                    
                    const rowContent = row.join(',') + '\n';
@@ -2448,7 +2364,7 @@ class ContactService {
       
       // Primeira requisição
       const initialResponse = await this.fetchCLWithVTEXScroll('', pageSize, {
-        fields: options.clFields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone'
+        fields: options.clFields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName'
       });
       
       if (initialResponse && initialResponse.data && Array.isArray(initialResponse.data)) {
@@ -2477,7 +2393,7 @@ class ContactService {
           requestCount++;
           
           const response = await this.fetchCLWithVTEXScroll(currentToken, pageSize, {
-            fields: options.clFields || 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone'
+            fields: options.clFields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName'
           });
           
           if (response && response.data && Array.isArray(response.data)) {
@@ -2525,7 +2441,7 @@ class ContactService {
       console.log('\n📄 Passo 3: Buscando endereços em lotes...');
       const addressMap = await this.addressService.fetchAddressesByUserIdsInBatch(userIds, {
         maxBatch: 200,
-        fields: 'userId,accountId,postalCode,state,country,city,street,neighborhood,number,complement'
+        fields: 'userId,postalCode,state,country,city'
       });
       
       console.log(`✅ ${Object.keys(addressMap).length} endereços encontrados`);
@@ -2567,8 +2483,6 @@ class ContactService {
         
         const row = [
           this.sanitizeFieldForCSV(record.email || ''),
-          this.sanitizeFieldForCSV(record.integrado || false),
-          this.sanitizeFieldForCSV(record.optIn || false),
           this.sanitizeFieldForCSV(record.document || ''),
           this.sanitizeFieldForCSV(record.birthDate || ''),
           this.sanitizeFieldForCSV(this.getPhoneNumber(record)),
@@ -2576,10 +2490,6 @@ class ContactService {
           this.sanitizeFieldForCSV(primaryAddress.state || ''),
           this.sanitizeFieldForCSV(primaryAddress.country || ''),
           this.sanitizeFieldForCSV(primaryAddress.city || ''),
-          this.sanitizeFieldForCSV(primaryAddress.street || ''),
-          this.sanitizeFieldForCSV(primaryAddress.neighborhood || ''),
-          this.sanitizeFieldForCSV(primaryAddress.number || ''),
-          this.sanitizeFieldForCSV(primaryAddress.complement || '')
         ];
         
         currentFileContent += row.join(',') + '\n';
@@ -2652,7 +2562,7 @@ class ContactService {
       const testRecords = await this.fetchAllCLRecords({
         size: 100,
         maxRequests: 1,
-        fields: 'email,id,accountId,accountName,dataEntityId,integrado,createdIn,updatedIn,optIn,document,birthDate,phone,homePhone'
+        fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName'
       });
       
       if (!testRecords || testRecords.length === 0) {
@@ -2685,13 +2595,13 @@ class ContactService {
       // Teste 3: Verificar estrutura dos dados
       console.log('\n📄 Teste 3: Verificando estrutura dos dados...');
       const sampleRecord = testRecords[0];
-      const sampleAddress = await this.addressService.fetchAddressesByUserId(sampleRecord.accountId, {
-        fields: 'addressName,userId,id,accountId,accountName,dataEntityId,postalCode,state,country,city,street,neighborhood,number,complement,receiverName,reference,geoCoordinate,addressType,addressLabel'
+      const sampleAddress = await this.addressService.fetchAddressesByUserId(sampleRecord.id, {
+        fields: 'addressName,userId,id,postalCode,state,country,city,receiverName,reference,geoCoordinate,addressType,addressLabel'
       });
       
       console.log(`✅ Teste 3: Estrutura verificada`);
       console.log(`   - Campos CL: ${Object.keys(sampleRecord).length}`);
-      console.log(`   - Endereços para ${sampleRecord.accountId}: ${sampleAddress.length}`);
+      console.log(`   - Endereços para ${sampleRecord.id}: ${sampleAddress.length}`);
       
       return {
         success: true,
@@ -2777,17 +2687,13 @@ class ContactService {
         'email',
         'firstName',
         'lastName',
-        'document', // CPF
-        'birthDate', // Data de nascimento
+        'external_id', // CPF
+        'date_of_birth', // Data de nascimento
         'phone', // Telefone
-        'postalCode', // CEP
+        'zip_code', // CEP
         'state', // Estado
         'country', // País
         'city', // Cidade
-        'street', // Rua
-        'neighborhood', // Bairro
-        'number', // Número da casa
-        'complement' // Complemento
       ];
       
       const csvWithBom = '\ufeff' + headers.join(',') + '\n';
@@ -2813,18 +2719,14 @@ class ContactService {
             this.sanitizeField(record.email || '', 100, 'email'),
             this.sanitizeField(record.firstName || record.firstname || '', 50, 'firstName'),
             this.sanitizeField(record.lastName || record.lastname || '', 50, 'lastName'),
-            this.sanitizeField(record.document || '', 20, 'document'), // CPF
-            this.sanitizeField(record.birthDate || '', 20, 'birthDate'), // Data de nascimento
+            this.sanitizeField(record.document || '', 20, 'external_id'), // CPF
+            this.sanitizeField(record.birthDate || '', 20, 'date_of_birth'), // Data de nascimento
             this.sanitizeField(this.getPhoneNumber(record), 20, 'phone'), // Telefone
             // Campos de endereço (AD) - mapeamento correto
-            this.sanitizeField(primaryAddress.postalCode || '', 20, 'postalCode'), // CEP
+            this.sanitizeField(primaryAddress.postalCode || '', 20, 'zip_code'), // CEP
             this.sanitizeField(primaryAddress.state || '', 10, 'state'), // Estado
             this.sanitizeField(primaryAddress.country || 'BRA', 10, 'country'), // País (padrão Brasil)
             this.sanitizeField(primaryAddress.city || '', 50, 'city'), // Cidade
-            this.sanitizeField(primaryAddress.street || '', 100, 'street'), // Rua
-            this.sanitizeField(primaryAddress.neighborhood || '', 50, 'neighborhood'), // Bairro
-            this.sanitizeField(primaryAddress.number || '', 20, 'number'), // Número da casa
-            this.sanitizeField(primaryAddress.complement || '', 50, 'complement') // Complemento
           ];
           
           csvContent += row.join(',') + '\n';

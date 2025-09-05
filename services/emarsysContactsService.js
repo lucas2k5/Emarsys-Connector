@@ -6,7 +6,7 @@ const path = require('path');
 class EmarsysContactsService {
   constructor() {
     // Para contatos, vamos usar WebDAV como método principal
-    this.webdavUrl = process.env.WEBDAV_SERVER;
+    this.webdavUrl = process.env.WEBDAV_FOLDER || process.env.WEBDAV_SERVER;
     this.webdavUser = process.env.WEBDAV_USER;
     this.webdavPass = process.env.WEBDAV_PASS;
     
@@ -185,12 +185,19 @@ class EmarsysContactsService {
       console.log(`📤 Enviando arquivo ${csvFile.filename} via WebDAV...`);
       console.log(`📊 Tamanho: ${(csvFile.size / 1024 / 1024).toFixed(2)} MB`);
       
+      // Validação do tamanho do arquivo (limite Emarsys: 64MB)
+      const maxSizeMB = 64;
+      const fileSizeMB = csvFile.size / (1024 * 1024);
+      if (fileSizeMB > maxSizeMB) {
+        throw new Error(`Arquivo muito grande: ${fileSizeMB.toFixed(2)}MB. Limite máximo: ${maxSizeMB}MB`);
+      }
+      
       // Usa o serviço WebDAV existente
       const EmarsysWebdavService = require('./emarsysWebdavService');
       const webdavService = new EmarsysWebdavService();
       
-      // Define o caminho remoto para contatos
-      const remotePath = `/contacts/${csvFile.filename}`;
+      // Define o caminho remoto para contatos (usando /export para compatibilidade com auto-import)
+      const remotePath = `/export/${csvFile.filename}`;
       
       const result = await webdavService.uploadCatalogFile(csvFile.filePath, remotePath);
       
@@ -314,20 +321,7 @@ class EmarsysContactsService {
     try {
       console.log('🚀 [EmarsysContactsService] Iniciando envio de contatos para Emarsys...');
       
-      // Tenta WebDAV primeiro (se configurado e funcionando)
-      if (this.webdavUrl && this.webdavUser && this.webdavPass) {
-        console.log('📤 Tentando envio via WebDAV...');
-        const webdavResult = await this.sendContactsCsvViaWebDAV(filename);
-        
-        if (webdavResult.success) {
-          console.log('✅ Envio via WebDAV bem-sucedido');
-          return webdavResult;
-        } else {
-          console.warn('⚠️ Falha no envio via WebDAV, tentando API v2...');
-        }
-      }
-      
-      // Novo: Tenta API v2 com WSSE (método recomendado)
+      // Tenta API v2 com WSSE primeiro (método mais confiável)
       console.log('📤 Tentando importação via API v2 com WSSE...');
       const emarsysImportService = require('./emarsysContactImportService');
       const importResult = await emarsysImportService.importContactsFromCsv(filename);
@@ -347,8 +341,22 @@ class EmarsysContactsService {
           details: importResult.importResults
         };
       } else {
-        console.warn('⚠️ Falha na importação via API v2, tentando API direta...');
+        console.warn('⚠️ Falha na importação via API v2, tentando WebDAV...');
       }
+      
+      // Fallback para WebDAV (se configurado e funcionando)
+      if (this.webdavUrl && this.webdavUser && this.webdavPass) {
+        console.log('📤 Tentando envio via WebDAV...');
+        const webdavResult = await this.sendContactsCsvViaWebDAV(filename);
+        
+        if (webdavResult.success) {
+          console.log('✅ Envio via WebDAV bem-sucedido');
+          return webdavResult;
+        } else {
+          console.warn('⚠️ Falha no envio via WebDAV, tentando API direta...');
+        }
+      }
+      
       
       // Fallback para API direta se disponível
       if (this.bearerToken) {
