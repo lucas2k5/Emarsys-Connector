@@ -2772,6 +2772,365 @@ class ContactService {
       };
     }
   }
+
+  /**
+   * Extrai contatos criados ou alterados nas últimas X horas
+   * @param {Object} options - Opções de configuração
+   * @param {number} options.hours - Número de horas para buscar (padrão: 6)
+   * @param {string} options.filename - Nome base do arquivo CSV
+   * @param {boolean} options.useScroll - Usar scroll para otimização
+   * @param {string} options.startDate - Data inicial em ISO
+   * @param {string} options.endDate - Data final em ISO
+   * @returns {Promise<Object>} Resultado da extração
+   */
+  async extractRecentContacts(options = {}) {
+    try {
+      console.log('🚀 Iniciando extração de contatos recentes...');
+      
+      const {
+        hours = 6,
+        filename = 'contatos-recentes',
+        useScroll = true,
+        startDate,
+        endDate
+      } = options;
+      
+      console.log(`📅 Período: ${hours} horas (${startDate} até ${endDate})`);
+      
+      // Cria o diretório de saída se não existir
+      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      let outputDir = process.env.EXPORTS_DIR || defaultExports;
+      
+      try {
+        await fs.mkdir(outputDir, { recursive: true });
+        console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
+      } catch (error) {
+        console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
+        if (process.env.VERCEL) {
+          const fallbackDir = '/tmp';
+          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
+          try {
+            await fs.mkdir(fallbackDir, { recursive: true });
+            outputDir = fallbackDir;
+          } catch (fallbackError) {
+            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
+            throw fallbackError;
+          }
+        } else {
+          throw error;
+        }
+      }
+
+      // Gera nome do arquivo com timestamp
+      const timestamp = getBrazilianTimestampForFilename();
+      const baseFilename = `${filename}-${timestamp}-${hours}h`;
+      
+      // Headers incluindo campos de endereço (padrão Emarsys) - mesmo da extração full
+      const headers = [
+        // Campos do cliente (CL) - apenas campos necessários para Emarsys
+        'email',
+        'firstName',
+        'lastName',
+        'external_id', // CPF (renomeado)
+        'date_of_birth', // Data de nascimento (renomeado)
+        'phone', // Telefone
+        'zip_code', // CEP (renomeado)
+        'state', // Estado
+        'country', // País
+        'city' // Cidade
+      ];
+      
+      let allContacts = [];
+      let totalContacts = 0;
+      let totalAddresses = 0;
+      let currentFileIndex = 1;
+      let currentFileSize = 0;
+      const maxFileSizeMB = 50;
+      const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+      
+      // Busca contatos da CL usando o mesmo método da extração full (que funciona)
+      console.log('📄 Buscando contatos da CL usando scroll (mesmo método da extração full)...');
+      
+      const clContacts = await this.fetchCLRecordsWithScrollAndDateFilter(startDate, endDate, {
+        useScroll,
+        fields: 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName,accountId,accountName'
+      });
+      
+      if (!clContacts || clContacts.length === 0) {
+        console.log('⚠️ Nenhum contato encontrado no período especificado');
+        return {
+          success: true,
+          message: 'Nenhum contato encontrado no período especificado',
+          data: {
+            totalContacts: 0,
+            totalAddresses: 0,
+            filesGenerated: [],
+            period: {
+              hours,
+              startDate,
+              endDate
+            }
+          }
+        };
+      }
+      
+      console.log(`✅ ${clContacts.length} contatos encontrados na CL`);
+      totalContacts = clContacts.length;
+      
+      // Busca endereços para os contatos encontrados (mesmo método da extração full)
+      console.log('🏠 Buscando endereços para os contatos...');
+      
+      // Função para buscar endereço de um usuário específico (mesma da extração full)
+      const getUserAddress = async (record) => {
+        try {
+          const userId = record.id; // id da CL (chave primária)
+          
+          // Busca individual na AD pelo userId (mesmo método da extração full)
+          const userAddresses = await this.addressService.fetchAddressesByUserId(userId);
+          return userAddresses.length > 0 ? userAddresses[0] : {};
+        } catch (error) {
+          console.warn(`⚠️ Erro ao buscar endereço para userId ${record.id}:`, error.message);
+          return {};
+        }
+      };
+      
+      // Busca endereços para cada contato (mesmo método da extração full)
+      let addressMap = {};
+      for (const contact of clContacts) {
+        if (contact.id) {
+          const address = await getUserAddress(contact);
+          if (address && Object.keys(address).length > 0) {
+            addressMap[contact.id] = address;
+          }
+        }
+      }
+      
+      totalAddresses = Object.keys(addressMap).length;
+      console.log(`✅ ${totalAddresses} endereços encontrados`);
+      
+      // Processa contatos e gera CSV (mesmo método da extração full)
+      console.log('📝 Processando contatos e gerando CSV...');
+      
+      // Inicializa o primeiro arquivo com BOM (mesmo da extração full)
+      let currentCsvContent = '\ufeff' + headers.join(',') + '\n';
+      const generatedFiles = [];
+      
+      for (let i = 0; i < clContacts.length; i++) {
+        const contact = clContacts[i];
+        const address = addressMap[contact.id] || {}; // Usa contact.id como chave
+        
+        // Cria linha com todos os campos (mesmo método da extração full)
+        const row = [
+          // Campos do cliente (CL) - apenas campos necessários para Emarsys
+          this.sanitizeFieldForCSV(contact.email || ''),
+          this.sanitizeFieldForCSV(contact.firstName || contact.firstname || ''),
+          this.sanitizeFieldForCSV(contact.lastName || contact.lastname || ''),
+          this.sanitizeFieldForCSV(contact.document || ''), // CPF -> external_id
+          this.sanitizeFieldForCSV(contact.birthDate || ''), // Data de nascimento -> date_of_birth
+          this.sanitizeFieldForCSV(this.getPhoneNumber(contact)), // Telefone
+          // Campos de endereço (AD) - apenas campos necessários para Emarsys
+          this.sanitizeFieldForCSV(address.postalCode || ''), // CEP -> zip_code
+          this.sanitizeFieldForCSV(address.state || ''), // Estado
+          this.sanitizeFieldForCSV(address.country || 'BRA'), // País (padrão BRA)
+          this.sanitizeFieldForCSV(address.city || '') // Cidade
+        ];
+        
+        const rowContent = row.join(',') + '\n';
+        currentCsvContent += rowContent;
+        currentFileSize += rowContent.length;
+        
+        // Verifica se precisa criar novo arquivo
+        if (currentFileSize >= maxFileSizeBytes && i < clContacts.length - 1) {
+          const currentFilename = `${baseFilename}-parte-${currentFileIndex}.csv`;
+          const currentFilePath = path.join(outputDir, currentFilename);
+          
+          await fs.writeFile(currentFilePath, currentCsvContent, 'utf8');
+          generatedFiles.push({
+            filename: currentFilename,
+            path: currentFilePath,
+            size: currentFileSize,
+            sizeFormatted: `${(currentFileSize / 1024 / 1024).toFixed(2)} MB`,
+            contactsCount: i + 1
+          });
+          
+          console.log(`📄 Arquivo ${currentFilename} gerado: ${(currentFileSize / 1024 / 1024).toFixed(2)} MB`);
+          
+          // Reinicia para próximo arquivo (mesmo da extração full)
+          currentCsvContent = '\ufeff' + headers.join(',') + '\n';
+          currentFileSize = 0;
+          currentFileIndex++;
+        }
+      }
+      
+      // Salva o último arquivo (ou único arquivo)
+      const finalFilename = currentFileIndex === 1 ? `${baseFilename}.csv` : `${baseFilename}-parte-${currentFileIndex}.csv`;
+      const finalFilePath = path.join(outputDir, finalFilename);
+      
+      await fs.writeFile(finalFilePath, currentCsvContent, 'utf8');
+      generatedFiles.push({
+        filename: finalFilename,
+        path: finalFilePath,
+        size: currentFileSize,
+        sizeFormatted: `${(currentFileSize / 1024 / 1024).toFixed(2)} MB`,
+        contactsCount: clContacts.length
+      });
+      
+      console.log(`📄 Arquivo final ${finalFilename} gerado: ${(currentFileSize / 1024 / 1024).toFixed(2)} MB`);
+      
+      const endTime = Date.now();
+      const duration = Math.round((endTime - Date.now()) / 1000);
+      
+      console.log('🎉 Extração de contatos recentes concluída!');
+      console.log(`📊 Resumo: ${totalContacts} contatos, ${totalAddresses} endereços, ${generatedFiles.length} arquivo(s)`);
+      
+      // Envio automático via WebDAV após extração
+      let webdavResult = null;
+      if (generatedFiles.length > 0) {
+        try {
+          console.log('📤 Iniciando envio automático via WebDAV...');
+          const emarsysContactsService = require('./emarsysContactsService');
+          webdavResult = await emarsysContactsService.sendContactsCsvToEmarsys();
+          
+          if (webdavResult.success) {
+            console.log('✅ Arquivo enviado com sucesso via WebDAV');
+          } else {
+            console.log('⚠️ Erro no envio via WebDAV:', webdavResult.error);
+          }
+        } catch (webdavError) {
+          console.error('❌ Erro no envio automático via WebDAV:', webdavError.message);
+          webdavResult = {
+            success: false,
+            error: webdavError.message
+          };
+        }
+      }
+      
+      return {
+        success: true,
+        message: `Extração de contatos recentes (${hours}h) concluída com sucesso`,
+        data: {
+          totalContacts,
+          totalAddresses,
+          filesGenerated: generatedFiles,
+          period: {
+            hours,
+            startDate,
+            endDate
+          },
+          duration: `${duration}s`,
+          useScroll,
+          webdavSend: webdavResult
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro na extração de contatos recentes:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: getBrazilianTimestamp()
+      };
+    }
+  }
+
+  /**
+   * Busca registros da CL usando scroll (que funciona) e filtra por data após buscar
+   * @param {string} startDate - Data inicial em ISO
+   * @param {string} endDate - Data final em ISO
+   * @param {Object} options - Opções de configuração
+   * @returns {Promise<Array>} Array com registros da CL filtrados por data
+   */
+  async fetchCLRecordsWithScrollAndDateFilter(startDate, endDate, options = {}) {
+    try {
+      console.log(`🔍 Buscando registros da CL usando scroll e filtrando por data...`);
+      console.log(`📅 Período: ${startDate} até ${endDate}`);
+      
+      const startDateObj = new Date(startDate);
+      const endDateObj = new Date(endDate);
+      
+      // Busca todos os registros usando scroll (mesmo método da extração full)
+      console.log('📄 Buscando registros da CL usando scroll (mesmo método da extração full)...');
+      
+      const allRecords = [];
+      const pageSize = 1000;
+      let currentToken = '';
+      let hasMoreRecords = true;
+      let requestCount = 0;
+      const maxRequests = 100; // Limite para evitar loop infinito
+      
+      // Primeira requisição sem token
+      console.log('🔄 Busca inicial (sem token)...');
+      const initialResponse = await this.fetchCLWithVTEXScroll('', pageSize, {
+        fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName,accountId,accountName'
+      });
+      
+      if (initialResponse && initialResponse.data && Array.isArray(initialResponse.data)) {
+        allRecords.push(...initialResponse.data);
+        currentToken = initialResponse.headers?.['x-vtex-page-token'] || '';
+        requestCount++;
+        
+        console.log(`📄 Página ${requestCount}: ${initialResponse.data.length} registros (Total: ${allRecords.length})`);
+        
+        // Continua buscando enquanto há mais registros
+        while (hasMoreRecords && currentToken && requestCount < maxRequests) {
+          requestCount++;
+          
+          const response = await this.fetchCLWithVTEXScroll(currentToken, pageSize, {
+            fields: options.fields || 'email,id,createdIn,updatedIn,document,birthDate,phone,homePhone,firstName,lastName,accountId,accountName'
+          });
+          
+          if (response && response.data && Array.isArray(response.data)) {
+            allRecords.push(...response.data);
+            currentToken = response.headers?.['x-vtex-page-token'] || '';
+            
+            console.log(`📄 Página ${requestCount}: ${response.data.length} registros (Total: ${allRecords.length})`);
+            
+            // Se não há mais registros ou token, para
+            if (response.data.length === 0 || !currentToken) {
+              hasMoreRecords = false;
+            }
+          } else {
+            hasMoreRecords = false;
+          }
+          
+          // Pausa entre requisições para evitar rate limit
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+      
+      console.log(`📊 Total de registros buscados via scroll: ${allRecords.length}`);
+      
+      // Agora filtra os registros por data
+      console.log('🔍 Filtrando registros por data...');
+      
+      const filteredRecords = allRecords.filter(record => {
+        const createdIn = new Date(record.createdIn);
+        const updatedIn = new Date(record.updatedIn);
+        
+        // Verifica se foi criado ou atualizado no período
+        const isInPeriod = (createdIn >= startDateObj && createdIn <= endDateObj) ||
+                          (updatedIn >= startDateObj && updatedIn <= endDateObj);
+        
+        return isInPeriod;
+      });
+      
+      console.log(`✅ Registros filtrados por data: ${filteredRecords.length} de ${allRecords.length}`);
+      
+      // Log de alguns exemplos para debug
+      if (filteredRecords.length > 0) {
+        console.log('📋 Exemplos de registros encontrados:');
+        filteredRecords.slice(0, 3).forEach((record, index) => {
+          console.log(`   ${index + 1}. ${record.email} - Criado: ${record.createdIn}, Atualizado: ${record.updatedIn}`);
+        });
+      }
+      
+      return filteredRecords;
+      
+    } catch (error) {
+      console.error('❌ Erro ao buscar registros da CL com scroll e filtro de data:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = ContactService;
