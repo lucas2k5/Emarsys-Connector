@@ -562,4 +562,165 @@ router.delete('/files/:filename', async (req, res) => {
   }
 });
 
+/**
+ * @route POST /api/emarsys/contacts/extract-recent
+ * @desc Extrai contatos criados ou alterados nas últimas 6 horas e gera CSV
+ * @access Public
+ * @body {number} [hours=6] - Número de horas para buscar (padrão: 6)
+ * @body {string} [filename] - Nome base do arquivo CSV (opcional)
+ * @body {boolean} [useScroll=true] - Usar scroll para otimização (padrão: true)
+ */
+router.post('/extract-recent', async (req, res) => {
+  try {
+    console.log('🚀 Iniciando extração de contatos recentes...');
+    
+    const { hours = 6, filename, useScroll = true } = req.body;
+    
+    // Calcula a data de 6 horas atrás
+    const now = new Date();
+    const sixHoursAgo = new Date(now.getTime() - (hours * 60 * 60 * 1000));
+    
+    console.log(`📅 Buscando contatos criados/alterados desde: ${sixHoursAgo.toISOString()}`);
+    console.log(`⏰ Período: ${hours} horas atrás`);
+    
+    const contactService = require('../services/contactService');
+    const contactServiceInstance = new contactService();
+    
+    // Chama o método para extrair contatos recentes
+    const result = await contactServiceInstance.extractRecentContacts({
+      hours,
+      filename: filename || 'contatos-recentes',
+      useScroll,
+      startDate: sixHoursAgo.toISOString(),
+      endDate: now.toISOString()
+    });
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: `Extração de contatos recentes (${hours}h) concluída com sucesso`,
+        data: {
+          ...result,
+          period: {
+            hours,
+            startDate: sixHoursAgo.toISOString(),
+            endDate: now.toISOString()
+          }
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('❌ Erro na rota de extração de contatos recentes:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/emarsys/contacts/create-single
+ * @desc Cria um contato único via trigger automática
+ * @access Public
+ * @body {string} nome - Nome do contato
+ * @body {string} email - Email do contato (obrigatório)
+ * @body {string} [phone] - Telefone do contato
+ * @body {string} [birth_of_date] - Data de nascimento (formato: YYYY-MM-DD)
+ */
+router.post('/create-single', async (req, res) => {
+  try {
+    console.log('👤 Criando contato único via trigger...');
+    
+    const { nome, email, phone, birth_of_date } = req.body;
+    
+    // Validação dos campos obrigatórios
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campo email é obrigatório',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campo nome é obrigatório',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Prepara os dados do contato no formato Emarsys
+    const contact = {
+      '3': email, // Campo 3 = Email (chave primária)
+      '1': nome.split(' ')[0] || nome, // Campo 1 = Primeiro nome (first_name)
+      '2': nome.split(' ').slice(1).join(' ') || '', // Campo 2 = Sobrenome (last_name)
+    };
+    
+    // Adiciona telefone se fornecido
+    if (phone) {
+      contact['15'] = phone; // Campo 15 = Telefone (phone)
+    }
+    
+    // Adiciona data de nascimento se fornecida
+    if (birth_of_date) {
+      // Converte para formato Emarsys (YYYY-MM-DD)
+      const birthDate = new Date(birth_of_date);
+      if (!isNaN(birthDate.getTime())) {
+        contact['4'] = birth_of_date; // Campo 4 = Data de nascimento (birth_date)
+      }
+    }
+    
+    console.log('📝 Dados do contato preparados:', contact);
+    
+    // Usa o serviço de importação da Emarsys
+    const emarsysImportService = require('../services/emarsysContactImportService');
+    const result = await emarsysImportService.createContact(contact);
+    
+    if (result.success) {
+      const action = result.action || 'created';
+      const message = action === 'updated' 
+        ? 'Contato atualizado com sucesso via trigger' 
+        : 'Contato criado com sucesso via trigger';
+      
+      res.status(201).json({
+        success: true,
+        message,
+        action,
+        data: {
+          contact: {
+            nome,
+            email,
+            phone: phone || null,
+            birth_of_date: birth_of_date || null
+          },
+          emarsysResponse: result.data
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(result.status || 500).json({
+        success: false,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('❌ Erro ao criar contato único:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 module.exports = router;

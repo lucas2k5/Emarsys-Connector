@@ -226,6 +226,24 @@ npm run pm2:save
 - **GET** `/api/emarsys/sales/sync-status` - Obtém status da última sincronização com Emarsys
 - **GET** `/api/emarsys/sales/orders-count` - Obtém contagem de pedidos sincronizados vs não sincronizados
 
+### Emarsys Contacts API
+
+- **GET** `/api/emarsys/contacts/files` - Lista todos os arquivos CSV de contatos disponíveis
+- **GET** `/api/emarsys/contacts/stats` - Obtém estatísticas dos arquivos CSV de contatos
+- **GET** `/api/emarsys/contacts/latest` - Obtém informações do último arquivo CSV de contatos
+- **POST** `/api/emarsys/contacts/send` - Envia arquivo CSV de contatos para Emarsys
+- **POST** `/api/emarsys/contacts/send-webdav` - Envia arquivo CSV de contatos via WebDAV
+- **POST** `/api/emarsys/contacts/send-api` - Envia arquivo CSV de contatos via API
+- **GET** `/api/emarsys/contacts/test` - Testa a conectividade com os serviços da Emarsys
+- **POST** `/api/emarsys/contacts/import` - Importa contatos diretamente via API v2 com WSSE
+- **GET** `/api/emarsys/contacts/fields` - Lista campos disponíveis na Emarsys
+- **POST** `/api/emarsys/contacts/create` - Cria um contato individual via API v2
+- **GET** `/api/emarsys/contacts/download/:filename` - Faz download de um arquivo CSV de contatos
+- **GET** `/api/emarsys/contacts/preview/:filename` - Mostra preview de um arquivo CSV de contatos
+- **DELETE** `/api/emarsys/contacts/files/:filename` - Remove um arquivo CSV de contatos
+- **POST** `/api/emarsys/contacts/extract-recent` - **NOVO**: Extrai contatos criados/alterados nas últimas 6h e gera CSV
+- **POST** `/api/emarsys/contacts/create-single` - **NOVO**: Cria um contato único via trigger automática
+
 ### Emarsys CSV API
 
 - **POST** `/api/emarsys/csv/generate` - Gera arquivo CSV com todos os pedidos
@@ -600,6 +618,116 @@ curl http://localhost:3000/api/emarsys/sales/sync-status
 ```bash
 curl http://localhost:3000/api/emarsys/sales/test
 ```
+
+### Novos Endpoints de Contatos
+
+#### 1. Extrair Contatos Recentes (Últimas 6h)
+
+```bash
+# Buscar contatos das últimas 6 horas (padrão)
+curl -X POST http://localhost:3000/api/emarsys/contacts/extract-recent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "useScroll": true,
+    "filename": "contatos-recentes"
+  }'
+
+# Buscar contatos das últimas 12 horas
+curl -X POST http://localhost:3000/api/emarsys/contacts/extract-recent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hours": 12,
+    "useScroll": true,
+    "filename": "contatos-12h"
+  }'
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "message": "Extração de contatos recentes (6h) concluída com sucesso",
+  "data": {
+    "totalContacts": 150,
+    "totalAddresses": 120,
+    "filesGenerated": [
+      {
+        "filename": "contatos-recentes-2025-01-15T14-30-00-6h.csv",
+        "size": 25600,
+        "sizeFormatted": "0.02 MB",
+        "contactsCount": 150
+      }
+    ],
+    "period": {
+      "hours": 6,
+      "startDate": "2025-01-15T08:30:00.000Z",
+      "endDate": "2025-01-15T14:30:00.000Z"
+    },
+    "duration": "45s",
+    "useScroll": true
+  }
+}
+```
+
+#### 2. Criar Contato Único via Trigger
+
+```bash
+# Criar contato com todos os campos
+curl -X POST http://localhost:3000/api/emarsys/contacts/create-single \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nome": "João Silva",
+    "email": "joao.silva@email.com",
+    "phone": "+5511999999999",
+    "birth_of_date": "1990-05-15"
+  }'
+
+# Criar contato apenas com nome e email (mínimo obrigatório)
+curl -X POST http://localhost:3000/api/emarsys/contacts/create-single \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nome": "Maria Santos",
+    "email": "maria.santos@email.com"
+  }'
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "message": "Contato criado com sucesso via trigger",
+  "data": {
+    "contact": {
+      "nome": "João Silva",
+      "email": "joao.silva@email.com",
+      "phone": "+5511999999999",
+      "birth_of_date": "1990-05-15"
+    },
+    "emarsysResponse": {
+      "replyCode": 0,
+      "replyText": "OK"
+    }
+  }
+}
+```
+
+### Diferenças entre os Endpoints de Contatos
+
+#### `/api/emarsys/extract-contacts` (Original)
+- **Uso**: Extração em massa com range específico
+- **Parâmetro**: `userLimit` (ex: "1001:1020")
+- **Aplicação**: Processamento de lotes específicos
+
+#### `/api/emarsys/contacts/extract-recent` (Novo)
+- **Uso**: Extração baseada em tempo (últimas X horas)
+- **Parâmetro**: `hours` (ex: 6, 12, 24)
+- **Aplicação**: Sincronização incremental por tempo
+- **Vantagem**: Busca contatos criados OU alterados no período
+
+#### `/api/emarsys/contacts/create-single` (Novo)
+- **Uso**: Criação individual via trigger
+- **Aplicação**: Integração em tempo real
+- **Vantagem**: Processamento imediato de novos contatos
 
 ## Nomenclatura dos Arquivos CSV
 

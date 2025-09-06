@@ -10,8 +10,16 @@ class EmarsysContactImportService {
   constructor() {
     // Configurações da API Emarsys
     this.baseURL = 'https://api.emarsys.net/api/v2/';
+    this.coreBaseURL = 'https://api.emarsys.net/api/v3/'; // API Core v3 (conforme aviso de depreciação)
     this.wsseUser = process.env.EMARSYS_USER || process.env.EMARSYS_USERNAME;
     this.wsseSecret = process.env.EMARSYS_SECRET || process.env.EMARSYS_PASSWORD;
+    
+    // Cache de token OAuth2
+    this.oauth2Token = null;
+    this.tokenExpiry = null;
+    
+    // Token de teste fornecido (para testes imediatos)
+    this.testToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjM0ZDZlYjQ5LTcyMTEtNGVlYi1hOTY2LWRmNWFhZWNkZjE5ZCIsInR5cCI6IkpXVCJ9.eyJhcHBfdGlkIjoiMTA2NDkwNDAyMiIsImF1ZCI6W10sImNsaWVudF9pZCI6IjE0ODhhNmNkLWNlODAtNGViZC05M2ViLWNhZmIxMTBmYjAxNCIsImV4cCI6MTc1NzExODg4MiwiaWF0IjoxNzU3MTE1MjgyLCJpc3MiOiJodHRwczovL2F1dGguZW1hcnN5cy5uZXQiLCJqdGkiOiI1NDJjZGM0My1hZjhiLTQ5YzQtYWFkMi0xOWZlZDI1OWRlNTMiLCJuYmYiOjE3NTcxMTUyODIsInBlcm1pc3Npb24iOiJwaWNjYWRpbGx5MDA1Iiwic2NwIjpbXSwic3ViIjoiMTQ4OGE2Y2QtY2U4MC00ZWJkLTkzZWItY2FmYjExMGZiMDE0In0.kDVBa7LMy1-2D4dl8Svfq4phDgjJfOgGfhl_7G5lreHWCoIG1xeV_bqpQeCCMYbiIRByN44jiL75yFkq1GXdXfZCgoea-qgcyc-Ktger8vv8kU1l1JJ_5DyX-bXNGXqsnO3C1N3_fcidwl3YzZDTkcAOZUjOh7Y-gsuPcNkEIFlpWTwqkN_FdOUgIOkV3KtdqPa3DCZMPQ6c9kvQ7-yhAMpkmfbo03LlMdFHQR7P6-8fj82euQlC_ASDfUfZbTPhOvdbnsC7NyJkHOdBcib77JtoVzLiI2lMgUCsPhV1KS5Tefc3Z5iChg8zrmEiKe7qKg_cmRkDOWCm_z7isREOVVNG4zlsDzXyEGQnr-jNVAy5uN15DrezPxcD4kriUsPgvYTX3hXwEasEnweDeeRY_b7J-JrzDSeqmSlzlPO7oqmMZFSP8vHPZyY1r6lCTTEnHQkUP2ZByNKutGuwfhd13n6FLBJuIEHa5sofLXSlu3xxTtMvTCX-CeAhHK1Eq7GKbExQ3AlWUNllL_DwKwgR-GFvffQKNf5bbnvMT5rkgfyeC_-OJ2AURRn7bqukXw6tnrcP93ZWaFek2o3mERb2rmDVYsZ7S0Q25DzLXGfcNnxikW-Cj3LPF7MUoBgMPpIsaGMT2mhgXaskxqhdaE4SN94CgeQuCQoGbwAegzRtnbE';
     
     const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
@@ -32,15 +40,67 @@ class EmarsysContactImportService {
   }
 
   /**
-   * Inicializa o cliente Axios com autenticação WSSE
+   * Obtém token OAuth2 da Emarsys
+   * @returns {Promise<string>} Token de acesso
+   */
+  async getOAuth2Token() {
+    try {
+      // Para testes imediatos, usa o token fornecido
+      if (this.testToken) {
+        console.log('🧪 Usando token de teste fornecido');
+        return this.testToken;
+      }
+
+      // Verifica se temos um token válido em cache
+      if (this.oauth2Token && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+        console.log('🔄 Usando token OAuth2 em cache');
+        return this.oauth2Token;
+      }
+
+      console.log('🔑 Obtendo novo token OAuth2 da Emarsys...');
+      
+      // Usa as credenciais do Postman (Basic Auth)
+      const credentials = Buffer.from(`${this.wsseUser}:${this.wsseSecret}`).toString('base64');
+      
+      const response = await axios.post('https://auth.emarsys.net/oauth2/token', 
+        'grant_type=client_credentials',
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'Authorization': `Basic ${credentials}`
+          },
+          timeout: 30000
+        }
+      );
+
+      if (response.data && response.data.access_token) {
+        // Armazena o token e calcula o tempo de expiração
+        this.oauth2Token = response.data.access_token;
+        this.tokenExpiry = Date.now() + (response.data.expires_in * 1000) - 60000; // 1 minuto antes da expiração
+        
+        console.log('✅ Token OAuth2 obtido com sucesso');
+        console.log(`⏰ Token expira em: ${new Date(this.tokenExpiry).toLocaleString()}`);
+        
+        return this.oauth2Token;
+      } else {
+        throw new Error('Token não encontrado na resposta');
+      }
+    } catch (error) {
+      console.error('❌ Erro ao obter token OAuth2:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Inicializa o cliente Axios com autenticação WSSE (para API v2)
    */
   initializeClient() {
     try {
-      // Headers básicos (X-WSSE será adicionado dinamicamente)
+      // Headers básicos
       const headers = {
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Content-Encoding': 'gzip'
+        'Content-Type': 'application/json'
       };
 
       this.client = axios.create({ 
@@ -49,8 +109,8 @@ class EmarsysContactImportService {
         timeout: 60000 // 1 minuto
       });
 
-      // Interceptor para adicionar X-WSSE dinamicamente a cada requisição
-      this.client.interceptors.request.use(config => {
+      // Interceptor para adicionar WSSE dinamicamente a cada requisição
+      this.client.interceptors.request.use((config) => {
         // Gera um novo header WSSE para cada requisição
         config.headers['X-WSSE'] = WSSeAuth.generateHeader(this.wsseUser, this.wsseSecret);
         return config;
@@ -208,12 +268,12 @@ class EmarsysContactImportService {
       return null;
     }
 
-    // Mapeia campos padrão da Emarsys
+    // Mapeia campos padrão da Emarsys com IDs corretos
     const contact = {
       '3': email, // Campo 3 = Email
     };
 
-    // Adiciona outros campos se disponíveis
+    // Adiciona outros campos se disponíveis (usando IDs corretos)
     if (row.firstName || row.firstname || row.FIRSTNAME) {
       contact['1'] = row.firstName || row.firstname || row.FIRSTNAME; // Campo 1 = First Name
     }
@@ -222,13 +282,13 @@ class EmarsysContactImportService {
       contact['2'] = row.lastName || row.lastname || row.LASTNAME; // Campo 2 = Last Name
     }
 
-    // Campos customizados comuns - usando os nomes exatos do CSV
+    // Campos com IDs corretos conforme tabelas da Emarsys
     if (row.phone || row.Phone || row.PHONE) {
-      contact['57'] = row.phone || row.Phone || row.PHONE; // Campo 57 = Phone (exemplo)
+      contact['15'] = row.phone || row.Phone || row.PHONE; // Campo 15 = Phone
     }
 
     if (row.date_of_birth || row.birthDate || row.birth_date || row.BIRTH_DATE) {
-      contact['58'] = row.date_of_birth || row.birthDate || row.birth_date || row.BIRTH_DATE; // Campo 58 = Birth Date (exemplo)
+      contact['4'] = row.date_of_birth || row.birthDate || row.birth_date || row.BIRTH_DATE; // Campo 4 = Birth Date
     }
 
     if (row.external_id || row.document || row.Document || row.DOCUMENT) {
@@ -237,15 +297,19 @@ class EmarsysContactImportService {
 
     // Campos de endereço se disponíveis
     if (row.city || row.City || row.CITY) {
-      contact['60'] = row.city || row.City || row.CITY;
+      contact['11'] = row.city || row.City || row.CITY; // Campo 11 = City
     }
 
     if (row.state || row.State || row.STATE) {
-      contact['61'] = row.state || row.State || row.STATE;
+      contact['12'] = row.state || row.State || row.STATE; // Campo 12 = State
     }
 
     if (row.zip_code || row.postalCode || row.postal_code || row.POSTAL_CODE) {
-      contact['62'] = row.zip_code || row.postalCode || row.postal_code || row.POSTAL_CODE;
+      contact['13'] = row.zip_code || row.postalCode || row.postal_code || row.POSTAL_CODE; // Campo 13 = ZIP Code
+    }
+
+    if (row.country || row.Country || row.COUNTRY) {
+      contact['14'] = row.country || row.Country || row.COUNTRY; // Campo 14 = Country
     }
 
     console.log(`✅ Contato mapeado: ${email} -> ${JSON.stringify(contact)}`);
@@ -263,28 +327,101 @@ class EmarsysContactImportService {
   }
 
   /**
+   * Cria um cliente OAuth2 para API Core
+   * @returns {Object} Cliente Axios configurado
+   */
+  createOAuth2Client() {
+    const client = axios.create({
+      baseURL: this.coreBaseURL,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      timeout: 60000
+    });
+
+    // Interceptor para adicionar token OAuth2
+    client.interceptors.request.use(async (config) => {
+      try {
+        const token = await this.getOAuth2Token();
+        config.headers['Authorization'] = `Bearer ${token}`;
+        return config;
+      } catch (error) {
+        console.error('❌ Erro ao obter token OAuth2:', error.message);
+        return Promise.reject(error);
+      }
+    });
+
+    return client;
+  }
+
+  /**
    * Cria ou atualiza um contato individual na Emarsys
    * @param {Object} contactData - Dados do contato
    * @returns {Object} Resultado da operação
    */
      async createContact(contactData) {
-     if (!this.client) {
+     if (!this.wsseUser || !this.wsseSecret) {
        return {
          success: false,
-         error: 'Cliente Emarsys não inicializado. Verifique as credenciais EMARSYS_USER e EMARSYS_SECRET.'
+         error: 'Credenciais Emarsys não configuradas.'
        };
      }
 
     try {
-      const response = await this.client.put('contact/?create_if_not_exists=1', contactData);
+      console.log('👤 Criando/Atualizando contato na Emarsys Core API v3...');
+      console.log('📝 Dados do contato:', contactData);
       
-      return {
-        success: true,
-        data: response.data,
-        status: response.status
+      // Cria cliente OAuth2 para API Core v3
+      const oauth2Client = this.createOAuth2Client();
+      
+      // Adiciona key_id para identificar o campo chave (email = campo 3)
+      const payload = {
+        key_id: '3', // Campo email como chave primária
+        ...contactData
       };
+      
+      console.log('📦 Payload final:', payload);
+      console.log('🔗 URL completa:', `${this.coreBaseURL}contact`);
+      
+      // Tenta criar o contato primeiro
+      try {
+        const response = await oauth2Client.post('contact', payload);
+        console.log('✅ Contato criado com sucesso:', response.data);
+        
+        return {
+          success: true,
+          data: response.data,
+          status: response.status,
+          action: 'created'
+        };
+      } catch (createError) {
+        // Se o contato já existe (erro 2009), tenta atualizar
+        if (createError.response?.data?.replyCode === 2009) {
+          console.log('🔄 Contato já existe, tentando atualizar...');
+          
+          // Usa PUT para atualizar o contato existente
+          const updateResponse = await oauth2Client.put('contact', payload);
+          console.log('✅ Contato atualizado com sucesso:', updateResponse.data);
+          
+          return {
+            success: true,
+            data: updateResponse.data,
+            status: updateResponse.status,
+            action: 'updated'
+          };
+        } else {
+          // Se não for erro de contato existente, propaga o erro
+          throw createError;
+        }
+      }
     } catch (error) {
-      console.error('❌ Erro ao criar contato:', error.response?.data || error.message);
+      console.error('❌ Erro ao criar contato:');
+      console.error('   Status:', error.response?.status);
+      console.error('   Headers:', error.response?.headers);
+      console.error('   Data:', error.response?.data);
+      console.error('   Message:', error.message);
+      
       return {
         success: false,
         error: error.response?.data || error.message,
