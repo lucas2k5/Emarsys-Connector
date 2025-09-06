@@ -131,7 +131,7 @@ router.post('/send-csv-file', async (req, res) => {
           
           const cleanupResponse = await axios({
             method: 'DELETE',
-            url: `${baseUrlEnv}/_v/sorders/all`,
+            url: `${baseUrlEnv}/_v/orders/all`,
             headers: {
               'Content-Type': 'application/json'
             },
