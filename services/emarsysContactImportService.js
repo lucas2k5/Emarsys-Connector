@@ -18,9 +18,6 @@ class EmarsysContactImportService {
     this.oauth2Token = null;
     this.tokenExpiry = null;
     
-    // Token de teste fornecido (para testes imediatos)
-    this.testToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjM0ZDZlYjQ5LTcyMTEtNGVlYi1hOTY2LWRmNWFhZWNkZjE5ZCIsInR5cCI6IkpXVCJ9.eyJhcHBfdGlkIjoiMTA2NDkwNDAyMiIsImF1ZCI6W10sImNsaWVudF9pZCI6IjE0ODhhNmNkLWNlODAtNGViZC05M2ViLWNhZmIxMTBmYjAxNCIsImV4cCI6MTc1NzExODg4MiwiaWF0IjoxNzU3MTE1MjgyLCJpc3MiOiJodHRwczovL2F1dGguZW1hcnN5cy5uZXQiLCJqdGkiOiI1NDJjZGM0My1hZjhiLTQ5YzQtYWFkMi0xOWZlZDI1OWRlNTMiLCJuYmYiOjE3NTcxMTUyODIsInBlcm1pc3Npb24iOiJwaWNjYWRpbGx5MDA1Iiwic2NwIjpbXSwic3ViIjoiMTQ4OGE2Y2QtY2U4MC00ZWJkLTkzZWItY2FmYjExMGZiMDE0In0.kDVBa7LMy1-2D4dl8Svfq4phDgjJfOgGfhl_7G5lreHWCoIG1xeV_bqpQeCCMYbiIRByN44jiL75yFkq1GXdXfZCgoea-qgcyc-Ktger8vv8kU1l1JJ_5DyX-bXNGXqsnO3C1N3_fcidwl3YzZDTkcAOZUjOh7Y-gsuPcNkEIFlpWTwqkN_FdOUgIOkV3KtdqPa3DCZMPQ6c9kvQ7-yhAMpkmfbo03LlMdFHQR7P6-8fj82euQlC_ASDfUfZbTPhOvdbnsC7NyJkHOdBcib77JtoVzLiI2lMgUCsPhV1KS5Tefc3Z5iChg8zrmEiKe7qKg_cmRkDOWCm_z7isREOVVNG4zlsDzXyEGQnr-jNVAy5uN15DrezPxcD4kriUsPgvYTX3hXwEasEnweDeeRY_b7J-JrzDSeqmSlzlPO7oqmMZFSP8vHPZyY1r6lCTTEnHQkUP2ZByNKutGuwfhd13n6FLBJuIEHa5sofLXSlu3xxTtMvTCX-CeAhHK1Eq7GKbExQ3AlWUNllL_DwKwgR-GFvffQKNf5bbnvMT5rkgfyeC_-OJ2AURRn7bqukXw6tnrcP93ZWaFek2o3mERb2rmDVYsZ7S0Q25DzLXGfcNnxikW-Cj3LPF7MUoBgMPpIsaGMT2mhgXaskxqhdaE4SN94CgeQuCQoGbwAegzRtnbE';
-    
     const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     
@@ -44,12 +41,7 @@ class EmarsysContactImportService {
    * @returns {Promise<string>} Token de acesso
    */
   async getOAuth2Token() {
-    try {
-      // Para testes imediatos, usa o token fornecido
-      if (this.testToken) {
-        console.log('🧪 Usando token de teste fornecido');
-        return this.testToken;
-      }
+    try {     
 
       // Verifica se temos um token válido em cache
       if (this.oauth2Token && this.tokenExpiry && Date.now() < this.tokenExpiry) {
