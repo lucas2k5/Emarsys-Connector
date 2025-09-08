@@ -3,7 +3,6 @@ const axios = require('axios');
 const WSSeAuth = require('../utils/wsseAuth');
 const fs = require('fs').promises;
 const path = require('path');
-const csv = require('csv-parser');
 const { createReadStream } = require('fs');
 
 class EmarsysContactImportService {
@@ -220,6 +219,8 @@ class EmarsysContactImportService {
    */
   async processCsvFile(filePath) {
     return new Promise((resolve, reject) => {
+      // Carrega csv-parser sob demanda para evitar falhas em rotas que não usam CSV
+      const csv = require('csv-parser');
       const contacts = [];
       const stream = createReadStream(filePath);
 
