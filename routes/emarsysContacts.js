@@ -639,7 +639,7 @@ router.post('/create-single', async (req, res) => {
   try {
     console.log('👤 Criando contato único via trigger...');
     
-    const { nome, email, phone, birth_of_date } = req.body;
+    const { nome, email, phone, birth_of_date, optin } = req.body;
     
     // Validação dos campos obrigatórios
     if (!email) {
@@ -679,6 +679,11 @@ router.post('/create-single', async (req, res) => {
       }
     }
     
+    // Define opt-in se informado (campo 31 na Emarsys costuma representar opt-in)
+    if (typeof optin !== 'undefined') {
+      contact['31'] = Boolean(optin);
+    }
+    
     console.log('📝 Dados do contato preparados:', contact);
     
     // Usa o serviço de importação da Emarsys
@@ -700,7 +705,8 @@ router.post('/create-single', async (req, res) => {
             nome,
             email,
             phone: phone || null,
-            birth_of_date: birth_of_date || null
+            birth_of_date: birth_of_date || null,
+            optin: typeof optin !== 'undefined' ? Boolean(optin) : null,
           },
           emarsysResponse: result.data
         },
