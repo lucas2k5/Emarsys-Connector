@@ -335,9 +335,9 @@ class EmarsysCsvService {
              this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
              this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),   // msrp
              this.sanitizeField(product.link || '', 200),                             // link
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl || ''),                 // image (sanitizada)
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl || ''),                 // zoom_image (sanitizada)
-             this.sanitizeField(product.productId || '', 50),                         // group_id
+             this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // image (sanitizada)
+             this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // zoom_image (sanitizada)
+             this.sanitizeField(product.productId, 50),                         // group_id
              item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,             // c_stock
              this.sanitizeField(item.ean || '', 50),                                  // c_ean
              this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
@@ -378,9 +378,9 @@ class EmarsysCsvService {
            this.formatPrice(product.price || 0),                                     // price
            this.formatPrice(product.listPrice || 0),                                 // msrp
            this.sanitizeField(product.link || '', 200),                              // link
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl || ''),               // image (sanitizada)
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl || ''),               // zoom_image (sanitizada)
-           this.sanitizeField(product.productId || '', 50),                          // group_id
+           this.sanitizeImageUrl(product.images?.[0]?.imageUrl),               // image (sanitizada)
+           this.sanitizeImageUrl(product.images?.[0]?.imageUrl),               // zoom_image (sanitizada)
+           this.sanitizeField(product.productId, 50),                          // group_id
            product.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,           // c_stock
             '',                                                                       // c_ean
             this.formatEmarsysTimestamp(product.releaseDate || ''),                   // c_dataLancamento

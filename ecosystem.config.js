@@ -9,12 +9,22 @@ module.exports = {
     env: {
       NODE_ENV: 'development',
       PORT: 3000,
-      HOST: '0.0.0.0'
+      HOST: '0.0.0.0',
+      LOG_LEVEL: 'info',
+      ALERT_ERROR_RATE: 0.1,
+      ALERT_RESPONSE_TIME: 5000,
+      ALERT_MEMORY_USAGE: 0.9,
+      ALERT_CONSECUTIVE_ERRORS: 5
     },
     env_production: {
       NODE_ENV: 'production',
       PORT: 3000,
-      HOST: '0.0.0.0'
+      HOST: '0.0.0.0',
+      LOG_LEVEL: 'warn',
+      ALERT_ERROR_RATE: 0.05,
+      ALERT_RESPONSE_TIME: 3000,
+      ALERT_MEMORY_USAGE: 0.85,
+      ALERT_CONSECUTIVE_ERRORS: 3
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',

@@ -695,7 +695,6 @@ class VtexProductService {
     }
     
     try {
-      // Verifica se o arquivo existe
       await fs.access(localFilePath);
       const stats = await fs.stat(localFilePath);
       console.log(`📁 Arquivo local: ${localFilePath}`);
