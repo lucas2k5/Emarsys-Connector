@@ -639,7 +639,7 @@ router.post('/create-single', async (req, res) => {
   try {
     console.log('👤 Criando contato único via trigger...');
     
-    const { nome, email, phone, birth_of_date, optin } = req.body;
+    const { nome, email, phone, birth_of_date, optin, city, state, zip_code, country } = req.body;
     
     // Validação dos campos obrigatórios
     if (!email) {
@@ -684,6 +684,26 @@ router.post('/create-single', async (req, res) => {
       contact['31'] = Boolean(optin);
     }
     
+    // Adiciona cidade se fornecida
+    if (city) {
+      contact['11'] = city; // Campo 11 = Cidade (city)
+    }
+    
+    // Adiciona estado se fornecido
+    if (state) {
+      contact['12'] = state; // Campo 12 = Estado (state)
+    }
+    
+    // Adiciona CEP se fornecido
+    if (zip_code) {
+      contact['13'] = zip_code; // Campo 13 = CEP (zip_code)
+    }
+    
+    // Adiciona país se fornecido
+    if (country) {
+      contact['14'] = country; // Campo 14 = País (country)
+    }
+    
     console.log('📝 Dados do contato preparados:', contact);
     
     // Usa o serviço de importação da Emarsys
@@ -704,9 +724,13 @@ router.post('/create-single', async (req, res) => {
           contact: {
             nome,
             email,
-            phone: phone || null,
-            birth_of_date: birth_of_date || null,
+            phone: phone || '',
+            birth_of_date: birth_of_date || '',
             optin: typeof optin !== 'undefined' ? Boolean(optin) : null,
+            city: city || '',
+            state: state || '',
+            zip_code: zip_code || '',
+            country: country || '',
           },
           emarsysResponse: result.data
         },
