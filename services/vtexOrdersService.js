@@ -1303,7 +1303,7 @@ class VtexOrdersService {
             // Usa axios diretamente com configuração completa
             const cleanupResponse = await axiosInstance({
               method: 'DELETE',
-              url: `${process.env.VTEX_BASE_URL}/_v/orders/all`,
+              url: `${process.env.VTEX_BASE_URL}/_v2/orders/all`,
               headers: {
                 'Content-Type': 'application/json',
                 'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,

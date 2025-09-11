@@ -639,7 +639,7 @@ router.post('/create-single', async (req, res) => {
   try {
     console.log('👤 Criando contato único via trigger...');
     
-    const { nome, email, phone, birth_of_date, optin, city, state, zip_code, country } = req.body;
+    const { nome, last_name, email, phone, birth_of_date, optin, city, state, zip_code, country } = req.body;
     
     // Validação dos campos obrigatórios
     if (!email) {
@@ -662,7 +662,7 @@ router.post('/create-single', async (req, res) => {
     const contact = {
       '3': email, // Campo 3 = Email (chave primária)
       '1': nome.split(' ')[0] || nome, // Campo 1 = Primeiro nome (first_name)
-      '2': nome.split(' ').slice(1).join(' ') || '', // Campo 2 = Sobrenome (last_name)
+      '2': last_name || nome.split(' ').slice(1).join(' ') || '', // Campo 2 = Sobrenome (last_name)
     };
     
     // Adiciona telefone se fornecido
@@ -723,6 +723,7 @@ router.post('/create-single', async (req, res) => {
         data: {
           contact: {
             nome,
+            last_name: last_name || '',
             email,
             phone: phone || '',
             birth_of_date: birth_of_date || '',
