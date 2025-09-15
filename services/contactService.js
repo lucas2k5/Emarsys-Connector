@@ -18,6 +18,55 @@ class ContactService {
   }
 
   /**
+   * Busca um registro da CL (Customer List) pelo id (equivalente ao userId da AD)
+   * @param {string} id - ID do registro na CL
+   * @param {Object} options - Opções de configuração
+   * @returns {Promise<Object|null>} Registro da CL ou null se não encontrado
+   */
+  async getCLRecordById(id, options = {}) {
+    try {
+      if (!id) return null;
+      const baseUrl = (process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
+      const url = `${baseUrl}/api/dataentities/CL/documents/${encodeURIComponent(id)}`;
+      const response = await axios({
+        method: 'GET',
+        url,
+        headers: {
+          'Accept': 'application/vnd.vtex.ds.v10+json',
+          'Content-Type': 'application/json',
+          'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+          'pragma': 'no-cache',
+          'cache-control': 'max-age=0'
+        },
+        timeout: options.timeout || 30000
+      });
+      return response?.data || null;
+    } catch (error) {
+      // 404 => não encontrado, retorna null; outros erros propaga mensagem
+      if (error?.response?.status === 404) return null;
+      console.error('❌ Erro ao buscar registro da CL por id:', {
+        id,
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Retorna o email a partir do userId (CL.id)
+   * @param {string} userId
+   * @returns {Promise<string|null>} Email ou null se não encontrado
+   */
+  async getEmailByUserId(userId) {
+    const record = await this.getCLRecordById(userId);
+    if (!record) return null;
+    return record.email || null;
+  }
+
+  /**
    * Busca todos os registros da CL (Customer List) usando API de scroll da VTEX
    * @param {Object} options - Opções de configuração
    * @returns {Promise<Array>} Array com todos os registros da CL
