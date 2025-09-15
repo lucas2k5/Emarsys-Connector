@@ -635,11 +635,57 @@ router.post('/extract-recent', async (req, res) => {
  * @body {string} [phone] - Telefone do contato
  * @body {string} [birth_of_date] - Data de nascimento (formato: YYYY-MM-DD)
  */
+// Lock simples em memória para evitar duplicidade em janela curta
+const __inFlightCreateByEmail = new Map();
+const IDEMPOTENCY_WINDOW_MS = 15000;
+
 router.post('/create-single', async (req, res) => {
   try {
     console.log('👤 Criando contato único via trigger...');
+    try {
+      const { logger, auditLogger } = require('../utils/logger');
+      const mask = (obj) => {
+        if (!obj || typeof obj !== 'object') return obj;
+        const clone = { ...obj };
+        if (clone.email) {
+          const [user, domain] = String(clone.email).split('@');
+          clone.email = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
+        }
+        if (clone.phone) {
+          clone.phone = String(clone.phone).replace(/\d(?=\d{2})/g, '*');
+        }
+        if (clone.birth_of_date) {
+          clone.birth_of_date = '****-**-**';
+        }
+        if (clone.zip_code) {
+          clone.zip_code = String(clone.zip_code).replace(/\d(?=\d{2})/g, '*');
+        }
+        return clone;
+      };
+      const maskedBody = mask(req.body);
+      const headersToLog = {
+        'x-forwarded-for': req.headers['x-forwarded-for'],
+        'user-agent': req.headers['user-agent'],
+        'content-type': req.headers['content-type']
+      };
+      auditLogger.info('Create single contact - incoming request', {
+        route: '/api/emarsys/contacts/create-single',
+        method: 'POST',
+        headers: headersToLog,
+        body: maskedBody,
+        query: req.query,
+        timestamp: new Date().toISOString()
+      });
+      logger.http('Incoming request body (masked)', { body: maskedBody });
+    } catch (e) {
+      console.warn('⚠️ Falha ao logar auditoria da requisição:', e.message);
+    }
     
     const { nome, last_name, email, phone, birth_of_date, optin, city, state, zip_code, country } = req.body;
+
+    // X-Request-Id para correlação
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    res.set('X-Request-Id', reqId);
     
     // Validação dos campos obrigatórios
     if (!email) {
@@ -658,9 +704,28 @@ router.post('/create-single', async (req, res) => {
       });
     }
     
+    // Idempotência: evita processar múltiplas vezes o mesmo email em janela curta
+    const emailKey = String(email || '').trim().toLowerCase();
+    const nowTs = Date.now();
+    const lastTs = __inFlightCreateByEmail.get(emailKey) || 0;
+    if (emailKey && nowTs - lastTs < IDEMPOTENCY_WINDOW_MS) {
+      const { logger } = require('../utils/logger');
+      logger.info('Idempotency guard: skipping duplicate request within window', { reqId, email: emailKey });
+      return res.status(202).json({
+        success: true,
+        skipped: true,
+        reason: 'duplicate within 15s',
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (emailKey) {
+      __inFlightCreateByEmail.set(emailKey, nowTs);
+      setTimeout(() => __inFlightCreateByEmail.delete(emailKey), IDEMPOTENCY_WINDOW_MS);
+    }
+
     // Prepara os dados do contato no formato Emarsys
     const contact = {
-      '3': email, // Campo 3 = Email (chave primária)
+      '3': emailKey, // Campo 3 = Email (chave primária)
       '1': nome.split(' ')[0] || nome, // Campo 1 = Primeiro nome (first_name)
       '2': last_name || nome.split(' ').slice(1).join(' ') || '', // Campo 2 = Sobrenome (last_name)
     };
@@ -679,9 +744,9 @@ router.post('/create-single', async (req, res) => {
       }
     }
     
-    // Define opt-in se informado (campo 31 na Emarsys costuma representar opt-in)
+    // Define opt-in se informado (campo 31). Normaliza para 0/1
     if (typeof optin !== 'undefined') {
-      contact['31'] = Boolean(optin);
+      contact['31'] = Number(Boolean(optin));
     }
     
     // Adiciona cidade se fornecida
@@ -701,13 +766,33 @@ router.post('/create-single', async (req, res) => {
     
     // Adiciona país se fornecido
     if (country) {
-      contact['14'] = country; // Campo 14 = País (country)
+      // Mapeia o nome do país para o ID válido da Emarsys
+      const countryId = mapCountryToEmarsysId(country);
+      if (countryId) {
+        contact['14'] = countryId; // Campo 14 = País (country) - ID válido
+      } else {
+        console.warn(`⚠️ País não reconhecido: ${country}. Campo country será omitido.`);
+      }
     }
     
-    console.log('📝 Dados do contato preparados:', contact);
+    try {
+      const { logger } = require('../utils/logger');
+      logger.info('Dados do contato preparados (masked)', {
+        contact: {
+          ...contact,
+          '3': contact['3'] ? `${String(contact['3']).slice(0, 2)}***@${String(contact['3']).split('@')[1] || ''}` : undefined,
+          '15': contact['15'] ? String(contact['15']).replace(/\d(?=\d{2})/g, '*') : undefined,
+          '4': contact['4'] ? '****-**-**' : undefined,
+          '13': contact['13'] ? String(contact['13']).replace(/\d(?=\d{2})/g, '*') : undefined,
+        }
+      });
+    } catch (_) {}
     
     // Usa o serviço de importação da Emarsys
     const emarsysImportService = require('../services/emarsysContactImportService');
+    // Loga payload real que será enviado (serviço também mascara ao logar)
+    const { logger } = require('../utils/logger');
+    logger.info('Emarsys upsert payload (pre-send)', { reqId, payload: { key_id: '3', ...contact } });
     const result = await emarsysImportService.createContact(contact);
     
     if (result.success) {
@@ -724,7 +809,7 @@ router.post('/create-single', async (req, res) => {
           contact: {
             nome,
             last_name: last_name || '',
-            email,
+            email: emailKey,
             phone: phone || '',
             birth_of_date: birth_of_date || '',
             optin: typeof optin !== 'undefined' ? Boolean(optin) : null,
@@ -753,5 +838,296 @@ router.post('/create-single', async (req, res) => {
     });
   }
 });
+
+/**
+ * Mapeia nomes de países para IDs válidos da Emarsys
+ * @param {string} countryName - Nome do país
+ * @returns {string|number|null} ID válido da Emarsys ou null se não encontrado
+ */
+function mapCountryToEmarsysId(countryName) {
+  if (!countryName) return null;
+  
+  const countryMap = {
+    // Mapeamento baseado nos IDs padrão da Emarsys para países
+    'brazil': 'BR',
+    'brasil': 'BR',
+    'br': 'BR',
+    'united states': 'US',
+    'usa': 'US',
+    'us': 'US',
+    'united kingdom': 'GB',
+    'uk': 'GB',
+    'great britain': 'GB',
+    'canada': 'CA',
+    'ca': 'CA',
+    'australia': 'AU',
+    'au': 'AU',
+    'germany': 'DE',
+    'de': 'DE',
+    'france': 'FR',
+    'fr': 'FR',
+    'spain': 'ES',
+    'es': 'ES',
+    'italy': 'IT',
+    'it': 'IT',
+    'portugal': 'PT',
+    'pt': 'PT',
+    'argentina': 'AR',
+    'ar': 'AR',
+    'chile': 'CL',
+    'cl': 'CL',
+    'colombia': 'CO',
+    'co': 'CO',
+    'mexico': 'MX',
+    'mx': 'MX',
+    'peru': 'PE',
+    'pe': 'PE',
+    'uruguay': 'UY',
+    'uy': 'UY',
+    'paraguay': 'PY',
+    'py': 'PY',
+    'bolivia': 'BO',
+    'bo': 'BO',
+    'venezuela': 'VE',
+    've': 'VE',
+    'ecuador': 'EC',
+    'ec': 'EC',
+    'japan': 'JP',
+    'jp': 'JP',
+    'china': 'CN',
+    'cn': 'CN',
+    'india': 'IN',
+    'in': 'IN',
+    'russia': 'RU',
+    'ru': 'RU',
+    'south korea': 'KR',
+    'korea': 'KR',
+    'kr': 'KR',
+    'netherlands': 'NL',
+    'nl': 'NL',
+    'belgium': 'BE',
+    'be': 'BE',
+    'switzerland': 'CH',
+    'ch': 'CH',
+    'austria': 'AT',
+    'at': 'AT',
+    'sweden': 'SE',
+    'se': 'SE',
+    'norway': 'NO',
+    'no': 'NO',
+    'denmark': 'DK',
+    'dk': 'DK',
+    'finland': 'FI',
+    'fi': 'FI',
+    'poland': 'PL',
+    'pl': 'PL',
+    'czech republic': 'CZ',
+    'czech': 'CZ',
+    'cz': 'CZ',
+    'hungary': 'HU',
+    'hu': 'HU',
+    'romania': 'RO',
+    'ro': 'RO',
+    'bulgaria': 'BG',
+    'bg': 'BG',
+    'croatia': 'HR',
+    'hr': 'HR',
+    'slovenia': 'SI',
+    'si': 'SI',
+    'slovakia': 'SK',
+    'sk': 'SK',
+    'estonia': 'EE',
+    'ee': 'EE',
+    'latvia': 'LV',
+    'lv': 'LV',
+    'lithuania': 'LT',
+    'lt': 'LT',
+    'greece': 'GR',
+    'gr': 'GR',
+    'turkey': 'TR',
+    'tr': 'TR',
+    'israel': 'IL',
+    'il': 'IL',
+    'south africa': 'ZA',
+    'za': 'ZA',
+    'egypt': 'EG',
+    'eg': 'EG',
+    'morocco': 'MA',
+    'ma': 'MA',
+    'tunisia': 'TN',
+    'tn': 'TN',
+    'algeria': 'DZ',
+    'dz': 'DZ',
+    'libya': 'LY',
+    'ly': 'LY',
+    'sudan': 'SD',
+    'sd': 'SD',
+    'ethiopia': 'ET',
+    'et': 'ET',
+    'kenya': 'KE',
+    'ke': 'KE',
+    'uganda': 'UG',
+    'ug': 'UG',
+    'tanzania': 'TZ',
+    'tz': 'TZ',
+    'ghana': 'GH',
+    'gh': 'GH',
+    'nigeria': 'NG',
+    'ng': 'NG',
+    'senegal': 'SN',
+    'sn': 'SN',
+    'ivory coast': 'CI',
+    'cote d\'ivoire': 'CI',
+    'ci': 'CI',
+    'cameroon': 'CM',
+    'cm': 'CM',
+    'gabon': 'GA',
+    'ga': 'GA',
+    'congo': 'CG',
+    'cg': 'CG',
+    'democratic republic of congo': 'CD',
+    'drc': 'CD',
+    'cd': 'CD',
+    'central african republic': 'CF',
+    'cf': 'CF',
+    'chad': 'TD',
+    'td': 'TD',
+    'niger': 'NE',
+    'ne': 'NE',
+    'mali': 'ML',
+    'ml': 'ML',
+    'burkina faso': 'BF',
+    'bf': 'BF',
+    'guinea': 'GN',
+    'gn': 'GN',
+    'sierra leone': 'SL',
+    'sl': 'SL',
+    'liberia': 'LR',
+    'lr': 'LR',
+    'guinea-bissau': 'GW',
+    'gw': 'GW',
+    'cape verde': 'CV',
+    'cv': 'CV',
+    'gambia': 'GM',
+    'gm': 'GM',
+    'guinea-bissau': 'GW',
+    'gw': 'GW',
+    'sao tome and principe': 'ST',
+    'st': 'ST',
+    'equatorial guinea': 'GQ',
+    'gq': 'GQ',
+    'angola': 'AO',
+    'ao': 'AO',
+    'zambia': 'ZM',
+    'zm': 'ZM',
+    'zimbabwe': 'ZW',
+    'zw': 'ZW',
+    'botswana': 'BW',
+    'bw': 'BW',
+    'namibia': 'NA',
+    'na': 'NA',
+    'lesotho': 'LS',
+    'ls': 'LS',
+    'swaziland': 'SZ',
+    'sz': 'SZ',
+    'malawi': 'MW',
+    'mw': 'MW',
+    'mozambique': 'MZ',
+    'mz': 'MZ',
+    'madagascar': 'MG',
+    'mg': 'MG',
+    'mauritius': 'MU',
+    'mu': 'MU',
+    'seychelles': 'SC',
+    'sc': 'SC',
+    'comoros': 'KM',
+    'km': 'KM',
+    'djibouti': 'DJ',
+    'dj': 'DJ',
+    'eritrea': 'ER',
+    'er': 'ER',
+    'somalia': 'SO',
+    'so': 'SO',
+    'burundi': 'BI',
+    'bi': 'BI',
+    'rwanda': 'RW',
+    'rw': 'RW',
+    'congo': 'CG',
+    'cg': 'CG',
+    'democratic republic of congo': 'CD',
+    'drc': 'CD',
+    'cd': 'CD',
+    'central african republic': 'CF',
+    'cf': 'CF',
+    'chad': 'TD',
+    'td': 'TD',
+    'niger': 'NE',
+    'ne': 'NE',
+    'mali': 'ML',
+    'ml': 'ML',
+    'burkina faso': 'BF',
+    'bf': 'BF',
+    'guinea': 'GN',
+    'gn': 'GN',
+    'sierra leone': 'SL',
+    'sl': 'SL',
+    'liberia': 'LR',
+    'lr': 'LR',
+    'guinea-bissau': 'GW',
+    'gw': 'GW',
+    'cape verde': 'CV',
+    'cv': 'CV',
+    'gambia': 'GM',
+    'gm': 'GM',
+    'guinea-bissau': 'GW',
+    'gw': 'GW',
+    'sao tome and principe': 'ST',
+    'st': 'ST',
+    'equatorial guinea': 'GQ',
+    'gq': 'GQ',
+    'angola': 'AO',
+    'ao': 'AO',
+    'zambia': 'ZM',
+    'zm': 'ZM',
+    'zimbabwe': 'ZW',
+    'zw': 'ZW',
+    'botswana': 'BW',
+    'bw': 'BW',
+    'namibia': 'NA',
+    'na': 'NA',
+    'lesotho': 'LS',
+    'ls': 'LS',
+    'swaziland': 'SZ',
+    'sz': 'SZ',
+    'malawi': 'MW',
+    'mw': 'MW',
+    'mozambique': 'MZ',
+    'mz': 'MZ',
+    'madagascar': 'MG',
+    'mg': 'MG',
+    'mauritius': 'MU',
+    'mu': 'MU',
+    'seychelles': 'SC',
+    'sc': 'SC',
+    'comoros': 'KM',
+    'km': 'KM',
+    'djibouti': 'DJ',
+    'dj': 'DJ',
+    'eritrea': 'ER',
+    'er': 'ER',
+    'somalia': 'SO',
+    'so': 'SO',
+    'burundi': 'BI',
+    'bi': 'BI',
+    'rwanda': 'RW',
+    'rw': 'RW'
+  };
+  
+  const normalizedCountry = countryName.toLowerCase().trim();
+  return countryMap[normalizedCountry] || null;
+}
+
+// Adiciona a função ao objeto router para poder ser chamada
+router.mapCountryToEmarsysId = mapCountryToEmarsysId;
 
 module.exports = router;

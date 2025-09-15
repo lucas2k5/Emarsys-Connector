@@ -175,6 +175,42 @@ class EmarsysCsvService {
   }
 
   // Métodos auxiliares
+  
+  /**
+   * Helper robusto para escape de células CSV
+   * Escape aspas dobrando-as e envolve o campo em aspas SEMPRE
+   * @param {unknown} value - Valor a ser escapado
+   * @returns {string} Célula CSV com escape correto
+   */
+  csvCell(value) {
+    const s = (value ?? '').toString();
+    // Escape aspas dobrando-as e envolva o campo em aspas SEMPRE
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+
+  /**
+   * Normaliza categoria para formato Emarsys (A>B>C)
+   * @param {string|undefined|null} raw - Categoria bruta
+   * @returns {string} Categoria normalizada
+   */
+  normalizeCategory(raw) {
+    if (!raw) return '';
+    // VTEX costuma vir "/A/B/C/"; remove barras e junta com ">"
+    const parts = String(raw).split('/').filter(Boolean);
+    return parts.join('>');
+  }
+
+  /**
+   * Gera ID canônico do item (mesmo usado no pixel)
+   * @param {any} item - Item do produto
+   * @returns {string} ID canônico
+   */
+  canonicalItemId(item) {
+    // em VTEX: item.referenceId é [{ Key, Value }]
+    const ref = item?.referenceId?.[0]?.Value ?? item?.ean ?? item?.itemId ?? '';
+    return String(ref).trim(); // sem substring, sem prefixo, sem limite!
+  }
+
   sanitizeField(value, maxLength = 25) {
     if (!value) return '';
     
@@ -270,7 +306,7 @@ class EmarsysCsvService {
   
   formatPrice(price) {
     if (!price || isNaN(price)) return '0.00';
-    return parseFloat(price).toFixed(2);
+    return (parseFloat(price) / 100).toFixed(2);
   }
 
   /**
@@ -312,7 +348,8 @@ class EmarsysCsvService {
       'c_tamanho'
     ];
 
-    const csvRows = [headers.join(',')];
+    // Gera header com escape correto
+    const csvRows = [headers.map(header => this.csvCell(header)).join(',')];
 
     products.forEach(product => {
       // Para cada produto, gerar uma linha para cada item (SKU)
@@ -327,38 +364,38 @@ class EmarsysCsvService {
           };
 
           const row = [
-             this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-             this.sanitizeField(product.productName, 100), // title
-             this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
-             item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',     // available
-             this.sanitizeField(product.description || '', 200),                      // description
-             this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
-             this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),   // msrp
-             this.sanitizeField(product.link || '', 200),                             // link
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // image (sanitizada)
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // zoom_image (sanitizada)
-             this.sanitizeField(product.productId, 50),                         // group_id
-             item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,             // c_stock
-             this.sanitizeField(item.ean || '', 50),                                  // c_ean
-             this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
-             this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),  // c_altura_do_salto
-             '',                                                                      // c_beneficios
-             '',                                                                      // c_collab_barbie
-             this.sanitizeField(extractArrayValue(product['Cor']), 50),              // c_cor
-             '',                                                                      // c_fechamento
-             this.sanitizeField(extractArrayValue(product['Forro']), 50),            // c_forro
-             this.sanitizeField(extractArrayValue(product['Gênero']), 50),           // c_genero
-             this.sanitizeField(extractArrayValue(product['Material']), 50),         // c_material
-             this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-             '',                                                                      // c_medidas
-             this.sanitizeField(extractArrayValue(product['Modelo']), 50),           // c_modelo
-             this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),  // c_peso_do_produto
-             this.sanitizeField(extractArrayValue(product['Referência Curta']), 50), // c_referencia_curta
-             '',                                                                      // c_tecnologia
-             this.sanitizeField(extractArrayValue(item.Tamanho), 50)                 // c_tamanho
+            this.canonicalItemId(item),                                                // item (ID canônico)
+            product.productName ?? '',                                                 // title
+            this.normalizeCategory(product.categories?.[0] || product.category), // category (A>B>C)
+            item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',       // available
+            product.description ?? '',                                                 // description
+            this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),         // price (consistente)
+            this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),     // msrp
+            product.link ?? '',                                                        // link
+            this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                         // image
+            this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                         // zoom_image
+            product.productId ?? '',                                                   // group_id
+            item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,               // c_stock
+            item.ean ?? '',                                                           // c_ean
+            this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
+            extractArrayValue(product['Altura do Salto']),                            // c_altura_do_salto
+            '',                                                                       // c_beneficios
+            '',                                                                       // c_collab_barbie
+            extractArrayValue(product['Cor']),                                        // c_cor
+            '',                                                                       // c_fechamento
+            extractArrayValue(product['Forro']),                                      // c_forro
+            extractArrayValue(product['Gênero']),                                     // c_genero
+            extractArrayValue(product['Material']),                                   // c_material
+            extractArrayValue(product['Medida do Salto (cm)']),                       // c_medida_do_salto_cm
+            '',                                                                       // c_medidas
+            extractArrayValue(product['Modelo']),                                     // c_modelo
+            extractArrayValue(product['Peso do Produto']),                            // c_peso_do_produto
+            extractArrayValue(product['Referência Curta']),                           // c_referencia_curta
+            '',                                                                       // c_tecnologia
+            extractArrayValue(item.Tamanho)                                           // c_tamanho
           ];
 
-          csvRows.push(row.join(','));
+          csvRows.push(row.map(cell => this.csvCell(cell)).join(','));
         });
       } else {
         // Fallback: se não há items, usar dados do produto principal
@@ -369,39 +406,39 @@ class EmarsysCsvService {
           return '';
         };
 
-                 const row = [
-           this.sanitizeField(product.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-           this.sanitizeField(product.productName || '', 100),                       // title
-           this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
-           'true',                                                                   // available
-           this.sanitizeField(product.description || '', 200),                       // description
-           this.formatPrice(product.price || 0),                                     // price
-           this.formatPrice(product.listPrice || 0),                                 // msrp
-           this.sanitizeField(product.link || '', 200),                              // link
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl),               // image (sanitizada)
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl),               // zoom_image (sanitizada)
-           this.sanitizeField(product.productId, 50),                          // group_id
-           product.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,           // c_stock
-            '',                                                                       // c_ean
-            this.formatEmarsysTimestamp(product.releaseDate || ''),                   // c_dataLancamento
-           this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),   // c_altura_do_salto
-           '',                                                                       // c_beneficios
-           '',                                                                       // c_collab_barbie
-           this.sanitizeField(extractArrayValue(product['Cor']), 50),               // c_cor
-           '',                                                                       // c_fechamento
-           this.sanitizeField(extractArrayValue(product['Forro']), 50),             // c_forro
-           this.sanitizeField(extractArrayValue(product['Gênero']), 50),            // c_genero
-           this.sanitizeField(extractArrayValue(product['Material']), 50),          // c_material
-           this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-           '',                                                                       // c_medidas
-           this.sanitizeField(extractArrayValue(product['Modelo']), 50),            // c_modelo
-           this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),   // c_peso_do_produto
-           this.sanitizeField(extractArrayValue(product['Referência Curta']), 50),  // c_referencia_curta
-           '',                                                                       // c_tecnologia
-           ''                                                                        // c_tamanho
-         ];
+        const row = [
+          this.canonicalItemId(product),                                               // item (ID canônico)
+          product.productName ?? '',                                                   // title
+          this.normalizeCategory(product.categories?.[0] || product.category),  // category (A>B>C)
+          'true',                                                                     // available
+          product.description ?? '',                                                  // description
+          this.formatPrice(product.price || 0),                                       // price
+          this.formatPrice(product.listPrice || 0),                                   // msrp
+          product.link ?? '',                                                         // link
+          this.sanitizeImageUrl(product.images?.[0]?.imageUrl),                       // image
+          this.sanitizeImageUrl(product.images?.[0]?.imageUrl),                       // zoom_image
+          product.productId ?? '',                                                    // group_id
+          product.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,              // c_stock
+          '',                                                                         // c_ean
+          this.formatEmarsysTimestamp(product.releaseDate || ''),                     // c_dataLancamento
+          extractArrayValue(product['Altura do Salto']),                              // c_altura_do_salto
+          '',                                                                         // c_beneficios
+          '',                                                                         // c_collab_barbie
+          extractArrayValue(product['Cor']),                                          // c_cor
+          '',                                                                         // c_fechamento
+          extractArrayValue(product['Forro']),                                        // c_forro
+          extractArrayValue(product['Gênero']),                                       // c_genero
+          extractArrayValue(product['Material']),                                     // c_material
+          extractArrayValue(product['Medida do Salto (cm)']),                         // c_medida_do_salto_cm
+          '',                                                                         // c_medidas
+          extractArrayValue(product['Modelo']),                                       // c_modelo
+          extractArrayValue(product['Peso do Produto']),                              // c_peso_do_produto
+          extractArrayValue(product['Referência Curta']),                             // c_referencia_curta
+          '',                                                                         // c_tecnologia
+          ''                                                                          // c_tamanho
+        ];
 
-        csvRows.push(row.join(','));
+        csvRows.push(row.map(cell => this.csvCell(cell)).join(','));
       }
     });
 
