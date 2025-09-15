@@ -695,7 +695,7 @@ router.post('/generate-emarsys-csv', async (req, res) => {
     // Filtros opcionais do body da requisição
     const filters = {
       active: req.body.active !== undefined ? req.body.active : undefined,
-      category: req.body.category || undefined,
+      category: req.body.category,
       brand: req.body.brand || undefined
     };
     
