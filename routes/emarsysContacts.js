@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const emarsysContactsService = require('../services/emarsysContactsService');
+const ContactService = require('../services/contactService');
 
 console.log('EmarsysContacts routes loaded');
 
@@ -619,6 +620,103 @@ router.post('/extract-recent', async (req, res) => {
   } catch (error) {
     console.error('❌ Erro na rota de extração de contatos recentes:', error);
     res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/emarsys/contacts/create-single-from-ad
+ * @desc Recebe userId da AD + endereço, busca email na CL e cria contato
+ * @access Public
+ * @body {string} userId - ID do usuário (CL.id / AD.userId)
+ * @body {string} [state]
+ * @body {string} [city]
+ * @body {string} [country]
+ * @body {string} [zip_code]
+ */
+router.post('/create-single-from-ad', async (req, res) => {
+  try {
+    console.log('🔗 Criando contato a partir do userId (AD) + endereço...');
+    const { userId, state, city, country, zip_code } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campo userId é obrigatório',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const contactService = new ContactService();
+    const clRecord = await contactService.getCLRecordById(userId);
+
+    if (!clRecord || !clRecord.email) {
+      return res.status(404).json({
+        success: false,
+        error: 'Email não encontrado para o userId informado',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const firstName = clRecord.firstName || clRecord.firstname || (clRecord.email.split('@')[0]) || 'Cliente';
+    const lastName = clRecord.lastName || clRecord.lastname || '';
+    const nome = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+    // Monta payload exatamente como esperado pela rota /create-single
+    const forwardBody = {
+      nome,
+      last_name: lastName || '',
+      email: clRecord.email,
+      city: city || '',
+      state: state || '',
+      country: country || '',
+      zip_code: zip_code || ''
+    };
+
+    // Reutiliza o mesmo serviço usado pela rota /create-single para criar o contato
+    const emarsysImportService = require('../services/emarsysContactImportService');
+
+    const contact = {
+      '3': forwardBody.email,
+      '1': firstName,
+      '2': lastName || ''
+    };
+    if (forwardBody.city) contact['11'] = forwardBody.city;
+    if (forwardBody.state) contact['12'] = forwardBody.state;
+    if (forwardBody.zip_code) contact['13'] = forwardBody.zip_code;
+    if (forwardBody.country) contact['14'] = forwardBody.country;
+
+    const result = await emarsysImportService.createContact(contact);
+
+    if (result.success) {
+      const action = result.action || 'created';
+      const message = action === 'updated'
+        ? 'Contato atualizado com sucesso via userId + endereço'
+        : 'Contato criado com sucesso via userId + endereço';
+
+      return res.status(201).json({
+        success: true,
+        message,
+        action,
+        data: {
+          contact: forwardBody,
+          emarsysResponse: result.data
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return res.status(result.status || 500).json({
+      success: false,
+      error: result.error,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro ao criar contato a partir do userId:', error);
+    return res.status(500).json({
       success: false,
       error: error.message,
       timestamp: new Date().toISOString()
