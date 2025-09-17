@@ -195,9 +195,10 @@ class EmarsysCsvService {
    */
   normalizeCategory(raw) {
     if (!raw) return '';
-    // VTEX costuma vir "/A/B/C/"; remove barras e junta com ">"
+    // VTEX costuma vir "/A/B/C/"; queremos apenas a última parte (folha)
     const parts = String(raw).split('/').filter(Boolean);
-    return parts.join('>');
+    const leaf = parts.length > 0 ? parts[parts.length - 1] : '';
+    return leaf;
   }
 
   /**

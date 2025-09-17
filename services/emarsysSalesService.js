@@ -132,7 +132,7 @@ class EmarsysSalesService {
 
       const response = await axios.post(this.baseURL, csvContent, {
         headers: {
-          'Authorization': `bearer ${token}`,
+          'Authorization': `bearer ${token}4`,
           'Content-type': 'text/csv',
           'Accept': 'text/plain'
         },

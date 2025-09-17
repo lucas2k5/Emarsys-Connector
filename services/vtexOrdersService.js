@@ -799,7 +799,7 @@ class VtexOrdersService {
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'piccadilly',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: order.s_discount || '0'
+          s_discount: order.discount || '0'
         };
 
         emarsysData.push(saleRecord);
@@ -1165,7 +1165,7 @@ class VtexOrdersService {
           this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'), // Posição 7 - s_channel_source
           this.sanitizeField(order.s_store_id || 'piccadilly', 25, 's_store_id'), // Posição 8 - s_store_id
           this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'), // Posição 9 - s_sales_channel
-          this.sanitizeField(order.s_discount || '0', 25, 's_discount')     // Posição 10 - s_discount
+          this.sanitizeField((order.s_discount ?? order.discount ?? '0'), 25, 's_discount')     // Posição 10 - s_discount
         ];
         
         // Validação adicional para garantir que a linha tem exatamente 10 campos
@@ -1300,10 +1300,9 @@ class VtexOrdersService {
             try {
               console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
             
-            // Usa axios diretamente com configuração completa
             const cleanupResponse = await axiosInstance({
               method: 'DELETE',
-              url: `${process.env.VTEX_BASE_URL}/_v2/orders/all`,
+              url: `${process.env.VTEX_BASE_URL}/_v2/orderss/all`,
               headers: {
                 'Content-Type': 'application/json',
                 'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,

@@ -79,7 +79,7 @@ class VtexProductService {
         ]
       }
     };
-    this.sftpRemotePath = process.env.SFTP_REMOTE_PATH || '/catalog/catalog.csv.gz';
+    this.sftpRemotePath = process.env.SFTP_REMOTE_PATH;
     
     // Validação das configurações SFTP
     this._validateSftpConfig();
