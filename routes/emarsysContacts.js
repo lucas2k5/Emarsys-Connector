@@ -914,7 +914,7 @@ router.post('/create-single', async (req, res) => {
             city: city || '',
             state: state || '',
             zip_code: zip_code || '',
-            country: country || '',
+            country: "24",
           },
           emarsysResponse: result.data
         },
@@ -1222,7 +1222,7 @@ function mapCountryToEmarsysId(countryName) {
   };
   
   const normalizedCountry = countryName.toLowerCase().trim();
-  return countryMap[normalizedCountry] || null;
+  return countryMap[normalizedCountry] || '24';
 }
 
 // Adiciona a função ao objeto router para poder ser chamada
