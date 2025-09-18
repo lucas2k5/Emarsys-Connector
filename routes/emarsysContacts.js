@@ -5,6 +5,19 @@ const ContactService = require('../services/contactService');
 
 console.log('EmarsysContacts routes loaded');
 
+// Normaliza datas para o formato YYYY-MM-DD (aceita ISO como 1995-01-10T00:00:00Z)
+function normalizeBirthDate(input) {
+  if (!input) return null;
+  const raw = String(input).trim();
+  // Já está no formato YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  // ISO com tempo
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw.slice(0, 10);
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
 /**
  * @route GET /api/emarsys/contacts/files
  * @desc Lista todos os arquivos CSV de contatos disponíveis
@@ -670,8 +683,8 @@ router.post('/create-single-from-ad', async (req, res) => {
       email: clRecord.email,
       city: city || '',
       state: state || '',
-      country: country || '',
-      zip_code: "24"
+      country: "24",
+      zip_code: zip_code || ''
     };
 
     // Reutiliza o mesmo serviço usado pela rota /create-single para criar o contato
@@ -833,10 +846,9 @@ router.post('/create-single', async (req, res) => {
     
     // Adiciona data de nascimento se fornecida
     if (birth_date) {
-      // Converte para formato Emarsys (YYYY-MM-DD)
-      const birthDate = new Date(birth_date);
-      if (!isNaN(birthDate.getTime())) {
-        contact['4'] = birth_date; // Campo 4 = Data de nascimento (birth_date)
+      const normalized = normalizeBirthDate(birth_date);
+      if (normalized) {
+        contact['4'] = normalized; // Campo 4 = Data de nascimento (YYYY-MM-DD)
       }
     }
 
@@ -929,7 +941,7 @@ router.post('/create-single', async (req, res) => {
             email: emailKey,
             phone: phone || '',
             mobile: mobile || '',
-            birth_date: birth_date || '',
+            birth_date: normalizeBirthDate(birth_date) || '',
             gender: typeof gender !== 'undefined' ? gender : null,
             optin: typeof optin !== 'undefined' ? (optin ? 1 : 2) : null,
             city: city || '',
