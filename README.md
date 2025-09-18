@@ -679,7 +679,8 @@ curl -X POST http://localhost:3000/api/emarsys/contacts/create-single \
     "nome": "João Silva",
     "email": "joao.silva@email.com",
     "phone": "+5511999999999",
-    "birth_of_date": "1990-05-15"
+    "birth_date": "1990-05-15",
+    "gender": "male"
   }'
 
 # Criar contato apenas com nome e email (mínimo obrigatório)
@@ -701,7 +702,8 @@ curl -X POST http://localhost:3000/api/emarsys/contacts/create-single \
       "nome": "João Silva",
       "email": "joao.silva@email.com",
       "phone": "+5511999999999",
-      "birth_of_date": "1990-05-15"
+      "birth_date": "1990-05-15",
+      "gender": "male"
     },
     "emarsysResponse": {
       "replyCode": 0,

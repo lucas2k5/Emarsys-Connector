@@ -661,19 +661,17 @@ router.post('/create-single-from-ad', async (req, res) => {
       });
     }
 
-    const firstName = clRecord.firstName || clRecord.firstname || (clRecord.email.split('@')[0]) || 'Cliente';
-    const lastName = clRecord.lastName || clRecord.lastname || '';
-    const nome = [firstName, lastName].filter(Boolean).join(' ').trim();
+    const firstName = clRecord.firstName;
+    const lastName = clRecord.lastName;
 
-    // Monta payload exatamente como esperado pela rota /create-single
     const forwardBody = {
-      nome,
+      first_name: firstName,
       last_name: lastName || '',
       email: clRecord.email,
       city: city || '',
       state: state || '',
       country: country || '',
-      zip_code: zip_code || ''
+      zip_code: "24"
     };
 
     // Reutiliza o mesmo serviço usado pela rota /create-single para criar o contato
@@ -728,10 +726,11 @@ router.post('/create-single-from-ad', async (req, res) => {
  * @route POST /api/emarsys/contacts/create-single
  * @desc Cria um contato único via trigger automática
  * @access Public
- * @body {string} nome - Nome do contato
+ * @body {string} first_name - Primeiro nome do contato
  * @body {string} email - Email do contato (obrigatório)
  * @body {string} [phone] - Telefone do contato
- * @body {string} [birth_of_date] - Data de nascimento (formato: YYYY-MM-DD)
+ * @body {string} [mobile] - Celular do contato
+ * @body {string} [birth_date] - Data de nascimento (formato: YYYY-MM-DD)
  */
 // Lock simples em memória para evitar duplicidade em janela curta
 const __inFlightCreateByEmail = new Map();
@@ -752,8 +751,11 @@ router.post('/create-single', async (req, res) => {
         if (clone.phone) {
           clone.phone = String(clone.phone).replace(/\d(?=\d{2})/g, '*');
         }
-        if (clone.birth_of_date) {
-          clone.birth_of_date = '****-**-**';
+        if (clone.mobile) {
+          clone.mobile = String(clone.mobile).replace(/\d(?=\d{2})/g, '*');
+        }
+        if (clone.birth_date) {
+          clone.birth_date = '****-**-**';
         }
         if (clone.zip_code) {
           clone.zip_code = String(clone.zip_code).replace(/\d(?=\d{2})/g, '*');
@@ -779,7 +781,7 @@ router.post('/create-single', async (req, res) => {
       console.warn('⚠️ Falha ao logar auditoria da requisição:', e.message);
     }
     
-    const { nome, last_name, email, phone, birth_of_date, optin, city, state, zip_code, country } = req.body;
+    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country } = req.body;
 
     // X-Request-Id para correlação
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -790,14 +792,6 @@ router.post('/create-single', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Campo email é obrigatório',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    if (!nome) {
-      return res.status(400).json({
-        success: false,
-        error: 'Campo nome é obrigatório',
         timestamp: new Date().toISOString()
       });
     }
@@ -824,27 +818,51 @@ router.post('/create-single', async (req, res) => {
     // Prepara os dados do contato no formato Emarsys
     const contact = {
       '3': emailKey, // Campo 3 = Email (chave primária)
-      '1': nome.split(' ')[0] || nome, // Campo 1 = Primeiro nome (first_name)
-      '2': last_name || nome.split(' ').slice(1).join(' ') || '', // Campo 2 = Sobrenome (last_name)
+      '1': first_name, // Campo 1 = Primeiro nome (first_name)
+      '2': last_name || '', // Campo 2 = Sobrenome (last_name)
     };
     
-    // Adiciona telefone se fornecido
+    // Adiciona telefone fixo se fornecido
     if (phone) {
       contact['15'] = phone; // Campo 15 = Telefone (phone)
     }
-    
-    // Adiciona data de nascimento se fornecida
-    if (birth_of_date) {
-      // Converte para formato Emarsys (YYYY-MM-DD)
-      const birthDate = new Date(birth_of_date);
-      if (!isNaN(birthDate.getTime())) {
-        contact['4'] = birth_of_date; // Campo 4 = Data de nascimento (birth_date)
-      }
+    // Adiciona celular se fornecido
+    if (mobile) {
+      contact['37'] = mobile; // Campo 37 = Mobile (celular)
     }
     
-    // Define opt-in se informado (campo 31). Normaliza para 0/1
+    // Adiciona data de nascimento se fornecida
+    if (birth_date) {
+      // Converte para formato Emarsys (YYYY-MM-DD)
+      const birthDate = new Date(birth_date);
+      if (!isNaN(birthDate.getTime())) {
+        contact['4'] = birth_date; // Campo 4 = Data de nascimento (birth_date)
+      }
+    }
+
+    // Adiciona gênero se fornecido (campo 5)
+    if (typeof gender !== 'undefined' && gender !== null && gender !== '') {
+      const normalized = String(gender).trim().toLowerCase();
+      const map = {
+        masculino: 1,
+        male: 1,
+        m: 1,
+        '1': 1,
+        feminino: 2,
+        female: 2,
+        f: 2,
+        '2': 2,
+        outro: 3,
+        other: 3,
+        '3': 3
+      };
+      const value = Object.prototype.hasOwnProperty.call(map, normalized) ? map[normalized] : gender;
+      contact['5'] = value; // Campo 5 = Gênero (gender)
+    }
+    
+    // Define opt-in se informado (campo 31). Emarsys espera 1=True e 2=False
     if (typeof optin !== 'undefined') {
-      contact['31'] = Number(Boolean(optin));
+      contact['31'] = optin ? 1 : 2;
     }
     
     // Adiciona cidade se fornecida
@@ -880,6 +898,7 @@ router.post('/create-single', async (req, res) => {
           ...contact,
           '3': contact['3'] ? `${String(contact['3']).slice(0, 2)}***@${String(contact['3']).split('@')[1] || ''}` : undefined,
           '15': contact['15'] ? String(contact['15']).replace(/\d(?=\d{2})/g, '*') : undefined,
+          '37': contact['37'] ? String(contact['37']).replace(/\d(?=\d{2})/g, '*') : undefined,
           '4': contact['4'] ? '****-**-**' : undefined,
           '13': contact['13'] ? String(contact['13']).replace(/\d(?=\d{2})/g, '*') : undefined,
         }
@@ -905,12 +924,14 @@ router.post('/create-single', async (req, res) => {
         action,
         data: {
           contact: {
-            nome,
+            first_name,
             last_name: last_name || '',
             email: emailKey,
             phone: phone || '',
-            birth_of_date: birth_of_date || '',
-            optin: typeof optin !== 'undefined' ? Boolean(optin) : null,
+            mobile: mobile || '',
+            birth_date: birth_date || '',
+            gender: typeof gender !== 'undefined' ? gender : null,
+            optin: typeof optin !== 'undefined' ? (optin ? 1 : 2) : null,
             city: city || '',
             state: state || '',
             zip_code: zip_code || '',
