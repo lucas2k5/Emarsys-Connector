@@ -10,11 +10,6 @@ class EmarsysSalesService {
     this.bearerToken = process.env.EMARSYS_BEARER_TOKEN;
     const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
-    console.log('🔧 [EmarsysSalesService] Constructor inicializado:');
-    console.log('   🌐 BaseURL:', this.baseURL);
-    console.log('   🔑 BearerToken configurado:', this.bearerToken ? 'Sim' : 'Não');
-    console.log('   📁 ExportsDir:', this.exportsDir);
-    console.log('   🔑 EMARSYS_BEARER_TOKEN:', process.env.EMARSYS_BEARER_TOKEN ? 'Configurado' : 'NÃO CONFIGURADO');
   }
 
   getAuthToken() {
@@ -120,19 +115,10 @@ class EmarsysSalesService {
       }
 
       const csvContent = await this.loadCsvContent(csvFile.filePath);
-      
-      console.log(`📤 Enviando arquivo ${csvFile.filename} (${csvContent.length} caracteres) para Emarsys...`);
-      console.log('🌐 URL:', this.baseURL);
-      console.log('🔑 Token (primeiros 50 chars):', token.substring(0, 50) + '...');
-      console.log('📄 Headers a serem enviados:', {
-        'Authorization': `bearer ${token.substring(0, 20)}...`,
-        'Content-type': 'text/csv',
-        'Accept': 'text/plain'
-      });
 
       const response = await axios.post(this.baseURL, csvContent, {
         headers: {
-          'Authorization': `bearer ${token}4`,
+          'Authorization': `bearer ${token}`,
           'Content-type': 'text/csv',
           'Accept': 'text/plain'
         },
@@ -157,12 +143,6 @@ class EmarsysSalesService {
       };
     } catch (error) {
       console.error('❌ Erro ao enviar arquivo CSV para Emarsys:');
-      console.error('   📊 Status:', error.response?.status);
-      console.error('   📝 Status Text:', error.response?.statusText);
-      console.error('   📄 Response Data:', error.response?.data);
-      console.error('   🔗 URL:', this.baseURL);
-      console.error('   🔑 Token (primeiros 20):', this.getAuthToken().substring(0, 20) + '...');
-      console.error('   📨 Headers enviados:', error.config?.headers);
       console.error('   🚨 Message:', error.message);
       
       return {

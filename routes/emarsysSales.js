@@ -127,11 +127,13 @@ router.post('/send-csv-file', async (req, res) => {
           console.warn('⚠️ BASE_URL/VTEX_BASE_URL não configurada; limpeza pós-envio não executada');
           cleanupResult = { success: false, error: 'BASE_URL não configurada' };
         } else {
-          console.log(`🔗 URL da limpeza: ${baseUrlEnv}/_v/orders/all`);
+          const deleteUrl = process.env.VTEX_ORDERS_DELETE
+
+          console.log(`🔗 URL da limpeza: ${deleteUrl}`);
           
           const cleanupResponse = await axios({
             method: 'DELETE',
-            url: `${baseUrlEnv}/_v/orderss/all`,
+            url: deleteUrl,
             headers: {
               'Content-Type': 'application/json'
             },
