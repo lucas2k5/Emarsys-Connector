@@ -1573,6 +1573,25 @@ class ContactService {
       .replace(/\r?\n/g, ' ')      // Remove quebras de linha
       .trim();                     // Remove espaços extras
     
+    // Normalização específica para datas de nascimento (YYYY-MM-DD)
+    if (fieldName === 'date_of_birth') {
+      // Se vier em ISO (YYYY-MM-DDTHH:mm:ss[.sss][Z]) corta apenas a parte da data
+      const isoMatch = cleanValue.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+      if (isoMatch) {
+        cleanValue = isoMatch[1];
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(cleanValue)) {
+        // já está no formato correto
+      } else {
+        // Tenta fazer parse e reformatar
+        const d = new Date(cleanValue);
+        if (!isNaN(d.getTime())) {
+          cleanValue = d.toISOString().slice(0, 10);
+        }
+      }
+    }
+    
+    // Mantemos o documento como texto; remoções específicas serão aplicadas no ponto de uso
+    
     // Trunca se necessário
     if (cleanValue.length > maxLength) {
       cleanValue = cleanValue.substring(0, maxLength);
@@ -1703,7 +1722,7 @@ class ContactService {
            this.sanitizeFieldForCSV(record.email || ''),
            this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
            this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-           this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+           this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id (como vem da base)
            this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
            this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
            // Campos de endereço (AD) - apenas campos necessários para Emarsys
@@ -1794,6 +1813,15 @@ class ContactService {
     
     // Converte para string
     let cleanValue = String(value).trim();
+    
+    // Se o valor parecer uma data ISO (YYYY-MM-DDTHH:mm:ss...) normalize para apenas YYYY-MM-DD
+    const isoDate = cleanValue.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+    if (isoDate) {
+      cleanValue = isoDate[1];
+    }
+    // Também cobre casos como "1976-09-16T00:00:00" ou "1976-09-16 00:00:00"
+    
+    // Não forçar numérico para evitar notação científica em planilhas
     
     // Remove quebras de linha e tabs
     cleanValue = cleanValue.replace(/[\r\n\t]/g, ' ');
@@ -2106,7 +2134,7 @@ class ContactService {
              this.sanitizeFieldForCSV(record.email || ''),
              this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
              this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-             this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+             this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id (como vem da base)
              this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
              this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
              // Campos de endereço (AD) - apenas campos necessários para Emarsys
@@ -2235,7 +2263,7 @@ class ContactService {
                      this.sanitizeFieldForCSV(record.email || ''),
                      this.sanitizeFieldForCSV(record.firstName || record.firstname || ''),
                      this.sanitizeFieldForCSV(record.lastName || record.lastname || ''),
-                     this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id
+                     this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id (como vem da base)
                      this.sanitizeFieldForCSV(record.birthDate || ''), // Data de nascimento -> date_of_birth
                      this.sanitizeFieldForCSV(this.getPhoneNumber(record)), // Telefone
                      // Campos de endereço (AD) - apenas campos necessários para Emarsys
@@ -2532,7 +2560,7 @@ class ContactService {
         
         const row = [
           this.sanitizeFieldForCSV(record.email || ''),
-          this.sanitizeFieldForCSV(record.document || ''),
+          this.sanitizeFieldForCSV(record.document || ''), // CPF -> external_id (como vem da base)
           this.sanitizeFieldForCSV(record.birthDate || ''),
           this.sanitizeFieldForCSV(this.getPhoneNumber(record)),
           this.sanitizeFieldForCSV(primaryAddress.postalCode || ''),
@@ -2768,7 +2796,7 @@ class ContactService {
             this.sanitizeField(record.email || '', 100, 'email'),
             this.sanitizeField(record.firstName || record.firstname || '', 50, 'firstName'),
             this.sanitizeField(record.lastName || record.lastname || '', 50, 'lastName'),
-            this.sanitizeField(record.document || '', 20, 'external_id'), // CPF
+            this.sanitizeField(String(record.document || '').replace(/[.\-]/g, '')), // CPF (somente dígitos)
             this.sanitizeField(record.birthDate || '', 20, 'date_of_birth'), // Data de nascimento
             this.sanitizeField(this.getPhoneNumber(record), 20, 'phone'), // Telefone
             // Campos de endereço (AD) - mapeamento correto
@@ -2974,7 +3002,7 @@ class ContactService {
           this.sanitizeFieldForCSV(contact.email || ''),
           this.sanitizeFieldForCSV(contact.firstName || contact.firstname || ''),
           this.sanitizeFieldForCSV(contact.lastName || contact.lastname || ''),
-          this.sanitizeFieldForCSV(contact.document || ''), // CPF -> external_id
+          this.sanitizeFieldForCSV(contact.document || ''), // CPF -> external_id (como vem da base)
           this.sanitizeFieldForCSV(contact.birthDate || ''), // Data de nascimento -> date_of_birth
           this.sanitizeFieldForCSV(this.getPhoneNumber(contact)), // Telefone
           // Campos de endereço (AD) - apenas campos necessários para Emarsys
