@@ -364,95 +364,205 @@ class EmarsysContactImportService {
   }
 
   /**
+   * Valida dados do contato antes do envio
+   * @param {Object} contactData - Dados do contato
+   * @returns {Object} Resultado da validação
+   */
+  validateContactData(contactData) {
+    const errors = [];
+    const warnings = [];
+
+    // Validação do email (campo obrigatório)
+    if (!contactData['3']) {
+      errors.push('Email é obrigatório (campo 3)');
+    } else {
+      const email = String(contactData['3']).trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        errors.push('Email inválido (campo 3)');
+      }
+    }
+
+    // Validação do primeiro nome
+    if (contactData['1'] && String(contactData['1']).length > 100) {
+      warnings.push('Primeiro nome muito longo (campo 1)');
+    }
+
+    // Validação do sobrenome
+    if (contactData['2'] && String(contactData['2']).length > 100) {
+      warnings.push('Sobrenome muito longo (campo 2)');
+    }
+
+    // Validação da data de nascimento
+    if (contactData['4']) {
+      const birthDate = String(contactData['4']);
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(birthDate)) {
+        errors.push('Data de nascimento deve estar no formato YYYY-MM-DD (campo 4)');
+      } else {
+        const date = new Date(birthDate);
+        const now = new Date();
+        if (date > now) {
+          warnings.push('Data de nascimento no futuro (campo 4)');
+        }
+      }
+    }
+
+    // Validação do gênero
+    if (contactData['5'] !== undefined) {
+      const gender = String(contactData['5']).trim();
+      if (!['1', '2', '3'].includes(gender)) {
+        warnings.push('Gênero deve ser 1 (masculino), 2 (feminino) ou 3 (outro) (campo 5)');
+      }
+    }
+
+    // Validação do opt-in
+    if (contactData['31'] !== undefined) {
+      const optin = String(contactData['31']).trim();
+      if (!['1', '2'].includes(optin)) {
+        warnings.push('Opt-in deve ser 1 (sim) ou 2 (não) (campo 31)');
+      }
+    }
+
+    // Validação do telefone
+    if (contactData['15']) {
+      const phone = String(contactData['15']).replace(/\D/g, '');
+      if (phone.length < 10 || phone.length > 15) {
+        warnings.push('Telefone deve ter entre 10 e 15 dígitos (campo 15)');
+      }
+    }
+
+    // Validação do celular
+    if (contactData['37']) {
+      const mobile = String(contactData['37']).replace(/\D/g, '');
+      if (mobile.length < 10 || mobile.length > 15) {
+        warnings.push('Celular deve ter entre 10 e 15 dígitos (campo 37)');
+      }
+    }
+
+    // Validação do CEP
+    if (contactData['13']) {
+      const zipCode = String(contactData['13']).replace(/\D/g, '');
+      if (zipCode.length !== 8) {
+        warnings.push('CEP deve ter 8 dígitos (campo 13)');
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings
+    };
+  }
+
+  /**
    * Cria ou atualiza um contato individual na Emarsys
    * @param {Object} contactData - Dados do contato
+   * @param {Object} options - Opções de retry e validação
    * @returns {Object} Resultado da operação
    */
-    async createContact(contactData) {
+    async createContact(contactData, options = {}) {
+      const { maxRetries = 3, retryDelay = 1000, validateData = true } = options;
+      
       if (!this.wsseUser || !this.wsseSecret) {
         return {
           success: false,
-          error: 'Credenciais Emarsys não configuradas.'
+          error: 'Credenciais Emarsys não configuradas.',
+          errorType: 'CONFIG_ERROR'
         };
       }
 
-      try {
-        console.log('👤 Criando/Atualizando contato na Emarsys Core API v3...');
-        try {
-          const { logger } = require('../utils/logger');
-          const maskContact = (obj) => {
-            const c = { ...obj };
-            if (c['3']) {
-              const email = String(c['3']);
-              const [user, domain] = email.split('@');
-              c['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
-            }
-            if (c['15']) c['15'] = String(c['15']).replace(/\d(?=\d{2})/g, '*');
-            if (c['4']) c['4'] = '****-**-**';
-            if (c['13']) c['13'] = String(c['13']).replace(/\d(?=\d{2})/g, '*');
-            return c;
+      // Validação dos dados se habilitada
+      if (validateData) {
+        const validation = this.validateContactData(contactData);
+        if (!validation.isValid) {
+          return {
+            success: false,
+            error: `Dados inválidos: ${validation.errors.join(', ')}`,
+            errorType: 'VALIDATION_ERROR',
+            validation: validation
           };
-          logger.info('Contato (masked) recebido para createContact', { contact: maskContact(contactData) });
-        } catch (_) {}
+        }
         
-        // Cria cliente OAuth2 para API Core v3
-        const oauth2Client = this.createOAuth2Client();
-        
-        // Normaliza email e optin antes de montar o payload
-        const normalized = { ...contactData };
-        if (normalized['3']) normalized['3'] = String(normalized['3']).trim().toLowerCase();
-        // Campos 5 e 31 devem ser enviados como string
-        if (typeof normalized['31'] !== 'undefined') normalized['31'] = String(normalized['31']).trim();
-        if (typeof normalized['5'] !== 'undefined') normalized['5'] = String(normalized['5']).trim();
+        // Log de warnings se houver
+        if (validation.warnings.length > 0) {
+          console.warn('⚠️ Avisos de validação:', validation.warnings);
+        }
+      }
 
-        const payload = {
-          key_id: '3', // Campo email como chave primária
-          ...normalized
-        };
-        
+      let lastError = null;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          const { logger } = require('../utils/logger');
-          const maskedPayload = { ...payload };
-          if (maskedPayload['3']) {
-            const email = String(maskedPayload['3']);
-            const [user, domain] = email.split('@');
-            maskedPayload['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
-          }
-          if (maskedPayload['15']) maskedPayload['15'] = String(maskedPayload['15']).replace(/\d(?=\d{2})/g, '*');
-          if (maskedPayload['4']) maskedPayload['4'] = '****-**-**';
-          if (maskedPayload['13']) maskedPayload['13'] = String(maskedPayload['13']).replace(/\d(?=\d{2})/g, '*');
-          logger.info('Payload final para Emarsys (masked)', { payload: maskedPayload });
-        } catch (_) { console.log('📦 Payload final:', payload); }
-        console.log('🔗 URL completa:', `${this.coreBaseURL}contact/?create_if_not_exists=1`);
+          console.log(`👤 Criando/Atualizando contato na Emarsys Core API v3... (tentativa ${attempt}/${maxRetries})`);
+          
+          try {
+            const { logger } = require('../utils/logger');
+            const maskContact = (obj) => {
+              const c = { ...obj };
+              if (c['3']) {
+                const email = String(c['3']);
+                const [user, domain] = email.split('@');
+                c['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
+              }
+              if (c['15']) c['15'] = String(c['15']).replace(/\d(?=\d{2})/g, '*');
+              if (c['4']) c['4'] = '****-**-**';
+              if (c['13']) c['13'] = String(c['13']).replace(/\d(?=\d{2})/g, '*');
+              return c;
+            };
+            logger.info('Contato (masked) recebido para createContact', { 
+              contact: maskContact(contactData),
+              attempt,
+              maxRetries
+            });
+          } catch (_) {}
+          
+          // Cria cliente OAuth2 para API Core v3
+          const oauth2Client = this.createOAuth2Client();
+          
+          // Normaliza email e optin antes de montar o payload
+          const normalized = { ...contactData };
+          if (normalized['3']) normalized['3'] = String(normalized['3']).trim().toLowerCase();
+          // Campos 5 e 31 devem ser enviados como string
+          if (typeof normalized['31'] !== 'undefined') normalized['31'] = String(normalized['31']).trim();
+          if (typeof normalized['5'] !== 'undefined') normalized['5'] = String(normalized['5']).trim();
 
-        // Upsert único via Core API v3 (PUT com create_if_not_exists=1)
-        const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (request)', { reqId, payload }); } catch (_) {}
+          const payload = {
+            key_id: '3', // Campo email como chave primária
+            ...normalized
+          };
+          
+          try {
+            const { logger } = require('../utils/logger');
+            const maskedPayload = { ...payload };
+            if (maskedPayload['3']) {
+              const email = String(maskedPayload['3']);
+              const [user, domain] = email.split('@');
+              maskedPayload['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
+            }
+            if (maskedPayload['15']) maskedPayload['15'] = String(maskedPayload['15']).replace(/\d(?=\d{2})/g, '*');
+            if (maskedPayload['4']) maskedPayload['4'] = '****-**-**';
+            if (maskedPayload['13']) maskedPayload['13'] = String(maskedPayload['13']).replace(/\d(?=\d{2})/g, '*');
+            logger.info('Payload final para Emarsys (masked)', { 
+              payload: maskedPayload,
+              attempt,
+              maxRetries
+            });
+          } catch (_) { console.log('📦 Payload final:', payload); }
+          console.log('🔗 URL completa:', `${this.coreBaseURL}contact/?create_if_not_exists=1`);
 
-        // Envia com URL absoluta para evitar qualquer conflito de resolução de rota
-        const absoluteUrl = `${this.coreBaseURL}contact/?create_if_not_exists=1`;
-        const accessToken = await this.getOAuth2Token();
-        const singleContact = Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'key_id'));
-        const requestBody = { key_id: payload.key_id, contacts: [singleContact] };
-        let response;
-        try {
-          response = await axios.put(absoluteUrl, requestBody, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Accept': 'application/json',
-              'Content-Type': 'application/json'
-            },
-            timeout: 60000
-          });
-        } catch (err) {
-          const replyCode = err.response?.data?.replyCode;
-          const replyText = err.response?.data?.replyText;
-          const status = err.response?.status;
-          // Fallback alternativo para 'contacts' sem a barra, se necessário
-          if (status === 400 && replyCode === 1 && /No resource requested\.?/i.test(String(replyText || ''))) {
-            const bulkUrl = `${this.coreBaseURL}contacts?create_if_not_exists=1`;
-            console.log('ℹ️ Retentando via endpoint em lote (contacts):', { url: bulkUrl });
-            response = await axios.put(bulkUrl, requestBody, {
+          // Upsert único via Core API v3 (PUT com create_if_not_exists=1)
+          const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (request)', { reqId, payload, attempt, maxRetries }); } catch (_) {}
+
+          // Envia com URL absoluta para evitar qualquer conflito de resolução de rota
+          const absoluteUrl = `${this.coreBaseURL}contact/?create_if_not_exists=1`;
+          const accessToken = await this.getOAuth2Token();
+          const singleContact = Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'key_id'));
+          const requestBody = { key_id: payload.key_id, contacts: [singleContact] };
+          let response;
+          try {
+            response = await axios.put(absoluteUrl, requestBody, {
               headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Accept': 'application/json',
@@ -460,38 +570,193 @@ class EmarsysContactImportService {
               },
               timeout: 60000
             });
-          } else {
-            throw err;
+          } catch (err) {
+            const replyCode = err.response?.data?.replyCode;
+            const replyText = err.response?.data?.replyText;
+            const status = err.response?.status;
+            
+            // Categoriza o erro para decidir se deve tentar novamente
+            const errorType = this.categorizeEmarsysError(err);
+            
+            // Fallback alternativo para 'contacts' sem a barra, se necessário
+            if (status === 400 && replyCode === 1 && /No resource requested\.?/i.test(String(replyText || ''))) {
+              const bulkUrl = `${this.coreBaseURL}contacts?create_if_not_exists=1`;
+              console.log('ℹ️ Retentando via endpoint em lote (contacts):', { url: bulkUrl, attempt });
+              response = await axios.put(bulkUrl, requestBody, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json'
+                },
+                timeout: 60000
+              });
+            } else {
+              // Se é um erro que não deve ser retentado, falha imediatamente
+              if (!errorType.retryable) {
+                throw err;
+              }
+              
+              // Se é a última tentativa, falha
+              if (attempt === maxRetries) {
+                throw err;
+              }
+              
+              // Se é retryable e não é a última tentativa, continua o loop
+              lastError = err;
+              console.warn(`⚠️ Erro retryable na tentativa ${attempt}/${maxRetries}:`, {
+                errorType: errorType.type,
+                message: errorType.message,
+                retryable: errorType.retryable
+              });
+              
+              // Aguarda antes da próxima tentativa
+              await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+              continue;
+            }
           }
+
+          console.log('✅ Contato upsert realizado com sucesso:', {
+            status: response.status,
+            url: absoluteUrl,
+            data: response.data,
+            attempt
+          });
+          try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (response)', { reqId, status: response.status, data: response.data, attempt }); } catch (_) {}
+
+          return {
+            success: true,
+            data: response.data,
+            status: response.status,
+            action: 'upserted',
+            attempt
+          };
+          
+        } catch (error) {
+          lastError = error;
+          const errorType = this.categorizeEmarsysError(error);
+          
+          console.error(`❌ Erro ao criar contato (tentativa ${attempt}/${maxRetries}):`);
+          console.error('   Status:', error.response?.status);
+          console.error('   Headers:', error.response?.headers);
+          console.error('   Data:', error.response?.data);
+          console.error('   Message:', error.message);
+          console.error('   Error Type:', errorType.type);
+          console.error('   Retryable:', errorType.retryable);
+          
+          // Se não é retryable ou é a última tentativa, falha
+          if (!errorType.retryable || attempt === maxRetries) {
+            break;
+          }
+          
+          // Aguarda antes da próxima tentativa
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
-
-        console.log('✅ Contato upsert realizado com sucesso:', {
-          status: response.status,
-          url: absoluteUrl,
-          data: response.data
-        });
-        try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (response)', { reqId, status: response.status, data: response.data }); } catch (_) {}
-
-        return {
-          success: true,
-          data: response.data,
-          status: response.status,
-          action: 'upserted'
-        };
-      } catch (error) {
-        console.error('❌ Erro ao criar contato:');
-        console.error('   Status:', error.response?.status);
-        console.error('   Headers:', error.response?.headers);
-        console.error('   Data:', error.response?.data);
-        console.error('   Message:', error.message);
-        
-        return {
-          success: false,
-          error: error.response?.data || error.message,
-          status: error.response?.status
-        };
       }
+      
+      // Se chegou aqui, todas as tentativas falharam
+      const finalErrorType = this.categorizeEmarsysError(lastError);
+      
+      // Registra o erro no monitor
+      try {
+        const ContactErrorMonitor = require('../utils/contactErrorMonitor');
+        const errorMonitor = new ContactErrorMonitor();
+        await errorMonitor.logContactError({
+          email: contactData['3'],
+          errorType: finalErrorType.type,
+          errorMessage: lastError.response?.data || lastError.message,
+          status: lastError.response?.status,
+          retryable: finalErrorType.retryable,
+          attempts: maxRetries,
+          payload: contactData,
+          stack: lastError.stack
+        });
+      } catch (monitorError) {
+        console.error('❌ Erro ao registrar no monitor:', monitorError.message);
+      }
+      
+      return {
+        success: false,
+        error: lastError.response?.data || lastError.message,
+        status: lastError.response?.status,
+        errorType: finalErrorType.type,
+        retryable: finalErrorType.retryable,
+        attempts: maxRetries,
+        lastAttempt: lastError
+      };
     }
+
+  /**
+   * Categoriza erros da API Emarsys para determinar se devem ser retentados
+   * @param {Error} error - Erro da API
+   * @returns {Object} Informações sobre o tipo de erro
+   */
+  categorizeEmarsysError(error) {
+    const status = error.response?.status;
+    const replyCode = error.response?.data?.replyCode;
+    const replyText = error.response?.data?.replyText;
+    const message = error.message;
+
+    // Erros de rede/timeout - retryable
+    if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
+      return {
+        type: 'NETWORK_ERROR',
+        message: 'Erro de rede ou timeout',
+        retryable: true
+      };
+    }
+
+    // Erros de autenticação - não retryable
+    if (status === 401 || status === 403) {
+      return {
+        type: 'AUTH_ERROR',
+        message: 'Erro de autenticação',
+        retryable: false
+      };
+    }
+
+    // Erros de validação de dados - não retryable
+    if (status === 400 && (replyCode === 2001 || replyCode === 2002)) {
+      return {
+        type: 'VALIDATION_ERROR',
+        message: 'Dados inválidos',
+        retryable: false
+      };
+    }
+
+    // Erros de rate limit - retryable
+    if (status === 429) {
+      return {
+        type: 'RATE_LIMIT_ERROR',
+        message: 'Rate limit excedido',
+        retryable: true
+      };
+    }
+
+    // Erros de servidor - retryable
+    if (status >= 500) {
+      return {
+        type: 'SERVER_ERROR',
+        message: 'Erro interno do servidor',
+        retryable: true
+      };
+    }
+
+    // Erros de timeout - retryable
+    if (message.includes('timeout') || status === 408) {
+      return {
+        type: 'TIMEOUT_ERROR',
+        message: 'Timeout na requisição',
+        retryable: true
+      };
+    }
+
+    // Outros erros - não retryable por padrão
+    return {
+      type: 'UNKNOWN_ERROR',
+      message: 'Erro desconhecido',
+      retryable: false
+    };
+  }
 
   /**
    * Importa contatos em lote para a Emarsys

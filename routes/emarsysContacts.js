@@ -936,12 +936,20 @@ router.post('/create-single', async (req, res) => {
       });
     } catch (_) {}
     
-    // Usa o serviço de importação da Emarsys
+    // Usa o serviço de importação da Emarsys com opções de retry
     const emarsysImportService = require('../services/emarsysContactImportService');
     // Loga payload real que será enviado (serviço também mascara ao logar)
     const { logger } = require('../utils/logger');
     logger.info('Emarsys upsert payload (pre-send)', { reqId, payload: { key_id: '3', ...contact } });
-    const result = await emarsysImportService.createContact(contact);
+    
+    // Opções de retry para falhas temporárias
+    const retryOptions = {
+      maxRetries: 3,
+      retryDelay: 1000,
+      validateData: true
+    };
+    
+    const result = await emarsysImportService.createContact(contact, retryOptions);
     
     if (result.success) {
       const action = result.action || 'created';
@@ -973,17 +981,46 @@ router.post('/create-single', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
-      res.status(result.status || 500).json({
+      // Log detalhado do erro para diagnóstico
+      console.error('❌ Falha ao criar contato:', {
+        error: result.error,
+        errorType: result.errorType,
+        status: result.status,
+        retryable: result.retryable,
+        attempts: result.attempts,
+        email: emailKey
+      });
+      
+      // Determina o status HTTP apropriado baseado no tipo de erro
+      let httpStatus = result.status || 500;
+      if (result.errorType === 'VALIDATION_ERROR') {
+        httpStatus = 400;
+      } else if (result.errorType === 'AUTH_ERROR') {
+        httpStatus = 401;
+      } else if (result.errorType === 'RATE_LIMIT_ERROR') {
+        httpStatus = 429;
+      }
+      
+      res.status(httpStatus).json({
         success: false,
         error: result.error,
+        errorType: result.errorType,
+        retryable: result.retryable,
+        attempts: result.attempts,
         timestamp: new Date().toISOString()
       });
     }
   } catch (error) {
-    console.error('❌ Erro ao criar contato único:', error);
+    console.error('❌ Erro ao criar contato único:', {
+      message: error.message,
+      stack: error.stack,
+      email: emailKey
+    });
+    
     res.status(500).json({
       success: false,
       error: error.message,
+      errorType: 'INTERNAL_ERROR',
       timestamp: new Date().toISOString()
     });
   }
