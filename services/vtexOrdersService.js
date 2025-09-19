@@ -701,7 +701,7 @@ class VtexOrdersService {
    * @param {string} syncTimestamp - Timestamp da sincronização
    * @returns {Object} Resultado da operação
    */
-  async saveProcessedOrders(orderIds, syncTimestamp) {
+  async saveProcessedOrders(processedItems, syncTimestamp) {
     try {
       await this.ensureDataDirectory();
       
@@ -718,16 +718,28 @@ class VtexOrdersService {
         }
       }
       
-      // Adiciona novos pedidos processados
-      const newProcessedOrders = orderIds.map(orderId => ({
-        orderId,
+      // Adiciona novos itens processados (sem duplicatas)
+      const newProcessedItems = processedItems.map(item => ({
+        orderId: item.orderId,
+        itemId: item.itemId,
+        uniqueItemId: item.uniqueItemId,
         processedAt: syncTimestamp,
         syncId: syncTimestamp.replace(/[:.]/g, '-')
       }));
       
       existingData.processedOrders = existingData.processedOrders || [];
-      existingData.processedOrders.push(...newProcessedOrders);
+      
+      // Cria um Set com os uniqueItemIds já processados para evitar duplicatas
+      const existingUniqueIds = new Set(existingData.processedOrders.map(order => order.uniqueItemId || `${order.orderId}_${order.itemId}`));
+      
+      // Filtra apenas itens que ainda não foram processados
+      const uniqueNewItems = newProcessedItems.filter(item => !existingUniqueIds.has(item.uniqueItemId));
+      
+      // Adiciona apenas os itens únicos
+      existingData.processedOrders.push(...uniqueNewItems);
       existingData.lastSync = syncTimestamp;
+      
+      console.log(`🔍 Deduplicação: ${newProcessedItems.length} novos itens, ${uniqueNewItems.length} únicos adicionados, ${newProcessedItems.length - uniqueNewItems.length} duplicatas evitadas`);
       
       // Remove registros antigos (manter apenas últimos 48 horas)
       const fortyEightHoursAgo = new Date();
@@ -741,17 +753,17 @@ class VtexOrdersService {
       // Salva arquivo atualizado
       await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
       
-      console.log(`💾 ${orderIds.length} pedidos marcados como processados`);
+      console.log(`💾 ${processedItems.length} itens marcados como processados`);
       
       return {
         success: true,
         totalProcessed: existingData.processedOrders.length,
-        newProcessed: orderIds.length,
+        newProcessed: processedItems.length,
         timestamp: syncTimestamp
       };
       
     } catch (error) {
-      console.error('❌ Erro ao salvar controle de pedidos processados:', error);
+      console.error('❌ Erro ao salvar controle de itens processados:', error);
       throw error;
     }
   }
@@ -799,6 +811,57 @@ class VtexOrdersService {
         unprocessed: orderIds,
         totalProcessed: 0,
         totalUnprocessed: orderIds.length,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Verifica quais itens já foram processados (por uniqueItemId)
+   * @param {Array} uniqueItemIds - Array de IDs únicos dos itens para verificar
+   * @returns {Object} Resultado da verificação
+   */
+  async getProcessedItemsStatus(uniqueItemIds) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
+      
+      if (!fs.existsSync(processedOrdersFile)) {
+        return {
+          processed: [],
+          unprocessed: uniqueItemIds,
+          totalProcessed: 0,
+          totalUnprocessed: uniqueItemIds.length
+        };
+      }
+      
+      const fileContent = await fs.readFile(processedOrdersFile, 'utf8');
+      const data = JSON.parse(fileContent);
+      
+      // Cria Set com uniqueItemIds já processados (compatível com formato antigo)
+      const processedSet = new Set(data.processedOrders.map(record => 
+        record.uniqueItemId || `${record.orderId}_${record.itemId}`
+      ).filter(Boolean));
+      
+      const processed = uniqueItemIds.filter(id => processedSet.has(id));
+      const unprocessed = uniqueItemIds.filter(id => !processedSet.has(id));
+      
+      return {
+        processed,
+        unprocessed,
+        totalProcessed: processed.length,
+        totalUnprocessed: unprocessed.length
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao verificar itens processados:', error);
+      // Em caso de erro, assume que nenhum foi processado (lado seguro)
+      return {
+        processed: [],
+        unprocessed: uniqueItemIds,
+        totalProcessed: 0,
+        totalUnprocessed: uniqueItemIds.length,
         error: error.message
       };
     }
@@ -857,16 +920,17 @@ class VtexOrdersService {
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
     // Verifica duplicatas se solicitado
-    let processedOrderIds = new Set();
+    let processedItemIds = new Set();
     if (checkDuplicates) {
-      const orderIds = orders.map(order => order.order).filter(Boolean);
-      const duplicateCheck = await this.getProcessedOrdersStatus(orderIds);
-      processedOrderIds = new Set(duplicateCheck.processed);
+      // Cria identificadores únicos para cada item (orderId + item)
+      const uniqueItemIds = orders.map(order => `${order.order}_${order.item}`).filter(Boolean);
+      const duplicateCheck = await this.getProcessedItemsStatus(uniqueItemIds);
+      processedItemIds = new Set(duplicateCheck.processed);
       
-      console.log(`🔍 Verificação de duplicatas: ${duplicateCheck.totalProcessed} já processados, ${duplicateCheck.totalUnprocessed} novos`);
+      console.log(`🔍 Verificação de duplicatas: ${duplicateCheck.totalProcessed} itens já processados, ${duplicateCheck.totalUnprocessed} novos`);
       
       if (duplicateCheck.totalProcessed > 0) {
-        console.log(`⏭️ Pulando ${duplicateCheck.totalProcessed} pedidos já processados`);
+        console.log(`⏭️ Pulando ${duplicateCheck.totalProcessed} itens já processados`);
       }
     }
     
@@ -874,12 +938,17 @@ class VtexOrdersService {
       try {
         const orderId = order.order;
         
-        // Verifica se já foi processado (controle de duplicatas)
-        if (checkDuplicates && processedOrderIds.has(orderId)) {
-          console.log(`⏭️ Pulando pedido já processado: ${orderId}`);
+        // Cria identificador único para o item do pedido (orderId + item)
+        const uniqueItemId = `${orderId}_${order.item}`;
+        
+        // Verifica se já foi processado (controle de duplicatas por item)
+        if (checkDuplicates && processedItemIds.has(uniqueItemId)) {
+          console.log(`⏭️ Pulando item já processado: ${uniqueItemId}`);
           skippedDuplicates++;
           skippedOrders.push({
             orderId,
+            itemId: order.item,
+            uniqueItemId,
             reason: 'already_processed',
             originalOrder: order
           });
@@ -942,6 +1011,8 @@ class VtexOrdersService {
         emarsysData.push(saleRecord);
         processedOrders.push({
           orderId,
+          itemId: order.item,
+          uniqueItemId,
           status: 'processed'
         });
 
@@ -993,7 +1064,18 @@ class VtexOrdersService {
       console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
     }
     
-    return emarsysData;
+    return {
+      emarsysData,
+      processedOrders,
+      stats: {
+        totalInput: orders.length,
+        totalProcessed: emarsysData.length,
+        skippedMarketplace,
+        skippedDuplicates,
+        errorCount: errorOrders.length,
+        successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
+      }
+    };
   }
 
   /**
@@ -1785,10 +1867,15 @@ class VtexOrdersService {
       const transformedOrders = await this.transformOrdersForEmarsys(orders);
       
       // 3.1. Salva controle de pedidos processados para evitar duplicatas
-      if (transformedOrders.length > 0) {
+      if (transformedOrders.processedOrders && transformedOrders.processedOrders.length > 0) {
         const syncTimestamp = getBrazilianTimestamp();
-        const processedOrderIds = transformedOrders.map(order => order.order).filter(Boolean);
-        await this.saveProcessedOrders(processedOrderIds, syncTimestamp);
+        // Agora salva os identificadores únicos de item (orderId + item)
+        const processedItems = transformedOrders.processedOrders.map(item => ({
+          orderId: item.orderId,
+          itemId: item.itemId,
+          uniqueItemId: item.uniqueItemId
+        }));
+        await this.saveProcessedOrders(processedItems, syncTimestamp);
         
         // 3.2. Limpeza automática de registros antigos (48h)
         try {
@@ -1800,7 +1887,7 @@ class VtexOrdersService {
       
       // 4. Gerar CSV
       console.log('📄 Gerando CSV...| 22/08 |');
-      const csvResult = await this.generateCsvFromOrders(transformedOrders, options);
+      const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, options);
       console.log('📄 Gerando CSV...| 22/08 |', csvResult);
       
       if (!csvResult.success) {

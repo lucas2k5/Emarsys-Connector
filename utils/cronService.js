@@ -1,6 +1,7 @@
 const cron = require('cron');
 const axios = require('axios');
 const moment = require('moment');
+const crashProtection = require('./crashProtection');
 
 class CronService {
   constructor() {
@@ -23,14 +24,39 @@ class CronService {
   setupProductsSync() {
     // Cron expression: 0 */8 * * * (a cada 8 horas)
     const job = new cron.CronJob('0 */8 * * *', async () => {
+      const serviceName = 'products-sync';
+      
+      // Verificar se o serviço pode executar (proteção contra loops)
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn(`🚫 [CRON] Sincronização de produtos bloqueada por proteção contra crashes`);
+        return;
+      }
+      
       console.log('🚀 [CRON] Iniciando sincronização de produtos...');
       try {
+        // Adicionar timeout mais longo para operações de produtos
         const response = await axios.get(`${this.baseUrl}/api/vtex/products/sync`, {
-          timeout: 30000
+          timeout: 300000 // 5 minutos
         });
         console.log('✅ [CRON] Sincronização de produtos concluída:', response.status);
+        
+        // Resetar contador de crashes em caso de sucesso
+        crashProtection.resetCrashCount(serviceName);
       } catch (error) {
         console.error('❌ [CRON] Erro na sincronização de produtos:', error.message);
+        console.error('❌ [CRON] Stack trace:', error.stack);
+        
+        // Registrar crash para proteção
+        crashProtection.recordCrash(serviceName, error);
+        
+        // Log adicional para debug em produção
+        if (process.env.NODE_ENV === 'production') {
+          console.error(`❌ [PRODUCTION CRON ERROR] Product sync failed:`, {
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     }, null, true, 'America/Sao_Paulo');
 
@@ -39,14 +65,14 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders a cada 6 horas
+   * Configura o cron para sincronização de orders a cada 2 horas
    */
   setupOrdersSync() {
-    // Cron expression: 0 */6 * * * (a cada 6 horas)
-    const job = new cron.CronJob('0 */6 * * *', async () => {
+    // Cron expression: 0 */2 * * * (a cada 2 horas)
+    const job = new cron.CronJob('0 */2 * * *', async () => {
       console.log('🚀 [CRON] Iniciando sincronização de orders...');
       try {
-        // Calcula o período das últimas 6 horas SEM sobreposição
+        // Calcula o período das últimas 2 horas SEM sobreposição
         const now = moment().utc();
         
         // Busca última sincronização para evitar sobreposição
@@ -64,9 +90,9 @@ class CronService {
             throw new Error('Nenhum sync anterior encontrado');
           }
         } catch (syncError) {
-          console.warn('⚠️ [CRON] Não foi possível obter último sync, usando período de 6h:', syncError.message);
-          // Fallback: últimas 6 horas
-          startDate = now.clone().subtract(6, 'hours').toISOString();
+          console.warn('⚠️ [CRON] Não foi possível obter último sync, usando período de 2h:', syncError.message);
+          // Fallback: últimas 2 horas
+          startDate = now.clone().subtract(2, 'hours').toISOString();
         }
         
         const toDate = now.toISOString();
@@ -86,7 +112,7 @@ class CronService {
     }, null, true, 'America/Sao_Paulo');
 
     this.jobs.set('orders-sync', job);
-    console.log('🕐 Cron de orders configurado: a cada 6 horas (sem sobreposição)');
+    console.log('🕐 Cron de orders configurado: a cada 2 horas (sem sobreposição)');
   }
 
   /**

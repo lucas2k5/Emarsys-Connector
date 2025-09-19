@@ -499,11 +499,18 @@ router.get('/sync', async (req, res) => {
           progress: 5
         });
         
-        const result = await vtexProductService.syncProducts({ 
+        // Adicionar timeout para evitar operações infinitas
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Timeout: Sincronização de produtos excedeu 30 minutos')), 30 * 60 * 1000);
+        });
+        
+        const syncPromise = vtexProductService.syncProducts({ 
           maxProducts: parseInt(maxProducts), 
           forceRefresh: forceRefresh === 'true', 
           batchSize: parseInt(batchSize) 
         });
+        
+        const result = await Promise.race([syncPromise, timeoutPromise]);
         
         // Atualizar status do job
         jobStatus.set(jobId, {
@@ -517,13 +524,27 @@ router.get('/sync', async (req, res) => {
         console.log(`✅ [Background] Sincronização GET ${jobId} concluída com sucesso`);
       } catch (error) {
         console.error(`❌ [Background] Erro no sync GET de produtos ${jobId}:`, error);
+        console.error(`❌ [Background] Stack trace completo:`, error.stack);
+        
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
           status: 'failed',
           progress: 0,
           endTime: new Date().toISOString(),
-          error: error.message
+          error: error.message,
+          stack: error.stack,
+          type: error.constructor.name
         });
+        
+        // Log adicional para debug em produção
+        if (process.env.NODE_ENV === 'production') {
+          console.error(`❌ [PRODUCTION ERROR] Product sync failed:`, {
+            jobId,
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     });
     
