@@ -4,8 +4,8 @@
   "description": "Servidor Express para integração com Emarsys",
   "main": "server.js",
   "scripts": {
-    "start": "node --expose-gc server.js",
-    "dev": "nodemon --expose-gc server.js",
+    "start": "node --expose-gc --max-old-space-size=6144 server.js",
+    "dev": "nodemon --expose-gc --max-old-space-size=6144 server.js",
     "prod": "pm2 start ecosystem.config.js --env production",
     "prod:dev": "pm2 start ecosystem.config.js --env development",
     "prod:stop": "pm2 stop emarsys-server",
