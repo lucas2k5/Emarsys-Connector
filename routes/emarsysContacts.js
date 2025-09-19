@@ -679,7 +679,7 @@ router.post('/create-single-from-ad', async (req, res) => {
 
     const forwardBody = {
       first_name: firstName,
-      last_name: lastName || '',
+      last_name: lastName,
       email: clRecord.email,
       city: city || '',
       state: state || '',
@@ -832,7 +832,7 @@ router.post('/create-single', async (req, res) => {
     const contact = {
       '3': emailKey, // Campo 3 = Email (chave primária)
       '1': first_name, // Campo 1 = Primeiro nome (first_name)
-      '2': last_name || '', // Campo 2 = Sobrenome (last_name)
+      '2': last_name, // Campo 2 = Sobrenome (last_name)
     };
     
     // Adiciona telefone fixo se fornecido
@@ -874,7 +874,7 @@ router.post('/create-single', async (req, res) => {
     
     // Define opt-in se informado (campo 31). Emarsys espera 1=True e 2=False
     if (typeof optin !== 'undefined') {
-      contact['31'] = optin ? 1 : 2;
+      contact['31'] = optin ? "1" : "2";
     }
     
     // Adiciona cidade se fornecida
@@ -943,7 +943,7 @@ router.post('/create-single', async (req, res) => {
             mobile: mobile || '',
             birth_date: normalizeBirthDate(birth_date) || '',
             gender: typeof gender !== 'undefined' ? gender : null,
-            optin: typeof optin !== 'undefined' ? (optin ? 1 : 2) : null,
+            optin: typeof optin !== 'undefined' ? (optin ? "1" : "2") : "1",
             city: city || '',
             state: state || '',
             zip_code: zip_code || '',
