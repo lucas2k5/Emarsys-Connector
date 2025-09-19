@@ -1748,6 +1748,48 @@ router.get('/sync/stats', async (req, res) => {
   }
 });
 
+// Rota para obter informações da última sincronização (usado pelo cron)
+router.get('/last-sync', async (req, res) => {
+  try {
+    const vtexOrdersService = new VtexOrdersService();
+    const lastSyncInfo = await vtexOrdersService.getLastSyncInfo();
+    
+    res.json({
+      success: true,
+      data: lastSyncInfo,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Rota para limpeza manual de pedidos processados
+router.post('/cleanup-processed-orders', async (req, res) => {
+  try {
+    const { hoursToKeep = 48 } = req.body || {};
+    const vtexOrdersService = new VtexOrdersService();
+    
+    const cleanupResult = await vtexOrdersService.cleanupProcessedOrders(hoursToKeep);
+    
+    res.json({
+      success: cleanupResult.success,
+      data: cleanupResult,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Rota para gerar relatório de erros
 router.get('/sync/error-report', async (req, res) => {
   try {

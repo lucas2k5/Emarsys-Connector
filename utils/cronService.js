@@ -39,23 +39,41 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders a cada 5 horas
+   * Configura o cron para sincronização de orders a cada 6 horas
    */
   setupOrdersSync() {
-    // Cron expression: 0 */5 * * * (a cada 5 horas)
-    const job = new cron.CronJob('0 */5 * * *', async () => {
+    // Cron expression: 0 */6 * * * (a cada 6 horas)
+    const job = new cron.CronJob('0 */6 * * *', async () => {
       console.log('🚀 [CRON] Iniciando sincronização de orders...');
       try {
-        // Calcula o período das últimas 5 horas
+        // Calcula o período das últimas 6 horas SEM sobreposição
         const now = moment().utc();
-        const fiveHoursAgo = moment().utc().subtract(5, 'hours').add(1, 'second');
         
-        const startDate = fiveHoursAgo.toISOString();
+        // Busca última sincronização para evitar sobreposição
+        let startDate;
+        try {
+          const lastSyncResponse = await axios.get(`${this.baseUrl}/api/integration/last-sync`, {
+            timeout: 10000
+          });
+          
+          if (lastSyncResponse.data && lastSyncResponse.data.data && lastSyncResponse.data.data.lastSync) {
+            // Usa timestamp da última sincronização + 1 segundo para evitar duplicatas
+            startDate = moment(lastSyncResponse.data.data.lastSync).utc().add(1, 'second').toISOString();
+            console.log(`📅 [CRON] Usando último sync como base: ${startDate}`);
+          } else {
+            throw new Error('Nenhum sync anterior encontrado');
+          }
+        } catch (syncError) {
+          console.warn('⚠️ [CRON] Não foi possível obter último sync, usando período de 6h:', syncError.message);
+          // Fallback: últimas 6 horas
+          startDate = now.clone().subtract(6, 'hours').toISOString();
+        }
+        
         const toDate = now.toISOString();
         
         const url = `${this.baseUrl}/api/integration/orders-extract-all?batching=true&startDate=${encodeURIComponent(startDate)}&toDate=${encodeURIComponent(toDate)}`;
         
-        console.log(`📅 [CRON] Período: ${startDate} até ${toDate}`);
+        console.log(`📅 [CRON] Período sem sobreposição: ${startDate} até ${toDate}`);
         
         const response = await axios.get(url, {
           timeout: 300000 // 5 minutos de timeout para orders
@@ -68,7 +86,7 @@ class CronService {
     }, null, true, 'America/Sao_Paulo');
 
     this.jobs.set('orders-sync', job);
-    console.log('🕐 Cron de orders configurado: a cada 5 horas');
+    console.log('🕐 Cron de orders configurado: a cada 6 horas (sem sobreposição)');
   }
 
   /**
