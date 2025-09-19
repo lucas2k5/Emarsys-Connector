@@ -17,6 +17,7 @@ const emarsysContactsRoutes = require('./routes/emarsysContacts');
 const emsClientsRoutes = require('./routes/emsClients');
 const metricsRoutes = require('./routes/metrics');
 const alertsRoutes = require('./routes/alerts');
+const contactErrorsRoutes = require('./routes/contactErrors');
 
 const integrationRoutes = require('./routes/integration');
 const backgroundJobsRoutes = require('./routes/backgroundJobs');
@@ -119,6 +120,7 @@ app.use('/api/cron-management', cronManagementRoutes);
 // Rotas de métricas e monitoramento
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/alerts', alertsRoutes);
+app.use('/api/contact-errors', contactErrorsRoutes);
 
 // Health check básico
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
