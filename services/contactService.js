@@ -8,8 +8,8 @@ require('dotenv').config();
 class ContactService {
   constructor() {
     // Configuração de diretórios
-    const defaultDataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, '..', 'data');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultDataDir = path.join(__dirname, '..', 'data');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     
@@ -1175,7 +1175,7 @@ class ContactService {
       }
 
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       // Garante que o diretório existe
@@ -1184,20 +1184,7 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        // Fallback para /tmp se houver erro
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
 
       const filePath = path.join(outputDir, filename);
@@ -1349,7 +1336,7 @@ class ContactService {
       }
 
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       // Garante que o diretório existe
@@ -1358,20 +1345,8 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        // Fallback para /tmp se houver erro
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
+        
       }
 
       const filePath = path.join(outputDir, filename);
@@ -1656,7 +1631,7 @@ class ContactService {
       console.log(`📊 Configurações de divisão: máximo ${maxFileSizeMB}MB por arquivo, ~${recordsPerFile} registros por arquivo`);
       
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       try {
@@ -1664,19 +1639,7 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
 
       // Gera nome base do arquivo com timestamp e range
@@ -1904,7 +1867,7 @@ class ContactService {
       ];
       
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       try {
@@ -1912,19 +1875,7 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
 
       // Gera nome base do arquivo com timestamp e range
@@ -2734,7 +2685,7 @@ class ContactService {
       }
 
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       try {
@@ -2742,19 +2693,7 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
 
       const filePath = path.join(outputDir, filename);
@@ -2875,7 +2814,7 @@ class ContactService {
       console.log(`📅 Período: ${hours} horas (${startDate} até ${endDate})`);
       
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       try {
@@ -2883,19 +2822,7 @@ class ContactService {
         console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
 
       // Gera nome do arquivo com timestamp

@@ -26,8 +26,8 @@ class VtexProductService {
     this._initializeAxiosRetry();
     
     // Configurações de diretórios
-    const defaultDataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, '..', 'data');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultDataDir =  path.join(__dirname, '..', 'data');
+    const defaultExports =  path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     

@@ -14,7 +14,7 @@ class EmarsysContactsService {
     this.apiUrl = process.env.EMARSYS_CONTACTS_API_URL || 'https://api.emarsys.net/api/v2/contact/import';
     this.bearerToken = process.env.EMARSYS_CONTACTS_TOKEN;
     
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     
     console.log('🔧 [EmarsysContactsService] Constructor inicializado:');

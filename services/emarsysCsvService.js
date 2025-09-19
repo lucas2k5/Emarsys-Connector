@@ -190,7 +190,7 @@ class EmarsysCsvService {
       }
   
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       // Garante que o diretório existe
@@ -207,22 +207,7 @@ class EmarsysCsvService {
         }
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        // Fallback para /tmp se houver erro
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            await fs.access(fallbackDir);
-            console.log(`✅ Diretório fallback ${fallbackDir} criado e acessível`);
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
   
       const filePath = path.join(outputDir, filename);
@@ -458,7 +443,7 @@ class EmarsysCsvService {
    */
   async listCsvFiles() {
     try {
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       const exportsDir = process.env.EXPORTS_DIR || defaultExports;
       
       const files = await fs.readdir(exportsDir);

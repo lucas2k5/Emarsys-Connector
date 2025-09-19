@@ -409,7 +409,7 @@ router.get('/download/:filename', async (req, res) => {
     console.log(`📥 Download solicitado: ${filename}`);
     
     const path = require('path');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     const exportsDir = process.env.EXPORTS_DIR || defaultExports;
     const filePath = path.join(exportsDir, filename);
     
@@ -466,7 +466,7 @@ router.get('/preview/:filename', async (req, res) => {
     
     const path = require('path');
     const fs = require('fs').promises;
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     const exportsDir = process.env.EXPORTS_DIR || defaultExports;
     const filePath = path.join(exportsDir, filename);
     
@@ -526,7 +526,7 @@ router.delete('/files/:filename', async (req, res) => {
     
     const path = require('path');
     const fs = require('fs').promises;
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     const exportsDir = process.env.EXPORTS_DIR || defaultExports;
     const filePath = path.join(exportsDir, filename);
     

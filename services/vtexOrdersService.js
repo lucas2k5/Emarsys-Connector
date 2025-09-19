@@ -26,8 +26,8 @@ class VtexOrdersService {
     this._initializeAxiosRetry();
 
     // Configuração de diretórios
-    const defaultDataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, '..', 'data');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultDataDir = path.join(__dirname, '..', 'data');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     this.ordersFile = path.join(this.dataDir, 'orders.json');
@@ -633,7 +633,7 @@ class VtexOrdersService {
    * @returns {string} Caminho do diretório de saída
    */
   async ensureOutputDirectory() {
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     let outputDir = process.env.EXPORTS_DIR || defaultExports;
     
     try {
@@ -642,21 +642,6 @@ class VtexOrdersService {
       return outputDir;
     } catch (error) {
       console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-      
-      // Fallback para /tmp se houver erro
-      if (process.env.VERCEL) {
-        const fallbackDir = '/tmp';
-        console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-        try {
-          await fs.mkdir(fallbackDir, { recursive: true });
-          return fallbackDir;
-        } catch (fallbackError) {
-          console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-          throw fallbackError;
-        }
-      } else {
-        throw error;
-      }
     }
   }
 

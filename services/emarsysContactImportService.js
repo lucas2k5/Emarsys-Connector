@@ -17,7 +17,7 @@ class EmarsysContactImportService {
     this.oauth2Token = null;
     this.tokenExpiry = null;
     
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     
          console.log('🔧 [EmarsysContactImportService] Constructor inicializado:');
