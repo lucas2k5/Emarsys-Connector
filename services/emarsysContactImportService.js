@@ -368,111 +368,130 @@ class EmarsysContactImportService {
    * @param {Object} contactData - Dados do contato
    * @returns {Object} Resultado da operação
    */
-     async createContact(contactData) {
-     if (!this.wsseUser || !this.wsseSecret) {
-       return {
-         success: false,
-         error: 'Credenciais Emarsys não configuradas.'
-       };
-     }
-
-    try {
-      console.log('👤 Criando/Atualizando contato na Emarsys Core API v3...');
-      try {
-        const { logger } = require('../utils/logger');
-        const maskContact = (obj) => {
-          const c = { ...obj };
-          if (c['3']) {
-            const email = String(c['3']);
-            const [user, domain] = email.split('@');
-            c['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
-          }
-          if (c['15']) c['15'] = String(c['15']).replace(/\d(?=\d{2})/g, '*');
-          if (c['4']) c['4'] = '****-**-**';
-          if (c['13']) c['13'] = String(c['13']).replace(/\d(?=\d{2})/g, '*');
-          return c;
+    async createContact(contactData) {
+      if (!this.wsseUser || !this.wsseSecret) {
+        return {
+          success: false,
+          error: 'Credenciais Emarsys não configuradas.'
         };
-        logger.info('Contato (masked) recebido para createContact', { contact: maskContact(contactData) });
-      } catch (_) {}
-      
-      // Cria cliente OAuth2 para API Core v3
-      const oauth2Client = this.createOAuth2Client();
-      
-      // Normaliza email e optin antes de montar o payload
-      const normalized = { ...contactData };
-      if (normalized['3']) normalized['3'] = String(normalized['3']).trim().toLowerCase();
-      if (typeof normalized['31'] !== 'undefined') normalized['31'] = Number(Boolean(normalized['31']));
+      }
 
-      // Adiciona key_id para identificar o campo chave (email = campo 3)
-      const payload = {
-        key_id: '3', // Campo email como chave primária
-        ...normalized
-      };
-      
       try {
-        const { logger } = require('../utils/logger');
-        const maskedPayload = { ...payload };
-        if (maskedPayload['3']) {
-          const email = String(maskedPayload['3']);
-          const [user, domain] = email.split('@');
-          maskedPayload['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
-        }
-        if (maskedPayload['15']) maskedPayload['15'] = String(maskedPayload['15']).replace(/\d(?=\d{2})/g, '*');
-        if (maskedPayload['4']) maskedPayload['4'] = '****-**-**';
-        if (maskedPayload['13']) maskedPayload['13'] = String(maskedPayload['13']).replace(/\d(?=\d{2})/g, '*');
-        logger.info('Payload final para Emarsys (masked)', { payload: maskedPayload });
-      } catch (_) { console.log('📦 Payload final:', payload); }
-      console.log('🔗 URL completa:', `${this.coreBaseURL}contact`);
-      
-      // Tenta criar o contato primeiro
-      const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (request)', { reqId, payload }); } catch (_) {}
-      try {
-        const response = await oauth2Client.post('contact', payload);
-        console.log('✅ Contato criado com sucesso:', response.data);
-        try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (response)', { reqId, status: response.status, data: response.data }); } catch (_) {}
+        console.log('👤 Criando/Atualizando contato na Emarsys Core API v3...');
+        try {
+          const { logger } = require('../utils/logger');
+          const maskContact = (obj) => {
+            const c = { ...obj };
+            if (c['3']) {
+              const email = String(c['3']);
+              const [user, domain] = email.split('@');
+              c['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
+            }
+            if (c['15']) c['15'] = String(c['15']).replace(/\d(?=\d{2})/g, '*');
+            if (c['4']) c['4'] = '****-**-**';
+            if (c['13']) c['13'] = String(c['13']).replace(/\d(?=\d{2})/g, '*');
+            return c;
+          };
+          logger.info('Contato (masked) recebido para createContact', { contact: maskContact(contactData) });
+        } catch (_) {}
         
+        // Cria cliente OAuth2 para API Core v3
+        const oauth2Client = this.createOAuth2Client();
+        
+        // Normaliza email e optin antes de montar o payload
+        const normalized = { ...contactData };
+        if (normalized['3']) normalized['3'] = String(normalized['3']).trim().toLowerCase();
+        // Campos 5 e 31 devem ser enviados como string
+        if (typeof normalized['31'] !== 'undefined') normalized['31'] = String(normalized['31']).trim();
+        if (typeof normalized['5'] !== 'undefined') normalized['5'] = String(normalized['5']).trim();
+
+        const payload = {
+          key_id: '3', // Campo email como chave primária
+          ...normalized
+        };
+        
+        try {
+          const { logger } = require('../utils/logger');
+          const maskedPayload = { ...payload };
+          if (maskedPayload['3']) {
+            const email = String(maskedPayload['3']);
+            const [user, domain] = email.split('@');
+            maskedPayload['3'] = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
+          }
+          if (maskedPayload['15']) maskedPayload['15'] = String(maskedPayload['15']).replace(/\d(?=\d{2})/g, '*');
+          if (maskedPayload['4']) maskedPayload['4'] = '****-**-**';
+          if (maskedPayload['13']) maskedPayload['13'] = String(maskedPayload['13']).replace(/\d(?=\d{2})/g, '*');
+          logger.info('Payload final para Emarsys (masked)', { payload: maskedPayload });
+        } catch (_) { console.log('📦 Payload final:', payload); }
+        console.log('🔗 URL completa:', `${this.coreBaseURL}contact/?create_if_not_exists=1`);
+
+        // Upsert único via Core API v3 (PUT com create_if_not_exists=1)
+        const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (request)', { reqId, payload }); } catch (_) {}
+
+        // Envia com URL absoluta para evitar qualquer conflito de resolução de rota
+        const absoluteUrl = `${this.coreBaseURL}contact/?create_if_not_exists=1`;
+        const accessToken = await this.getOAuth2Token();
+        const singleContact = Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'key_id'));
+        const requestBody = { key_id: payload.key_id, contacts: [singleContact] };
+        let response;
+        try {
+          response = await axios.put(absoluteUrl, requestBody, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            },
+            timeout: 60000
+          });
+        } catch (err) {
+          const replyCode = err.response?.data?.replyCode;
+          const replyText = err.response?.data?.replyText;
+          const status = err.response?.status;
+          // Fallback alternativo para 'contacts' sem a barra, se necessário
+          if (status === 400 && replyCode === 1 && /No resource requested\.?/i.test(String(replyText || ''))) {
+            const bulkUrl = `${this.coreBaseURL}contacts?create_if_not_exists=1`;
+            console.log('ℹ️ Retentando via endpoint em lote (contacts):', { url: bulkUrl });
+            response = await axios.put(bulkUrl, requestBody, {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+              },
+              timeout: 60000
+            });
+          } else {
+            throw err;
+          }
+        }
+
+        console.log('✅ Contato upsert realizado com sucesso:', {
+          status: response.status,
+          url: absoluteUrl,
+          data: response.data
+        });
+        try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (response)', { reqId, status: response.status, data: response.data }); } catch (_) {}
+
         return {
           success: true,
           data: response.data,
           status: response.status,
-          action: 'created'
+          action: 'upserted'
         };
-      } catch (createError) {
-        // Se o contato já existe (erro 2009), tenta atualizar
-        if (createError.response?.data?.replyCode === 2009) {
-          console.log('🔄 Contato já existe, tentando atualizar...');
-          
-          // Usa PUT para atualizar o contato existente
-          const updateResponse = await oauth2Client.put('contact', payload);
-          console.log('✅ Contato atualizado com sucesso:', updateResponse.data);
-          try { const { logger } = require('../utils/logger'); logger.info('Emarsys upsert (response)', { reqId, status: updateResponse.status, data: updateResponse.data }); } catch (_) {}
-          
-          return {
-            success: true,
-            data: updateResponse.data,
-            status: updateResponse.status,
-            action: 'updated'
-          };
-        } else {
-          // Se não for erro de contato existente, propaga o erro
-          throw createError;
-        }
+      } catch (error) {
+        console.error('❌ Erro ao criar contato:');
+        console.error('   Status:', error.response?.status);
+        console.error('   Headers:', error.response?.headers);
+        console.error('   Data:', error.response?.data);
+        console.error('   Message:', error.message);
+        
+        return {
+          success: false,
+          error: error.response?.data || error.message,
+          status: error.response?.status
+        };
       }
-    } catch (error) {
-      console.error('❌ Erro ao criar contato:');
-      console.error('   Status:', error.response?.status);
-      console.error('   Headers:', error.response?.headers);
-      console.error('   Data:', error.response?.data);
-      console.error('   Message:', error.message);
-      
-      return {
-        success: false,
-        error: error.response?.data || error.message,
-        status: error.response?.status
-      };
     }
-  }
 
   /**
    * Importa contatos em lote para a Emarsys

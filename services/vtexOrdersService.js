@@ -696,6 +696,115 @@ class VtexOrdersService {
   }
 
   /**
+   * Salva controle de pedidos processados para evitar duplicatas
+   * @param {Array} orderIds - Array de IDs dos pedidos processados
+   * @param {string} syncTimestamp - Timestamp da sincronização
+   * @returns {Object} Resultado da operação
+   */
+  async saveProcessedOrders(orderIds, syncTimestamp) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
+      
+      // Lê dados existentes
+      let existingData = { processedOrders: [], lastSync: null };
+      if (fs.existsSync(processedOrdersFile)) {
+        try {
+          const fileContent = await fs.readFile(processedOrdersFile, 'utf8');
+          existingData = JSON.parse(fileContent);
+        } catch (error) {
+          console.warn('⚠️ Erro ao ler arquivo de pedidos processados, criando novo:', error.message);
+        }
+      }
+      
+      // Adiciona novos pedidos processados
+      const newProcessedOrders = orderIds.map(orderId => ({
+        orderId,
+        processedAt: syncTimestamp,
+        syncId: syncTimestamp.replace(/[:.]/g, '-')
+      }));
+      
+      existingData.processedOrders = existingData.processedOrders || [];
+      existingData.processedOrders.push(...newProcessedOrders);
+      existingData.lastSync = syncTimestamp;
+      
+      // Remove registros antigos (manter apenas últimos 48 horas)
+      const fortyEightHoursAgo = new Date();
+      fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
+      
+      existingData.processedOrders = existingData.processedOrders.filter(record => {
+        const processedDate = new Date(record.processedAt);
+        return processedDate >= fortyEightHoursAgo;
+      });
+      
+      // Salva arquivo atualizado
+      await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
+      
+      console.log(`💾 ${orderIds.length} pedidos marcados como processados`);
+      
+      return {
+        success: true,
+        totalProcessed: existingData.processedOrders.length,
+        newProcessed: orderIds.length,
+        timestamp: syncTimestamp
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao salvar controle de pedidos processados:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Verifica quais pedidos já foram processados
+   * @param {Array} orderIds - Array de IDs dos pedidos para verificar
+   * @returns {Object} Resultado da verificação
+   */
+  async getProcessedOrdersStatus(orderIds) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
+      
+      if (!fs.existsSync(processedOrdersFile)) {
+        return {
+          processed: [],
+          unprocessed: orderIds,
+          totalProcessed: 0,
+          totalUnprocessed: orderIds.length
+        };
+      }
+      
+      const fileContent = await fs.readFile(processedOrdersFile, 'utf8');
+      const data = JSON.parse(fileContent);
+      
+      const processedSet = new Set(data.processedOrders.map(record => record.orderId));
+      
+      const processed = orderIds.filter(id => processedSet.has(id));
+      const unprocessed = orderIds.filter(id => !processedSet.has(id));
+      
+      return {
+        processed,
+        unprocessed,
+        totalProcessed: processed.length,
+        totalUnprocessed: unprocessed.length
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao verificar pedidos processados:', error);
+      // Em caso de erro, assume que nenhum foi processado (lado seguro)
+      return {
+        processed: [],
+        unprocessed: orderIds,
+        totalProcessed: 0,
+        totalUnprocessed: orderIds.length,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Carrega pedidos do arquivo JSON
    * @returns {Object} Dados dos pedidos
    */
@@ -734,20 +843,48 @@ class VtexOrdersService {
   /**
    * Transforma dados dos pedidos da VTEX para o formato da Emarsys
    * @param {Array} orders - Array de pedidos da VTEX
+   * @param {boolean} checkDuplicates - Se deve verificar duplicatas (padrão: true)
    * @returns {Array} Array com dados no formato da Emarsys
    */
-  async transformOrdersForEmarsys(orders) {
+  async transformOrdersForEmarsys(orders, checkDuplicates = true) {
     const emarsysData = [];
     let skippedMarketplace = 0;
+    let skippedDuplicates = 0;
     const skippedOrders = [];
     const processedOrders = [];
     const errorOrders = [];
     
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
+    // Verifica duplicatas se solicitado
+    let processedOrderIds = new Set();
+    if (checkDuplicates) {
+      const orderIds = orders.map(order => order.order).filter(Boolean);
+      const duplicateCheck = await this.getProcessedOrdersStatus(orderIds);
+      processedOrderIds = new Set(duplicateCheck.processed);
+      
+      console.log(`🔍 Verificação de duplicatas: ${duplicateCheck.totalProcessed} já processados, ${duplicateCheck.totalUnprocessed} novos`);
+      
+      if (duplicateCheck.totalProcessed > 0) {
+        console.log(`⏭️ Pulando ${duplicateCheck.totalProcessed} pedidos já processados`);
+      }
+    }
+    
     for (const order of orders) {
       try {
         const orderId = order.order;
+        
+        // Verifica se já foi processado (controle de duplicatas)
+        if (checkDuplicates && processedOrderIds.has(orderId)) {
+          console.log(`⏭️ Pulando pedido já processado: ${orderId}`);
+          skippedDuplicates++;
+          skippedOrders.push({
+            orderId,
+            reason: 'already_processed',
+            originalOrder: order
+          });
+          continue;
+        }
         
         // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
         const orderIdPattern = /^\d{13}-01$/;
@@ -833,6 +970,7 @@ class VtexOrdersService {
       totalInput: orders.length,
       totalProcessed: emarsysData.length,
       skippedMarketplace,
+      skippedDuplicates,
       errorCount: errorOrders.length,
       successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
     };
@@ -845,10 +983,14 @@ class VtexOrdersService {
     });
 
     console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${errorOrders.length} com erro`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${errorOrders.length} com erro`);
     
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
+    }
+    
+    if (skippedDuplicates > 0) {
+      console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
     }
     
     return emarsysData;
@@ -1400,6 +1542,114 @@ class VtexOrdersService {
   }
 
   /**
+   * Obtém informações da última sincronização geral (para controle de períodos)
+   * @returns {Object} Informações da última sincronização
+   */
+  async getLastSyncInfo() {
+    try {
+      await this.ensureDataDirectory();
+      
+      // Tenta obter do arquivo de pedidos processados primeiro
+      const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
+      if (fs.existsSync(processedOrdersFile)) {
+        const data = await fs.readJson(processedOrdersFile);
+        if (data.lastSync) {
+          return {
+            lastSync: data.lastSync,
+            totalProcessedOrders: data.processedOrders ? data.processedOrders.length : 0,
+            source: 'processed-orders'
+          };
+        }
+      }
+      
+      // Fallback para arquivo de orders
+      if (await fs.pathExists(this.ordersFile)) {
+        const data = await fs.readJson(this.ordersFile);
+        return {
+          lastSync: data.lastUpdate || data.timestamp,
+          totalOrders: data.totalOrders || 0,
+          source: 'orders-file'
+        };
+      }
+      
+      return {
+        message: 'Nenhuma sincronização encontrada'
+      };
+    } catch (error) {
+      console.error('❌ Erro ao obter informações da última sincronização:', error);
+      return {
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Limpa registros antigos de pedidos processados (manutenção)
+   * @param {number} hoursToKeep - Quantas horas manter (padrão: 48)
+   * @returns {Object} Resultado da limpeza
+   */
+  async cleanupProcessedOrders(hoursToKeep = 48) {
+    try {
+      await this.ensureDataDirectory();
+      
+      const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
+      
+      if (!fs.existsSync(processedOrdersFile)) {
+        return {
+          success: true,
+          message: 'Arquivo de pedidos processados não existe',
+          removedCount: 0
+        };
+      }
+      
+      const data = await fs.readJson(processedOrdersFile);
+      
+      if (!data.processedOrders || data.processedOrders.length === 0) {
+        return {
+          success: true,
+          message: 'Nenhum registro de pedidos processados encontrado',
+          removedCount: 0
+        };
+      }
+      
+      const cutoffDate = new Date();
+      cutoffDate.setHours(cutoffDate.getHours() - hoursToKeep);
+      
+      const originalCount = data.processedOrders.length;
+      
+      // Filtra registros antigos
+      data.processedOrders = data.processedOrders.filter(record => {
+        const processedDate = new Date(record.processedAt);
+        return processedDate >= cutoffDate;
+      });
+      
+      const removedCount = originalCount - data.processedOrders.length;
+      
+      if (removedCount > 0) {
+        // Salva arquivo atualizado
+        await fs.writeJson(processedOrdersFile, data, { spaces: 2 });
+        console.log(`🧹 Limpeza de pedidos processados: ${removedCount} registros removidos (mantidos últimos ${hoursToKeep} horas)`);
+      }
+      
+      return {
+        success: true,
+        removedCount,
+        remainingCount: data.processedOrders.length,
+        originalCount,
+        cutoffDate: cutoffDate.toISOString(),
+        message: `${removedCount} registros antigos removidos (mantidos últimos ${hoursToKeep} horas)`
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro na limpeza de pedidos processados:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Envia arquivo de dados de vendas para Emarsys via HAPI
    * @param {string} filePath - Caminho do arquivo CSV de vendas
    * @returns {Promise<Object>} Resultado do envio
@@ -1533,6 +1783,20 @@ class VtexOrdersService {
       // 3. Transformar dados para formato Emarsys
       console.log('🔄 Transformando dados para formato Emarsys...', orders);
       const transformedOrders = await this.transformOrdersForEmarsys(orders);
+      
+      // 3.1. Salva controle de pedidos processados para evitar duplicatas
+      if (transformedOrders.length > 0) {
+        const syncTimestamp = getBrazilianTimestamp();
+        const processedOrderIds = transformedOrders.map(order => order.order).filter(Boolean);
+        await this.saveProcessedOrders(processedOrderIds, syncTimestamp);
+        
+        // 3.2. Limpeza automática de registros antigos (48h)
+        try {
+          await this.cleanupProcessedOrders(48);
+        } catch (cleanupError) {
+          console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
+        }
+      }
       
       // 4. Gerar CSV
       console.log('📄 Gerando CSV...| 22/08 |');
