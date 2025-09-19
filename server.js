@@ -37,9 +37,60 @@ app.use(helmet());
 // Middleware de CORS
 app.use(cors());
 
+// Middleware para validar Content-Type antes do parsing
+app.use((req, res, next) => {
+  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+    const contentType = req.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      // Validar se o Content-Type está correto
+      if (!contentType.includes('charset=utf-8') && !contentType.includes('charset=UTF-8')) {
+        console.warn('⚠️ Content-Type sem charset especificado:', {
+          contentType,
+          url: req.url,
+          method: req.method,
+          ip: req.ip
+        });
+      }
+    }
+  }
+  next();
+});
+
 // Middleware de parsing
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ 
+  limit: '2mb',
+  verify: (req, res, buf, encoding) => {
+    // Armazenar o buffer original para debug
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+// Middleware específico para tratar erros de parsing JSON
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('❌ Erro de parsing JSON:', {
+      message: err.message,
+      status: err.status,
+      type: err.type,
+      body: err.body,
+      url: req.url,
+      method: req.method,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      rawBody: req.rawBody ? req.rawBody.toString('utf8').substring(0, 200) + '...' : 'N/A'
+    });
+    
+    return res.status(400).json({
+      success: false,
+      error: 'JSON malformado',
+      detail: err.message,
+      position: err.message.match(/position (\d+)/)?.[1] || 'desconhecida',
+      timestamp: new Date().toISOString()
+    });
+  }
+  next(err);
+});
 
 // Middleware de logging HTTP com Morgan
 app.use(morgan('combined', {

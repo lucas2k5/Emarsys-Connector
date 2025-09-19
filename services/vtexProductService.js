@@ -1,5 +1,6 @@
 const axios = require('axios');
 const rateLimit = require('axios-rate-limit');
+const MemoryOptimizer = require('../utils/memoryOptimizer');
 const fs = require('fs-extra');
 const path = require('path');
 const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../utils/dateUtils');
@@ -36,6 +37,9 @@ class VtexProductService {
     
     // Controle de sincronização
     this._isSyncRunning = false;
+    
+    // Otimizador de memória
+    this.memoryOptimizer = new MemoryOptimizer();
     
     // Configurações SFTP para Emarsys
     this.sftpConfig = {
@@ -478,6 +482,33 @@ class VtexProductService {
   }
 
   /**
+   * Salva produtos no arquivo JSON de forma otimizada (sem formatação)
+   * @param {Array} products - Array de produtos
+   */
+  async saveProductsToFileOptimized(products) {
+    try {
+      console.log(`💾 Salvando ${products.length} produtos (otimizado)...`);
+      await this.ensureDataDirectory();
+      
+      // Usa JSON.stringify diretamente para economizar memória
+      const jsonString = JSON.stringify(products);
+      const fsPromises = require('fs').promises;
+      await fsPromises.writeFile(this.productsFile, jsonString, 'utf8');
+      
+      // Força garbage collection após salvar
+      if (global.gc) {
+        console.log('🧹 Executando garbage collection após salvar produtos...');
+        global.gc();
+      }
+      
+      console.log(`✅ ${products.length} produtos salvos em ${this.productsFile} (otimizado)`);
+    } catch (error) {
+      console.error('❌ Erro ao salvar produtos (otimizado):', error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Salva informações da última sincronização
    * @param {Object} syncInfo - Informações da sincronização
    */
@@ -680,6 +711,176 @@ class VtexProductService {
   }
 
   /**
+   * Upload otimizado do arquivo para Emarsys via SFTP (para VPS com recursos limitados)
+   * @param {string} localFilePath - Caminho do arquivo local
+   * @param {string} remotePath - Caminho remoto (opcional)
+   * @returns {Promise<Object>} Resultado do upload
+   */
+  async uploadToEmarsysOptimized(localFilePath, remotePath = null) {
+    return this.memoryOptimizer.wrapMemoryIntensive(async () => {
+      console.log('📤 Iniciando upload otimizado para Emarsys via SFTP...');
+      console.log(`📁 Arquivo local: ${localFilePath}`);
+      
+      // Verifica se o arquivo existe
+      try {
+        await fs.access(localFilePath);
+        const stats = await fs.stat(localFilePath);
+        console.log(`📊 Tamanho do arquivo: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+      } catch (error) {
+        console.error('❌ Arquivo não encontrado:', error.message);
+        return { success: false, error: `Arquivo não encontrado: ${error.message}` };
+      }
+      
+      // Define o caminho remoto
+      const finalRemotePath = remotePath || process.env.SFTP_REMOTE_PATH || '/catalog.csv.gz';
+      console.log(`📂 Caminho remoto: ${finalRemotePath}`);
+      
+      if (!this.sftpConfig.host || !this.sftpConfig.username || !this.sftpConfig.password) {
+        console.error('❌ Configuração SFTP incompleta');
+        return { success: false, error: 'Configuração SFTP incompleta' };
+      }
+      
+      console.log(`🔗 Conectando ao servidor SFTP: ${this.sftpConfig.host}:${this.sftpConfig.port}`);
+      console.log(`👤 Usuário: ${this.sftpConfig.username}`);
+
+      const maxRetries = 2; // Reduzido para VPS
+      const baseDelayMs = 3000; // Aumentado delay
+      let attempt = 0;
+
+      const tryOnce = () => new Promise((resolve, reject) => {
+        const conn = new Client();
+        let timedOut = false;
+
+        // Configurações otimizadas para VPS com menos recursos
+        const sftpConfigOptimized = {
+          ...this.sftpConfig,
+          readyTimeout: 45000, // 45 segundos
+          keepaliveInterval: 20000, // 20 segundos
+          keepaliveCountMax: 3,
+          // Algoritmos mais leves
+          algorithms: {
+            kex: ['diffie-hellman-group14-sha1'],
+            cipher: ['aes128-ctr'],
+            hmac: ['hmac-sha1']
+          }
+        };
+
+        // Timeout de handshake otimizado para VPS
+        const handshakeTimeout = setTimeout(() => {
+          timedOut = true;
+          console.warn('⚠️ Timeout durante handshake SFTP');
+          conn.end();
+          reject(new Error('Timeout durante handshake SFTP'));
+        }, sftpConfigOptimized.readyTimeout);
+
+        // Timeout geral maior para VPS com menos recursos
+        const overallTimeout = setTimeout(() => {
+          if (!timedOut) {
+            timedOut = true;
+            console.warn('⚠️ Timeout geral de upload');
+            conn.end();
+            reject(new Error('Timeout geral de upload'));
+          }
+        }, 600000); // 10 minutos para VPS
+
+        const cleanup = () => {
+          clearTimeout(handshakeTimeout);
+          clearTimeout(overallTimeout);
+        };
+
+        conn.on('ready', () => {
+          console.log('✅ Conexão SFTP estabelecida');
+          clearTimeout(handshakeTimeout);
+          
+          conn.sftp((err, sftp) => {
+            if (err) {
+              cleanup();
+              console.error('❌ Erro ao criar sessão SFTP:', err.message);
+              conn.end();
+              reject(err);
+              return;
+            }
+
+            console.log('📤 Fazendo upload do arquivo...');
+            const readStream = fs.createReadStream(localFilePath, { 
+              highWaterMark: 32 * 1024 // 32KB chunks para VPS
+            });
+            const writeStream = sftp.createWriteStream(finalRemotePath, { 
+              autoClose: true,
+              highWaterMark: 32 * 1024
+            });
+
+            let bytesSent = 0;
+            let lastLog = 0;
+            
+            readStream.on('data', chunk => { 
+              bytesSent += chunk.length;
+              // Log progress a cada 500KB para não sobrecarregar
+              if (bytesSent - lastLog >= 500 * 1024) {
+                console.log(`📊 Enviados: ${(bytesSent / 1024 / 1024).toFixed(2)}MB`);
+                lastLog = bytesSent;
+              }
+            });
+
+            writeStream.on('close', () => {
+              if (!timedOut) {
+                cleanup();
+                console.log(`✅ Upload concluído com sucesso (${bytesSent} bytes)`);
+                conn.end();
+                resolve({ success: true, remotePath: finalRemotePath, localPath: localFilePath, bytesSent });
+              }
+            });
+
+            writeStream.on('error', (err) => {
+              cleanup();
+              console.error('❌ Erro durante upload:', err.message);
+              conn.end();
+              reject(err);
+            });
+
+            readStream.on('error', (err) => {
+              cleanup();
+              console.error('❌ Erro no readStream:', err.message);
+              conn.end();
+              reject(err);
+            });
+
+            readStream.pipe(writeStream);
+          });
+        });
+
+        conn.on('error', (err) => {
+          cleanup();
+          console.error('❌ Erro de conexão SFTP:', err.message);
+          reject(err);
+        });
+
+        conn.connect(sftpConfigOptimized);
+      });
+
+      while (attempt < maxRetries) {
+        try {
+          console.log(`🔄 Tentativa ${attempt + 1}/${maxRetries} de upload SFTP...`);
+          const result = await tryOnce();
+          console.log('✅ Upload SFTP bem-sucedido');
+          return result;
+        } catch (error) {
+          attempt++;
+          console.error(`❌ Tentativa ${attempt} falhou:`, error.message);
+          
+          if (attempt < maxRetries) {
+            const delay = baseDelayMs * attempt; // Linear backoff para VPS
+            console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+
+      return { success: false, error: `Falha após ${maxRetries} tentativas de upload SFTP` };
+    }, 'Upload SFTP Otimizado');
+  }
+
+  /**
    * Upload do arquivo para Emarsys via SFTP
    * @param {string} localFilePath - Caminho do arquivo local
    * @param {string} remotePath - Caminho remoto (opcional)
@@ -842,12 +1043,12 @@ class VtexProductService {
   }
 
   /**
-   * Busca todos os produtos da API da VTEX
+   * Busca todos os produtos da API da VTEX com otimização de memória
    * @param {number} limit - Limite de produtos
    * @returns {Promise<Array>} Array de produtos
    */
   async getAllProductsFromApi(limit = null) {
-    console.log('🔍 Buscando produtos da API da VTEX...');
+    console.log('🔍 Buscando produtos da API da VTEX com otimização de memória...');
     
     const productData = await this.getProductIdsAndSkusFromPrivateApi();
     
@@ -865,7 +1066,7 @@ class VtexProductService {
     console.log(`📋 Encontrados ${productIds.length} productIds, buscando detalhes...`);
     
     const products = [];
-    const batchSize = 20;
+    const batchSize = 5; // Reduzido de 20 para 5 para economizar memória
     
     for (let i = 0; i < productIds.length; i += batchSize) {
       const batch = productIds.slice(i, i + batchSize);
@@ -882,10 +1083,16 @@ class VtexProductService {
       });
       
       const batchResults = await Promise.all(batchPromises);
-      products.push(...batchResults.filter(p => p !== null));
+      const validProducts = batchResults.filter(p => p !== null);
+      products.push(...validProducts);
+      
+      // Otimização de memória a cada 10 lotes
+      if (i > 0 && i % (batchSize * 10) === 0) {
+        this.memoryOptimizer.optimizeBatchProcessing(Math.floor(i/batchSize), Math.ceil(productIds.length/batchSize), 10);
+      }
       
       if (i + batchSize < productIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 25));
+        await new Promise(resolve => setTimeout(resolve, 50)); // Aumentado delay para reduzir carga
       }
     }
     
@@ -945,14 +1152,22 @@ class VtexProductService {
         
         console.log(`📋 Encontrados ${allProducts.length} produtos na API da VTEX`);
         
-        // Salva produtos
+        // Salva produtos usando método otimizado
         let saveSuccess = false;
         try {
-          await this.saveProductsToFile(allProducts);
+          await this.saveProductsToFileOptimized(allProducts);
           saveSuccess = true;
           console.log('✅ Produtos salvos com sucesso!');
         } catch (saveError) {
           console.error('❌ Erro ao salvar produtos:', saveError.message);
+          // Fallback para método tradicional
+          try {
+            await this.saveProductsToFile(allProducts);
+            saveSuccess = true;
+            console.log('✅ Produtos salvos com método fallback!');
+          } catch (fallbackError) {
+            console.error('❌ Erro no método fallback:', fallbackError.message);
+          }
         }
         
         // Salva informações da sincronização
@@ -986,20 +1201,36 @@ class VtexProductService {
         if (csvResult && process.env.ENABLE_EMARSYS_UPLOAD === 'true') {
           try {
             console.log('📤 Enviando arquivo CSV para SFTP...');
-            uploadResult = await this.uploadToEmarsys(csvResult.filepath);
+            uploadResult = await this.uploadToEmarsysOptimized(csvResult.filepath);
             console.log('✅ Upload CSV concluído');
           } catch (uploadError) {
             console.error('❌ Erro no upload CSV:', uploadError.message);
+            // Fallback para método tradicional
+            try {
+              console.log('🔄 Tentando upload com método tradicional...');
+              uploadResult = await this.uploadToEmarsys(csvResult.filepath);
+              console.log('✅ Upload CSV concluído (fallback)');
+            } catch (fallbackError) {
+              console.error('❌ Erro no upload fallback:', fallbackError.message);
+            }
           }
           
           // Tentar upload do arquivo .gz se foi gerado
           if (csvResult.gzFilepath) {
             try {
               console.log('📤 Enviando arquivo .gz para SFTP...');
-              gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
+              gzUploadResult = await this.uploadToEmarsysOptimized(csvResult.gzFilepath);
               console.log('✅ Upload .gz concluído');
             } catch (gzUploadError) {
               console.error('❌ Erro no upload .gz:', gzUploadError.message);
+              // Fallback para método tradicional
+              try {
+                console.log('🔄 Tentando upload .gz com método tradicional...');
+                gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
+                console.log('✅ Upload .gz concluído (fallback)');
+              } catch (fallbackError) {
+                console.error('❌ Erro no upload .gz fallback:', fallbackError.message);
+              }
             }
           }
         } else {

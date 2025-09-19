@@ -653,7 +653,26 @@ router.post('/extract-recent', async (req, res) => {
 router.post('/create-single-from-ad', async (req, res) => {
   try {
     console.log('🔗 Criando contato a partir do userId (AD) + endereço...');
-    const { userId, state, city, country, zip_code } = req.body || {};
+    
+    // Log detalhado para debug
+    console.log('📝 Dados recebidos:', {
+      hasBody: !!req.body,
+      bodyType: typeof req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : 'N/A',
+      contentLength: req.get('content-length'),
+      contentType: req.get('content-type')
+    });
+    
+    // Validação adicional do body da requisição
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: 'Body da requisição inválido ou vazio',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const { userId, state, city, country, zip_code } = req.body;
 
     if (!userId) {
       return res.status(400).json({

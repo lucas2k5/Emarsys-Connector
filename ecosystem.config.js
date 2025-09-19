@@ -5,7 +5,7 @@ module.exports = {
     instances: 1,
     autorestart: true,
     watch: false,
-    max_memory_restart: '1G',
+    max_memory_restart: '6G',
     env: {
       NODE_ENV: 'development',
       PORT: 3000,
@@ -14,7 +14,8 @@ module.exports = {
       ALERT_ERROR_RATE: 0.1,
       ALERT_RESPONSE_TIME: 5000,
       ALERT_MEMORY_USAGE: 0.9,
-      ALERT_CONSECUTIVE_ERRORS: 5
+      ALERT_CONSECUTIVE_ERRORS: 5,
+      NODE_OPTIONS: '--max-old-space-size=6144'
     },
     env_production: {
       NODE_ENV: 'production',
@@ -24,7 +25,8 @@ module.exports = {
       ALERT_ERROR_RATE: 0.05,
       ALERT_RESPONSE_TIME: 3000,
       ALERT_MEMORY_USAGE: 0.85,
-      ALERT_CONSECUTIVE_ERRORS: 3
+      ALERT_CONSECUTIVE_ERRORS: 3,
+      NODE_OPTIONS: '--max-old-space-size=6144'
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',
