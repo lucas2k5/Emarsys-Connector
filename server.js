@@ -23,6 +23,7 @@ const integrationRoutes = require('./routes/integration');
 const backgroundJobsRoutes = require('./routes/backgroundJobs');
 const cronJobsRoutes = require('./routes/cronJobs');
 const cronManagementRoutes = require('./routes/cronManagement');
+const crashProtectionRoutes = require('./routes/crashProtection');
 const { generateOAuth2TokenFromEnv, getEmarsysSettings } = require('./utils/emarsysAuth');
 const { getBrazilianTimestamp } = require('./utils/dateUtils');
 const CronService = require('./utils/cronService');
@@ -116,6 +117,7 @@ app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
 app.use('/api/cron-management', cronManagementRoutes);
+app.use('/api/crash-protection', crashProtectionRoutes);
 
 // Rotas de métricas e monitoramento
 app.use('/api/metrics', metricsRoutes);
