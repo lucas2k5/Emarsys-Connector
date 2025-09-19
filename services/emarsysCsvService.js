@@ -45,13 +45,19 @@ class EmarsysCsvService {
     ];
 
     let csvContent = headers.join(',') + '\n';
-    const batchSize = 50; // Processar em lotes para economizar memória
+    const batchSize = 100; // Aumentado de 50 para 100 para acelerar processamento
 
     console.log(`📊 Processando ${products.length} produtos em lotes de ${batchSize} (otimizado)...`);
 
     for (let i = 0; i < products.length; i += batchSize) {
       const batch = products.slice(i, i + batchSize);
-      console.log(`🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(products.length/batchSize)}`);
+      const currentBatch = Math.floor(i/batchSize) + 1;
+      const totalBatches = Math.ceil(products.length/batchSize);
+      
+      // Log apenas a cada 10 lotes para reduzir verbosidade
+      if (currentBatch % 10 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
+        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}`);
+      }
 
       batch.forEach(product => {
         // Para cada produto, gerar uma linha para cada item (SKU)
@@ -144,8 +150,8 @@ class EmarsysCsvService {
         }
       });
 
-      // Força garbage collection a cada 5 lotes para liberar memória
-      if (i > 0 && i % (batchSize * 5) === 0) {
+      // Força garbage collection a cada 20 lotes para liberar memória (ajustado para lotes maiores)
+      if (i > 0 && i % (batchSize * 10) === 0) {
         if (global.gc) {
           console.log('🧹 Executando garbage collection durante geração CSV...');
           global.gc();

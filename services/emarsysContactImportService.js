@@ -133,8 +133,8 @@ class EmarsysContactImportService {
          }
        );
 
-      // Interceptor para logs em desenvolvimento
-      if (process.env.NODE_ENV !== 'production') {
+      // Interceptor para logs em desenvolvimento (desativado em produção)
+      if (process.env.NODE_ENV !== 'production' && process.env.LOG_LEVEL === 'debug') {
         this.client.interceptors.request.use(request => {
           console.log('📤 Starting Request:', request.url);
           return request;

@@ -1066,11 +1066,17 @@ class VtexProductService {
     console.log(`📋 Encontrados ${productIds.length} productIds, buscando detalhes...`);
     
     const products = [];
-    const batchSize = 5; // Reduzido de 20 para 5 para economizar memória
+    const batchSize = 10; // Aumentado de 5 para 20 para acelerar processamento
     
     for (let i = 0; i < productIds.length; i += batchSize) {
       const batch = productIds.slice(i, i + batchSize);
-      console.log(`🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
+      const currentBatch = Math.floor(i/batchSize) + 1;
+      const totalBatches = Math.ceil(productIds.length/batchSize);
+      
+      // Log apenas a cada 50 lotes para reduzir verbosidade
+      if (currentBatch % 50 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
+        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
+      }
       
       const batchPromises = batch.map(async (productId) => {
         try {
@@ -1086,13 +1092,13 @@ class VtexProductService {
       const validProducts = batchResults.filter(p => p !== null);
       products.push(...validProducts);
       
-      // Otimização de memória a cada 10 lotes
-      if (i > 0 && i % (batchSize * 10) === 0) {
-        this.memoryOptimizer.optimizeBatchProcessing(Math.floor(i/batchSize), Math.ceil(productIds.length/batchSize), 10);
+      // Otimização de memória a cada 25 lotes (ajustado para lotes maiores)
+      if (i > 0 && i % (batchSize * 25) === 0) {
+        this.memoryOptimizer.optimizeBatchProcessing(currentBatch, totalBatches, 25);
       }
       
       if (i + batchSize < productIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 50)); // Aumentado delay para reduzir carga
+        await new Promise(resolve => setTimeout(resolve, 25)); // Reduzido delay para acelerar processamento
       }
     }
     
