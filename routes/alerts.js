@@ -412,24 +412,23 @@ router.get('/dashboard', (req, res) => {
         
         function displayStats(stats) {
             const grid = document.getElementById('statsGrid');
-            grid.innerHTML = \`
-                <div class="stat-card">
-                    <div class="stat-value">\${stats.total}</div>
-                    <div class="stat-label">Total de Alertas</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">\${stats.active}</div>
-                    <div class="stat-label">Alertas Ativos</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">\${stats.resolved}</div>
-                    <div class="stat-label">Resolvidos</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">\${stats.last24h}</div>
-                    <div class="stat-label">Últimas 24h</div>
-                </div>
-            \`;
+            grid.innerHTML = 
+                '<div class="stat-card">' +
+                    '<div class="stat-value">' + stats.total + '</div>' +
+                    '<div class="stat-label">Total de Alertas</div>' +
+                '</div>' +
+                '<div class="stat-card">' +
+                    '<div class="stat-value">' + stats.active + '</div>' +
+                    '<div class="stat-label">Alertas Ativos</div>' +
+                '</div>' +
+                '<div class="stat-card">' +
+                    '<div class="stat-value">' + stats.resolved + '</div>' +
+                    '<div class="stat-label">Resolvidos</div>' +
+                '</div>' +
+                '<div class="stat-card">' +
+                    '<div class="stat-value">' + stats.last24h + '</div>' +
+                    '<div class="stat-label">Últimas 24h</div>' +
+                '</div>';
         }
         
         function displayAlerts(alerts) {
@@ -440,24 +439,24 @@ router.get('/dashboard', (req, res) => {
                 return;
             }
             
-            container.innerHTML = alerts.map(alert => \`
-                <div class="alert-item \${alert.severity}">
-                    <div class="alert-header">
-                        <span class="alert-type">\${alert.type}</span>
-                        <span class="alert-severity severity-\${alert.severity}">\${alert.severity}</span>
-                    </div>
-                    <div class="alert-message">\${alert.message}</div>
-                    <div class="alert-meta">
-                        ID: \${alert.id} | \${new Date(alert.timestamp).toLocaleString('pt-BR')}
-                    </div>
-                    <button class="resolve-btn" onclick="resolveAlert('\${alert.id}')">Resolver</button>
-                </div>
-            \`).join('');
+            container.innerHTML = alerts.map(alert => 
+                '<div class="alert-item ' + alert.severity + '">' +
+                    '<div class="alert-header">' +
+                        '<span class="alert-type">' + alert.type + '</span>' +
+                        '<span class="alert-severity severity-' + alert.severity + '">' + alert.severity + '</span>' +
+                    '</div>' +
+                    '<div class="alert-message">' + alert.message + '</div>' +
+                    '<div class="alert-meta">' +
+                        'ID: ' + alert.id + ' | ' + new Date(alert.timestamp).toLocaleString('pt-BR') +
+                    '</div>' +
+                    '<button class="resolve-btn" onclick="resolveAlert(\'' + alert.id + '\')">Resolver</button>' +
+                '</div>'
+            ).join('');
         }
         
         async function resolveAlert(alertId) {
             try {
-                const response = await fetch(\`/api/alerts/\${alertId}/resolve\`, {
+                const response = await fetch('/api/alerts/' + alertId + '/resolve', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

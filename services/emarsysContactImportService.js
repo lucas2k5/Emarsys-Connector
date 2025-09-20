@@ -1,4 +1,4 @@
-require('dotenv').config({ debug: true });
+require('dotenv').config();
 const axios = require('axios');
 const WSSeAuth = require('../utils/wsseAuth');
 const fs = require('fs').promises;

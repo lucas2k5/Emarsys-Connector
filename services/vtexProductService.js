@@ -1066,16 +1066,17 @@ class VtexProductService {
     console.log(`📋 Encontrados ${productIds.length} productIds, buscando detalhes...`);
     
     const products = [];
-    const batchSize = 10; // Aumentado de 5 para 20 para acelerar processamento
+    const batchSize = 50; // Aumentado para 50 produtos por lote para acelerar processamento significativamente
     
     for (let i = 0; i < productIds.length; i += batchSize) {
       const batch = productIds.slice(i, i + batchSize);
       const currentBatch = Math.floor(i/batchSize) + 1;
       const totalBatches = Math.ceil(productIds.length/batchSize);
       
-      // Log apenas a cada 50 lotes para reduzir verbosidade
-      if (currentBatch % 50 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
-        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
+      // Log apenas a cada 10 lotes (500 produtos) ou no início/fim para reduzir verbosidade
+      if (currentBatch % 10 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
+        const percentage = Math.round((i / productIds.length) * 100);
+        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)} (${percentage}%)`);
       }
       
       const batchPromises = batch.map(async (productId) => {
@@ -1092,13 +1093,14 @@ class VtexProductService {
       const validProducts = batchResults.filter(p => p !== null);
       products.push(...validProducts);
       
-      // Otimização de memória a cada 25 lotes (ajustado para lotes maiores)
-      if (i > 0 && i % (batchSize * 25) === 0) {
-        this.memoryOptimizer.optimizeBatchProcessing(currentBatch, totalBatches, 25);
+      // Otimização de memória a cada 20 lotes (1000 produtos)
+      if (i > 0 && i % (batchSize * 20) === 0) {
+        this.memoryOptimizer.optimizeBatchProcessing(currentBatch, totalBatches, 20);
       }
       
-      if (i + batchSize < productIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 25)); // Reduzido delay para acelerar processamento
+      // Delay mínimo apenas se necessário (removido ou reduzido para 5ms)
+      if (i + batchSize < productIds.length && currentBatch % 5 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 5)); // Delay mínimo apenas a cada 5 lotes (250 produtos)
       }
     }
     
