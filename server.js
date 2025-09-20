@@ -34,10 +34,27 @@ const HOST = process.env.HOST;
 const cronService = new CronService();
 
 // Middleware de segurança
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+}));
 
 // Middleware de CORS
 app.use(cors());
+
+// Middleware de métricas
+app.use(metricsMiddleware);
 
 // Middleware para validar Content-Type antes do parsing
 app.use((req, res, next) => {

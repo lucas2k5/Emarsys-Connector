@@ -39,6 +39,7 @@ router.get('/dashboard', (req, res) => {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard de Métricas - Emarsys Server</title>
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
     <style>
         * {
             margin: 0;
@@ -180,8 +181,8 @@ router.get('/dashboard', (req, res) => {
         </div>
         
         <div style="text-align: center; margin-bottom: 20px;">
-            <button class="refresh-btn" onclick="loadMetrics()">🔄 Atualizar Métricas</button>
-            <button class="refresh-btn" onclick="window.open('/api/metrics/prometheus', '_blank')">📈 Ver Métricas Prometheus</button>
+            <button class="refresh-btn" id="refreshBtn">🔄 Atualizar Métricas</button>
+            <button class="refresh-btn" id="prometheusBtn">📈 Ver Métricas Prometheus</button>
         </div>
         
         <div class="metrics-grid" id="metricsGrid">
@@ -192,6 +193,7 @@ router.get('/dashboard', (req, res) => {
     </div>
 
     <script>
+        // Função para carregar métricas
         async function loadMetrics() {
             const grid = document.getElementById('metricsGrid');
             const timestamp = document.getElementById('timestamp');
@@ -200,15 +202,20 @@ router.get('/dashboard', (req, res) => {
                 grid.innerHTML = '<div class="loading">Carregando métricas...</div>';
                 
                 const response = await fetch('/api/metrics/json');
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                }
+                
                 const data = await response.json();
                 
-                if (data.success) {
+                if (data.success && data.data) {
                     displayMetrics(data.data);
                     timestamp.textContent = 'Última atualização: ' + new Date().toLocaleString('pt-BR');
                 } else {
-                    throw new Error('Erro ao carregar métricas');
+                    throw new Error(data.error || 'Erro ao carregar métricas');
                 }
             } catch (error) {
+                console.error('Erro ao carregar métricas:', error);
                 grid.innerHTML = '<div class="error">Erro ao carregar métricas: ' + error.message + '</div>';
             }
         }
@@ -287,24 +294,45 @@ router.get('/dashboard', (req, res) => {
                     totalValue = metrics.reduce((sum, m) => sum + (m.values?.[0]?.value || 0), 0);
             }
             
-            card.innerHTML = \`
-                <div class="metric-title">\${title}</div>
-                <div class="metric-value">\${totalValue.toLocaleString('pt-BR')}\${type === 'memory' ? ' MB' : ''}</div>
-                <div class="metric-description">\${description}</div>
-            \`;
+            card.innerHTML = 
+                '<div class="metric-title">' + title + '</div>' +
+                '<div class="metric-value">' + totalValue.toLocaleString('pt-BR') + (type === 'memory' ? ' MB' : '') + '</div>' +
+                '<div class="metric-description">' + description + '</div>';
             
             return card;
         }
         
-        // Carregar métricas automaticamente a cada 30 segundos
-        loadMetrics();
-        setInterval(loadMetrics, 30000);
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            const prometheusBtn = document.getElementById('prometheusBtn');
+            
+            refreshBtn.addEventListener('click', loadMetrics);
+            prometheusBtn.addEventListener('click', function() {
+                window.open('/api/metrics/prometheus', '_blank');
+            });
+            
+            // Carregar métricas automaticamente
+            loadMetrics();
+            setInterval(loadMetrics, 30000);
+        });
     </script>
 </body>
 </html>
   `;
   
   res.send(dashboardHTML);
+});
+
+// Rota para favicon
+router.get('/favicon.ico', (req, res) => {
+  const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#667eea"/>
+    <text x="50" y="60" font-size="50" text-anchor="middle" fill="white">📊</text>
+  </svg>`;
+  
+  res.set('Content-Type', 'image/svg+xml');
+  res.send(faviconSvg);
 });
 
 // Rota para health check detalhado

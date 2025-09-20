@@ -1,4 +1,4 @@
-require('dotenv').config({ debug: true });
+require('dotenv').config();
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
@@ -8,7 +8,7 @@ class EmarsysSalesService {
   constructor() {
     this.baseURL = process.env.EMARSYS_HAPI_URL;
     this.bearerToken = process.env.EMARSYS_BEARER_TOKEN;
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
   }
 

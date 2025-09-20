@@ -124,7 +124,7 @@ router.post('/products-csv', async (req, res) => {
 router.get('/status', (req, res) => {
   res.json({
     success: true,
-    message: 'Cron jobs gerenciados pelo Vercel',
+    message: 'Cron jobs gerenciados pelo servidor',
     endpoints: {
       'POST /api/cron/sync-orders': 'Sincronização de orders',
       'POST /api/cron/sync-orders-batched': 'Sincronização combinada (orders + produtos)',
