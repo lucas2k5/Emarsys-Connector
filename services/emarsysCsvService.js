@@ -70,11 +70,11 @@ class EmarsysCsvService {
               }
               return '';
             };
-
+            console.log(product.categories?.[0] || product.category);
             const row = [
                this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
                this.sanitizeField(product.productName, 100), // title
-               this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
+               this.sanitizeCategory(product.categories?.[0] || product.category, 50), // category
                item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',     // available
                this.sanitizeField(product.description || '', 200),                      // description
                this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
@@ -337,38 +337,15 @@ class EmarsysCsvService {
   }
 
   /**
-   * Sanitiza categoria removendo barras e extraindo a palavra correta
-   * @param {string} category - Categoria no formato /palavra1/palavra2/
-   * @param {number} maxLength - Comprimento máximo do campo
-   * @returns {string} Categoria sanitizada
+   * Retorna apenas a última categoria (folha), ex: "/Sandálias/Anabela/" -> "Anabela"
+   * Suporta separadores '/' e '>'.
    */
-  sanitizeCategory(category, maxLength = 50) {
+  sanitizeCategory(category) {
     if (!category) return '';
-    
-    let cleanCategory = String(category).trim();
-    
-    // Remove barras do início e fim
-    cleanCategory = cleanCategory.replace(/^\/+|\/+$/g, '');
-    
-    // Remove caracteres especiais (>)
-    cleanCategory = cleanCategory.replace(/>/g, '');
-    
-    // Se há barras no meio (mais de uma palavra)
-    if (cleanCategory.includes('/')) {
-      const parts = cleanCategory.split('/').filter(part => part.trim() !== '');
-      // Pega a segunda palavra (índice 1) se existir, senão a primeira
-      cleanCategory = parts.length > 1 ? parts[1] : parts[0] || '';
-    }
-    
-    // Remove espaços extras
-    cleanCategory = cleanCategory.trim();
-    
-    // Trunca se necessário
-    if (cleanCategory.length > maxLength) {
-      cleanCategory = cleanCategory.substring(0, maxLength);
-    }
-    
-    return cleanCategory;
+    const normalized = String(category).trim().replace(/^\/+|\/+$/g, '');
+    if (!normalized) return '';
+    const parts = normalized.split(/[\/>]/).filter(Boolean).map(s => s.trim());
+    return parts.length ? parts[parts.length - 1] : '';
   }
 
   /**

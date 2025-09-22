@@ -2,12 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
+// const morgan = require('morgan');
 
 // Importar sistema de logging e métricas
 const { logger, logHelpers } = require('./utils/logger');
 const { metricsMiddleware } = require('./utils/metrics');
 const { monitoringMiddleware, errorMonitoringMiddleware } = require('./utils/monitoring');
+const { httpLogger } = require('./utils/httpLogger');
 
 const emarsysRoutes = require('./routes/emarsys');
 const vtexProductRoutes = require('./routes/vtexProducts');
@@ -111,14 +112,8 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Middleware de logging HTTP com Morgan
-app.use(morgan('combined', {
-  stream: {
-    write: (message) => {
-      logger.http(message.trim());
-    }
-  }
-}));
+// Middleware de logging HTTP estruturado (JSON)
+app.use(httpLogger);
 
 // Middleware de monitoramento personalizado
 app.use(monitoringMiddleware);
@@ -148,6 +143,8 @@ app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 app.use(errorMonitoringMiddleware);
 
 app.use((err, req, res, next) => {
+  // disponibiliza o erro para o httpLogger anexar no JSON
+  res.locals.error = { name: err.name, message: err.message, stack: err.stack };
   logHelpers.logError(err, {
     method: req.method,
     url: req.originalUrl,

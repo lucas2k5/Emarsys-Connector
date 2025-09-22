@@ -89,6 +89,19 @@ class VtexProductService {
     this._validateSftpConfig();
   }
 
+  // Aguarda até que um arquivo exista e tenha tamanho mínimo
+  async _waitUntilFileReady(filePath, { timeoutMs = 60000, intervalMs = 200, minSize = 1 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const stats = await fs.stat(filePath);
+        if (stats.size >= minSize) return true;
+      } catch (_) { /* arquivo ainda não existe */ }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    throw new Error(`Arquivo não ficou pronto a tempo: ${filePath}`);
+  }
+
   /**
    * Valida as configurações SFTP
    */
@@ -710,225 +723,14 @@ class VtexProductService {
     });
   }
 
-  /**
-   * Upload otimizado do arquivo para Emarsys via SFTP (para VPS com recursos limitados)
-   * @param {string} localFilePath - Caminho do arquivo local
-   * @param {string} remotePath - Caminho remoto (opcional)
-   * @returns {Promise<Object>} Resultado do upload
-   */
-  async uploadToEmarsysOptimized(localFilePath, remotePath = null) {
-    return this.memoryOptimizer.wrapMemoryIntensive(async () => {
-      console.log('📤 Iniciando upload otimizado para Emarsys via SFTP...');
-      console.log(`📁 Arquivo local: ${localFilePath}`);
-      
-      // Verifica se o arquivo existe
-      try {
-        await fs.access(localFilePath);
-        const stats = await fs.stat(localFilePath);
-        console.log(`📊 Tamanho do arquivo: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-      } catch (error) {
-        console.error('❌ Arquivo não encontrado:', error.message);
-        return { success: false, error: `Arquivo não encontrado: ${error.message}` };
-      }
-      
-      // Define o caminho remoto
-      const finalRemotePath = remotePath || process.env.SFTP_REMOTE_PATH || '/catalog.csv.gz';
-      console.log(`📂 Caminho remoto: ${finalRemotePath}`);
-      
-      if (!this.sftpConfig.host || !this.sftpConfig.username || !this.sftpConfig.password) {
-        console.error('❌ Configuração SFTP incompleta');
-        return { success: false, error: 'Configuração SFTP incompleta' };
-      }
-      
-      console.log(`🔗 Conectando ao servidor SFTP: ${this.sftpConfig.host}:${this.sftpConfig.port}`);
-      console.log(`👤 Usuário: ${this.sftpConfig.username}`);
-
-      const maxRetries = 2; // Reduzido para VPS
-      const baseDelayMs = 3000; // Aumentado delay
-      let attempt = 0;
-
-      const tryOnce = () => new Promise((resolve, reject) => {
-        const conn = new Client();
-        let timedOut = false;
-
-        // Configurações otimizadas para VPS com menos recursos
-        const sftpConfigOptimized = {
-          ...this.sftpConfig,
-          readyTimeout: 45000, // 45 segundos
-          keepaliveInterval: 20000, // 20 segundos
-          keepaliveCountMax: 3,
-          // Algoritmos mais leves
-          algorithms: {
-            kex: ['diffie-hellman-group14-sha1'],
-            cipher: ['aes128-ctr'],
-            hmac: ['hmac-sha1']
-          }
-        };
-
-        // Timeout de handshake otimizado para VPS
-        const handshakeTimeout = setTimeout(() => {
-          timedOut = true;
-          console.warn('⚠️ Timeout durante handshake SFTP');
-          conn.end();
-          reject(new Error('Timeout durante handshake SFTP'));
-        }, sftpConfigOptimized.readyTimeout);
-
-        // Timeout geral maior para VPS com menos recursos
-        const overallTimeout = setTimeout(() => {
-          if (!timedOut) {
-            timedOut = true;
-            console.warn('⚠️ Timeout geral de upload');
-            conn.end();
-            reject(new Error('Timeout geral de upload'));
-          }
-        }, 600000); // 10 minutos para VPS
-
-        const cleanup = () => {
-          clearTimeout(handshakeTimeout);
-          clearTimeout(overallTimeout);
-        };
-
-        conn.on('ready', () => {
-          console.log('✅ Conexão SFTP estabelecida');
-          clearTimeout(handshakeTimeout);
-          
-          conn.sftp((err, sftp) => {
-            if (err) {
-              cleanup();
-              console.error('❌ Erro ao criar sessão SFTP:', err.message);
-              conn.end();
-              reject(err);
-              return;
-            }
-
-            console.log('📤 Fazendo upload do arquivo...');
-            const readStream = fs.createReadStream(localFilePath, { 
-              highWaterMark: 32 * 1024 // 32KB chunks para VPS
-            });
-            const writeStream = sftp.createWriteStream(finalRemotePath, { 
-              autoClose: true,
-              highWaterMark: 32 * 1024
-            });
-
-            let bytesSent = 0;
-            let lastLog = 0;
-            
-            readStream.on('data', chunk => { 
-              bytesSent += chunk.length;
-              // Log progress a cada 500KB para não sobrecarregar
-              if (bytesSent - lastLog >= 500 * 1024) {
-                console.log(`📊 Enviados: ${(bytesSent / 1024 / 1024).toFixed(2)}MB`);
-                lastLog = bytesSent;
-              }
-            });
-
-            writeStream.on('close', () => {
-              if (!timedOut) {
-                cleanup();
-                console.log(`✅ Upload concluído com sucesso (${bytesSent} bytes)`);
-                conn.end();
-                resolve({ success: true, remotePath: finalRemotePath, localPath: localFilePath, bytesSent });
-              }
-            });
-
-            writeStream.on('error', (err) => {
-              cleanup();
-              console.error('❌ Erro durante upload:', err.message);
-              conn.end();
-              reject(err);
-            });
-
-            readStream.on('error', (err) => {
-              cleanup();
-              console.error('❌ Erro no readStream:', err.message);
-              conn.end();
-              reject(err);
-            });
-
-            readStream.pipe(writeStream);
-          });
-        });
-
-        conn.on('error', (err) => {
-          cleanup();
-          console.error('❌ Erro de conexão SFTP:', err.message);
-          reject(err);
-        });
-
-        conn.connect(sftpConfigOptimized);
-      });
-
-      while (attempt < maxRetries) {
-        try {
-          console.log(`🔄 Tentativa ${attempt + 1}/${maxRetries} de upload SFTP...`);
-          const result = await tryOnce();
-          console.log('✅ Upload SFTP bem-sucedido');
-          return result;
-        } catch (error) {
-          attempt++;
-          console.error(`❌ Tentativa ${attempt} falhou:`, error.message);
-          
-          if (attempt < maxRetries) {
-            const delay = baseDelayMs * attempt; // Linear backoff para VPS
-            console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
-            await new Promise(r => setTimeout(r, delay));
-          }
-        }
-      }
-
-      return { success: false, error: `Falha após ${maxRetries} tentativas de upload SFTP` };
-    }, 'Upload SFTP Otimizado');
-  }
 
   /**
    * Upload do arquivo para Emarsys via SFTP
    * @param {string} localFilePath - Caminho do arquivo local
-   * @param {string} remotePath - Caminho remoto (opcional)
    * @returns {Promise<Object>} Resultado do upload
    */
-  async uploadToEmarsys(localFilePath, remotePath = null) {
+  async uploadToEmarsys(localFilePath) {
     console.log('📤 Iniciando upload para Emarsys via SFTP...');
-    
-    // Validação do arquivo local
-    if (!localFilePath) {
-      console.error('❌ Erro: localFilePath é undefined ou null');
-      return { success: false, error: 'localFilePath é undefined ou null' };
-    }
-    
-    try {
-      await fs.access(localFilePath);
-      const stats = await fs.stat(localFilePath);
-      console.log(`📁 Arquivo local: ${localFilePath}`);
-      console.log(`📏 Tamanho: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-    } catch (fileError) {
-      console.error(`❌ Erro ao acessar arquivo ${localFilePath}:`, fileError.message);
-      return { success: false, error: `Arquivo não encontrado: ${localFilePath}` };
-    }
-    
-    // Validação das configurações SFTP
-    const requiredVars = ['SFTP_HOST', 'SFTP_PORT', 'SFTP_USERNAME', 'SFTP_PASSWORD'];
-    const missingVars = requiredVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      console.error(`❌ Variáveis de ambiente SFTP ausentes: ${missingVars.join(', ')}`);
-      return { success: false, error: `Configuração SFTP incompleta: ${missingVars.join(', ')}` };
-    }
-    
-    // Determina o caminho remoto
-    let finalRemotePath = remotePath;
-    if (!finalRemotePath) {
-      const fileName = path.basename(localFilePath);
-      if (fileName.endsWith('.gz')) {
-        // Para arquivos .gz, usa o diretório catalog
-        finalRemotePath = this.sftpRemotePath;
-      } else {
-        // Para outros arquivos, usa o diretório catalog
-        finalRemotePath = `/catalog/${fileName}`;
-      }
-    }
-    
-    console.log(`📂 Caminho remoto: ${finalRemotePath}`);
-    
     const maxRetries = 3;
     const baseDelayMs = 2000;
     let attempt = 0;
@@ -936,32 +738,17 @@ class VtexProductService {
     const tryOnce = () => new Promise((resolve, reject) => {
       const conn = new Client();
       let timedOut = false;
-      
-      // Timeout para handshake inicial
-      const handshakeTimeout = setTimeout(() => {
-        timedOut = true;
-        console.error('❌ Timeout no handshake SFTP');
-        try { conn.end(); } catch (_) {}
-        reject(new Error('Timed out while waiting for handshake'));
-      }, 30000); // 30 segundos para handshake
-      
-      // Timeout geral do upload
       const overallTimeout = setTimeout(() => {
         timedOut = true;
         console.error('❌ Timeout geral do upload atingido');
         try { conn.end(); } catch (_) {}
         reject(new Error('SFTP upload timeout'));
-      }, 180000); // 3 minutos para upload completo
+      }, 120000); // 2 minutos por tentativa
 
-      const cleanup = () => {
-        clearTimeout(handshakeTimeout);
-        clearTimeout(overallTimeout);
-      };
+      const cleanup = () => clearTimeout(overallTimeout);
 
       conn.on('ready', () => {
         console.log('✅ Conexão SFTP estabelecida');
-        clearTimeout(handshakeTimeout); // Limpa o timeout do handshake
-        
         conn.sftp((err, sftp) => {
           if (err) {
             cleanup();
@@ -973,7 +760,7 @@ class VtexProductService {
 
           console.log('📤 Fazendo upload do arquivo...');
           const readStream = fs.createReadStream(localFilePath);
-          const writeStream = sftp.createWriteStream(finalRemotePath, { autoClose: true });
+          const writeStream = sftp.createWriteStream(this.sftpRemotePath, { autoClose: true });
 
           let bytesSent = 0;
           readStream.on('data', chunk => { bytesSent += chunk.length; });
@@ -983,7 +770,7 @@ class VtexProductService {
               cleanup();
               console.log(`✅ Upload concluído com sucesso (${bytesSent} bytes)`);
               conn.end();
-              resolve({ success: true, remotePath: finalRemotePath, localPath: localFilePath, bytesSent });
+              resolve({ success: true, remotePath: this.sftpRemotePath, localPath: localFilePath, bytesSent });
             }
           });
 
@@ -1016,18 +803,6 @@ class VtexProductService {
 
     while (attempt < maxRetries) {
       try {
-        // Teste de conectividade antes de tentar upload
-        if (attempt === 0) {
-          console.log('🔍 Testando conectividade SFTP antes do upload...');
-          try {
-            await this.testSftpConnectivity();
-            console.log('✅ Conectividade SFTP OK, prosseguindo com upload...');
-          } catch (connectivityError) {
-            console.error('❌ Falha no teste de conectividade SFTP:', connectivityError.message);
-            return { success: false, error: `Falha na conectividade SFTP: ${connectivityError.message}` };
-          }
-        }
-        
         return await tryOnce();
       } catch (err) {
         attempt += 1;
@@ -1203,42 +978,21 @@ class VtexProductService {
           console.error('❌ Erro ao gerar CSV:', csvError.message);
         }
         
-        // Tentar upload para SFTP se configurado
+        // Tentar upload SOMENTE do arquivo .gz
         let uploadResult = null;
         let gzUploadResult = null;
         if (csvResult && process.env.ENABLE_EMARSYS_UPLOAD === 'true') {
-          try {
-            console.log('📤 Enviando arquivo CSV para SFTP...');
-            uploadResult = await this.uploadToEmarsysOptimized(csvResult.filepath);
-            console.log('✅ Upload CSV concluído');
-          } catch (uploadError) {
-            console.error('❌ Erro no upload CSV:', uploadError.message);
-            // Fallback para método tradicional
+          if (!csvResult.gzFilepath) {
+            console.error('❌ Arquivo .gz não foi gerado. Abortando upload.');
+          } else {
             try {
-              console.log('🔄 Tentando upload com método tradicional...');
-              uploadResult = await this.uploadToEmarsys(csvResult.filepath);
-              console.log('✅ Upload CSV concluído (fallback)');
-            } catch (fallbackError) {
-              console.error('❌ Erro no upload fallback:', fallbackError.message);
-            }
-          }
-          
-          // Tentar upload do arquivo .gz se foi gerado
-          if (csvResult.gzFilepath) {
-            try {
+              // Aguarda o .gz estar fisicamente pronto no disco
+              await this._waitUntilFileReady(csvResult.gzFilepath, { timeoutMs: 120000, intervalMs: 300, minSize: 10 });
               console.log('📤 Enviando arquivo .gz para SFTP...');
-              gzUploadResult = await this.uploadToEmarsysOptimized(csvResult.gzFilepath);
+              gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
               console.log('✅ Upload .gz concluído');
             } catch (gzUploadError) {
               console.error('❌ Erro no upload .gz:', gzUploadError.message);
-              // Fallback para método tradicional
-              try {
-                console.log('🔄 Tentando upload .gz com método tradicional...');
-                gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
-                console.log('✅ Upload .gz concluído (fallback)');
-              } catch (fallbackError) {
-                console.error('❌ Erro no upload .gz fallback:', fallbackError.message);
-              }
             }
           }
         } else {
