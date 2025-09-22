@@ -397,9 +397,33 @@ class IntegrationService {
     if (processedData.salesData && processedData.salesData.length > 0) {
       const salesFilename = `${config.twoYears ? '2y_' : ''}sales_items_${timestamp}-online.csv`;
       
-      console.log(`📄 Gerando CSV com ${processedData.salesData.length} registros de vendas...`);
+      // 1) Deduplicação por itens já processados em processed-orders.json
+      // Normaliza order/item (remove aspas)
+      const normalize = (v) => String(v || '').replace(/"/g, '');
+      const uniqueItemIds = processedData.salesData
+        .map(o => `${normalize(o.order)}_${normalize(o.item)}`)
+        .filter(Boolean);
+
+      let filteredSalesData = processedData.salesData;
+      try {
+        const status = await this.vtexOrdersService.getProcessedItemsStatus(uniqueItemIds);
+        if (status?.processed?.length) {
+          const processedSet = new Set(status.processed);
+          filteredSalesData = processedData.salesData.filter(o => !processedSet.has(`${normalize(o.order)}_${normalize(o.item)}`));
+          console.log(`⏭️ Itens já processados ignorados: ${processedData.salesData.length - filteredSalesData.length}`);
+        }
+      } catch (e) {
+        console.warn('⚠️ Falha ao consultar processed-orders.json, seguindo sem filtro:', e.message);
+      }
+
+      if (!filteredSalesData.length) {
+        console.log('ℹ️ Nenhum item novo para CSV após deduplicação. Pulando geração.');
+        return results;
+      }
+
+      console.log(`📄 Gerando CSV com ${filteredSalesData.length} registros de vendas...`);
       
-      const salesResult = await this.vtexOrdersService.generateCsvFromOrders(processedData.salesData, {
+      const salesResult = await this.vtexOrdersService.generateCsvFromOrders(filteredSalesData, {
         filename: salesFilename
       });
       
@@ -407,6 +431,19 @@ class IntegrationService {
       
       if (salesResult.success) {
         console.log(`✅ CSV de vendas gerado: ${salesResult.filename}`);
+
+        // 2) Persistir itens processados para futuras deduplicações
+        try {
+          const syncTs = new Date().toISOString();
+          const processedItems = filteredSalesData.map(o => ({
+            orderId: normalize(o.order),
+            itemId: normalize(o.item),
+            uniqueItemId: `${normalize(o.order)}_${normalize(o.item)}`
+          }));
+          await this.vtexOrdersService.saveProcessedOrders(processedItems, syncTs);
+        } catch (persistErr) {
+          console.warn('⚠️ Não foi possível salvar processed-orders após geração do CSV:', persistErr.message);
+        }
       } else {
         console.error(`❌ Erro ao gerar CSV de vendas: ${salesResult.error}`);
       }
