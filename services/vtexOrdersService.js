@@ -113,6 +113,121 @@ class VtexOrdersService {
     }
   }
 
+  /**
+   * Busca pedidos da nova base de dados (endpoint personalizado)
+   * @param {Object} options - Opções de filtro (dataInicial, dataFinal, page, pageSize)
+   * @returns {Promise<Object>} Resposta da nova base de dados
+   */
+  async fetchOrdersFromNewBase(options = {}) {
+    try {
+      const url = 'https://ems--piccadilly.myvtex.com/_v/orders/list';
+      
+      // Headers mínimos para rota pública
+      const headers = {
+        'Accept': 'application/json'
+      };
+
+      // Parâmetros de consulta
+      const params = {
+        page: options.page || 1,
+        pageSize: options.pageSize || 100
+      };
+
+      // Adiciona filtros de data se fornecidos
+      if (options.dataInicial) {
+        params.dataInicial = options.dataInicial;
+      }
+      if (options.dataFinal) {
+        params.dataFinal = options.dataFinal;
+      }
+
+      console.log('🔍 Consultando nova base de dados de pedidos...');
+      console.log(`   📍 URL: ${url}`);
+      console.log(`   📄 Página: ${params.page}`);
+      console.log(`   📏 Tamanho da página: ${params.pageSize}`);
+      
+      if (params.dataInicial) {
+        console.log(`   📅 Data inicial: ${params.dataInicial}`);
+      }
+      if (params.dataFinal) {
+        console.log(`   📅 Data final: ${params.dataFinal}`);
+      }
+
+      const response = await axios.get(url, {
+        headers,
+        params,
+        timeout: 30000
+      });
+
+      if (response.data && response.data.data) {
+        console.log(`   ✅ ${response.data.data.length} pedidos encontrados na nova base`);
+        
+        // Log do primeiro pedido para debug
+        if (response.data.data.length > 0) {
+          const firstOrder = response.data.data[0];
+          console.log(`   📦 Primeiro pedido: ${firstOrder.order || firstOrder.orderId} - ${firstOrder.timestamp || firstOrder.creationDate}`);
+        }
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('❌ Erro ao consultar nova base de dados:', error?.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Busca todos os pedidos da nova base com paginação automática
+   * @param {Object} options - Opções de filtro (dataInicial, dataFinal, pageSize)
+   * @returns {Promise<Array>} Array com todos os pedidos
+   */
+  async fetchAllOrdersFromNewBase(options = {}) {
+    try {
+      console.log('🚀 Iniciando busca de todos os pedidos da nova base...');
+      
+      let allOrders = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+      const pageSize = options.pageSize || 100;
+
+      while (hasMorePages) {
+        const response = await this.fetchOrdersFromNewBase({
+          ...options,
+          page: currentPage,
+          pageSize: pageSize
+        });
+        
+        if (response.success && response.data) {
+          allOrders = allOrders.concat(response.data);
+          console.log(`✅ Página ${currentPage}: ${response.data.length} pedidos encontrados`);
+          
+          // Verifica se há mais páginas
+          if (response.pagination) {
+            const totalPages = Math.ceil(response.pagination.total / response.pagination.pageSize);
+            hasMorePages = currentPage < totalPages;
+            currentPage++;
+          } else {
+            hasMorePages = false;
+          }
+        } else {
+          console.log('⚠️ Resposta inesperada da nova base:', response);
+          hasMorePages = false;
+        }
+
+        // Pausa entre requisições para não sobrecarregar
+        if (hasMorePages) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      console.log(`🎉 Busca da nova base concluída! Total de ${allOrders.length} pedidos encontrados`);
+      return allOrders;
+    } catch (error) {
+      console.error('❌ Erro ao buscar todos os pedidos da nova base:', error.message);
+      throw error;
+    }
+  }
+
   // searchOrdersOMS removida: use apenas searchOrdersByPeriod
 
   /**
@@ -734,6 +849,16 @@ class VtexOrdersService {
         const processedDate = new Date(record.processedAt);
         return processedDate >= fortyEightHoursAgo;
       });
+
+      // Reaplica unicidade por uniqueItemId antes de persistir
+      const dedupMap = new Map();
+      for (const rec of existingData.processedOrders) {
+        const key = rec.uniqueItemId || `${rec.orderId}_${rec.itemId}`;
+        if (!dedupMap.has(key)) {
+          dedupMap.set(key, rec);
+        }
+      }
+      existingData.processedOrders = Array.from(dedupMap.values());
       
       // Salva arquivo atualizado
       await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
@@ -1097,6 +1222,10 @@ class VtexOrdersService {
       // Usa os dados diretamente (já estão no formato correto)
       const ordersToProcess = orders;
       console.log(`📊 Processando ${ordersToProcess.length} registros para Emarsys`);
+
+      // Importante: não filtrar aqui por processed-orders.json.
+      // A deduplicação já é feita em transformOrdersForEmarsys usando getProcessedItemsStatus.
+      // Se filtrarmos aqui, como saveProcessedOrders roda antes do CSV, vamos zerar a primeira execução.
 
       // Gera nome do arquivo com timestamp
       const timestamp = getBrazilianTimestampForFilename();
@@ -1814,7 +1943,7 @@ class VtexOrdersService {
 
   /**
    * Executa sincronização completa de pedidos (buscar + salvar + gerar CSV)
-   * @param {Object} options - Opções de configuração
+   * @param {Object} options - Opções de configuração (dataInicial, dataFinal)
    * @returns {Object} Resultado da sincronização
    */
   async syncOrders(options = {}) {
@@ -1822,9 +1951,13 @@ class VtexOrdersService {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
       const startTime = Date.now();
       
-      // 1. Buscar todos os pedidos
-      console.log('📦 Buscando pedidos da VTEX...');
-      const orders = await this.fetchAllOrders();
+      // 1. Buscar todos os pedidos da nova base
+      console.log('📦 Buscando pedidos da nova base de dados...');
+      const orders = await this.fetchAllOrdersFromNewBase({
+        dataInicial: options.dataInicial,
+        dataFinal: options.dataFinal,
+        pageSize: options.pageSize || 100
+      });
       
       if (!orders || orders.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado');
@@ -1848,8 +1981,32 @@ class VtexOrdersService {
       }
       
       // 3. Transformar dados para formato Emarsys
-      console.log('🔄 Transformando dados para formato Emarsys...', orders);
       const transformedOrders = await this.transformOrdersForEmarsys(orders);
+
+      // 3.0. Se não houver dados novos após deduplicação, não gerar CSV
+      if (!transformedOrders.emarsysData || transformedOrders.emarsysData.length === 0) {
+        console.log('ℹ️ Nenhum registro novo para CSV após deduplicação. Processo finalizado sem gerar arquivo.');
+        const durationNoop = Date.now() - startTime;
+        await this.saveSyncStats({
+          phase: 'sync_complete',
+          totalOrders: orders.length,
+          transformedOrders: 0,
+          csvGenerated: false,
+          emarsysSent: false,
+          duration: durationNoop,
+          saveSuccess: saveResult.success,
+          overallSuccess: true,
+          message: 'Sem novos registros (deduplicado)'
+        });
+        return {
+          success: true,
+          totalOrders: orders.length,
+          transformedOrders: 0,
+          message: 'Sem novos registros para CSV (já processados)',
+          duration: durationNoop,
+          timestamp: getBrazilianTimestamp()
+        };
+      }
       
       // 3.1. Salva controle de pedidos processados para evitar duplicatas
       if (transformedOrders.processedOrders && transformedOrders.processedOrders.length > 0) {
@@ -1862,18 +2019,23 @@ class VtexOrdersService {
         }));
         await this.saveProcessedOrders(processedItems, syncTimestamp);
         
-        // 3.2. Limpeza automática de registros antigos (48h)
-        try {
-          await this.cleanupProcessedOrders(48);
-        } catch (cleanupError) {
-          console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
+        // 3.2. Limpeza automática de registros antigos (48h) — desativada por padrão
+        const processedCleanupEnabled = process.env.ENABLE_PROCESSED_CLEANUP === 'true';
+        if (processedCleanupEnabled) {
+          try {
+            await this.cleanupProcessedOrders(48);
+          } catch (cleanupError) {
+            console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
+          }
+        } else {
+          console.log('⏸️ Limpeza de processed-orders desativada (ENABLE_PROCESSED_CLEANUP!=true)');
         }
       }
       
       // 4. Gerar CSV
-      console.log('📄 Gerando CSV...| 22/08 |');
+      console.log('📄 Gerando CSV...');
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, options);
-      console.log('📄 Gerando CSV...| 22/08 |', csvResult);
+      console.log('📄 CSV gerado:', csvResult);
       
       if (!csvResult.success) {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');
@@ -1915,7 +2077,7 @@ class VtexOrdersService {
       const finalStats = {
         phase: 'sync_complete',
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.length,
+        transformedOrders: transformedOrders.emarsysData?.length || 0,
         csvGenerated: csvResult.success,
         emarsysSent: emarsysSendResult.success,
         duration: duration,
@@ -1925,13 +2087,13 @@ class VtexOrdersService {
 
       await this.saveSyncStats(finalStats);
       
-      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
-      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.length} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
+      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms`);
+      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.emarsysData?.length || 0} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
         success: true,
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.length,
+        transformedOrders: transformedOrders.emarsysData?.length || 0,
         message: 'Sincronização de pedidos concluída com sucesso',
         orders: orders,
         saveResult: saveResult,

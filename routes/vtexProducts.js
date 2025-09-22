@@ -459,6 +459,65 @@ router.post('/sync', async (req, res) => {
 });
 
 /**
+ * @route GET /api/vtex/products/test-config
+ * @desc Testa configuração das variáveis de ambiente (para debug)
+ * @access Public
+ */
+router.get('/test-config', async (req, res) => {
+  try {
+    console.log('🧪 Testando configuração das variáveis de ambiente...');
+    
+    const config = {
+      VTEX_BASE_URL: process.env.VTEX_BASE_URL || 'undefined',
+      VTEX_APP_KEY: process.env.VTEX_APP_KEY ? '***' + process.env.VTEX_APP_KEY.slice(-4) : 'undefined',
+      VTEX_APP_TOKEN: process.env.VTEX_APP_TOKEN ? '***' + process.env.VTEX_APP_TOKEN.slice(-4) : 'undefined',
+      NODE_ENV: process.env.NODE_ENV || 'undefined'
+    };
+    
+    res.json({
+      success: true,
+      data: config,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro no teste de configuração:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/vtex/products/test-connectivity
+ * @desc Testa apenas a conectividade com a VTEX (para debug)
+ * @access Public
+ */
+router.get('/test-connectivity', async (req, res) => {
+  try {
+    console.log('🧪 Testando conectividade com VTEX...');
+    
+    const connectivityTest = await vtexProductService.testConnectivity();
+    
+    res.json({
+      success: true,
+      data: connectivityTest,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro no teste de conectividade:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
  * @route GET /api/vtex/products/sync
  * @desc Sincroniza produtos da VTEX em background (modo GET, sem body) — útil em ambientes serverless
  * @access Publica
@@ -467,7 +526,7 @@ router.get('/sync', async (req, res) => {
   try {
     console.log(`🚀 Iniciando sincronização de produtos em background [GET]`);
     
-    const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.query;
+    const { maxProducts = '0', forceRefresh = 'false', batchSize = '50' } = req.query;
     
     // Gerar ID único para o job
     const jobId = `sync-products-get-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -486,7 +545,7 @@ router.get('/sync', async (req, res) => {
       status: 'starting',
       progress: 0,
       startTime: new Date().toISOString(),
-      config: { maxProducts: parseInt(maxProducts), forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) }
+      config: { maxProducts: parseInt(maxProducts) || 0, forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) || 50 }
     });
     
     // Executar sincronização diretamente em background
@@ -505,9 +564,9 @@ router.get('/sync', async (req, res) => {
         });
         
         const syncPromise = vtexProductService.syncProducts({ 
-          maxProducts: parseInt(maxProducts), 
+          maxProducts: parseInt(maxProducts) || 0, 
           forceRefresh: forceRefresh === 'true', 
-          batchSize: parseInt(batchSize) 
+          batchSize: parseInt(batchSize) || 50 
         });
         
         const result = await Promise.race([syncPromise, timeoutPromise]);

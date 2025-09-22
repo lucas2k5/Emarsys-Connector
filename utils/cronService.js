@@ -65,54 +65,67 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders a cada 2 horas
+   * Configura o cron para sincronização de orders a cada 2 horas usando nova base
    */
   setupOrdersSync() {
     // Cron expression: 0 */2 * * * (a cada 2 horas)
     const job = new cron.CronJob('0 */2 * * *', async () => {
+      const serviceName = 'orders-sync';
+      
+      // Verificar se o serviço pode executar (proteção contra loops)
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn(`🚫 [CRON] Sincronização de orders bloqueada por proteção contra crashes`);
+        return;
+      }
+      
       console.log('🚀 [CRON] Iniciando sincronização de orders...');
       try {
-        // Calcula o período das últimas 2 horas SEM sobreposição
-        const now = moment().utc();
+        // Usa nova base de dados
+        const url = `${this.baseUrl}/api/integration/orders-sync-new-base`;
         
-        // Busca última sincronização para evitar sobreposição
-        let startDate;
-        try {
-          const lastSyncResponse = await axios.get(`${this.baseUrl}/api/integration/last-sync`, {
-            timeout: 10000
-          });
-          
-          if (lastSyncResponse.data && lastSyncResponse.data.data && lastSyncResponse.data.data.lastSync) {
-            // Usa timestamp da última sincronização + 1 segundo para evitar duplicatas
-            startDate = moment(lastSyncResponse.data.data.lastSync).utc().add(1, 'second').toISOString();
-            console.log(`📅 [CRON] Usando último sync como base: ${startDate}`);
-          } else {
-            throw new Error('Nenhum sync anterior encontrado');
-          }
-        } catch (syncError) {
-          console.warn('⚠️ [CRON] Não foi possível obter último sync, usando período de 2h:', syncError.message);
-          // Fallback: últimas 2 horas
-          startDate = now.clone().subtract(2, 'hours').toISOString();
-        }
-        
-        const toDate = now.toISOString();
-        
-        const url = `${this.baseUrl}/api/integration/orders-extract-all?batching=true&startDate=${encodeURIComponent(startDate)}&toDate=${encodeURIComponent(toDate)}`;
-        
-        console.log(`📅 [CRON] Período sem sobreposição: ${startDate} até ${toDate}`);
+        console.log(`📡 [CRON] Usando nova base de dados: ${url}`);
         
         const response = await axios.get(url, {
           timeout: 300000 // 5 minutos de timeout para orders
         });
         
         console.log('✅ [CRON] Sincronização de orders concluída:', response.status);
+        
+        // Log detalhado da resposta
+        if (response.data && response.data.data) {
+          const data = response.data.data;
+          console.log(`📊 [CRON] Resumo da sincronização:`, {
+            totalOrders: data.totalOrders,
+            transformedOrders: data.transformedOrders,
+            csvGenerated: data.csvResult?.success,
+            emarsysSent: data.emarsysSendResult?.success,
+            duration: data.duration
+          });
+        }
+        
+        // Resetar contador de crashes em caso de sucesso
+        crashProtection.resetCrashCount(serviceName);
+        
       } catch (error) {
         console.error('❌ [CRON] Erro na sincronização de orders:', error.message);
+        console.error('❌ [CRON] Stack trace:', error.stack);
+        
+        // Registrar crash para proteção
+        crashProtection.recordCrash(serviceName, error);
+        
+        // Log adicional para debug em produção
+        if (process.env.NODE_ENV === 'production') {
+          console.error(`❌ [PRODUCTION CRON ERROR] Orders sync failed:`, {
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     }, null, true, 'America/Sao_Paulo');
 
     this.jobs.set('orders-sync', job);
-    console.log('🕐 Cron de orders configurado: a cada 2 horas (sem sobreposição)');
+    console.log('🕐 Cron de orders configurado: a cada 2 horas');
   }
 
   /**

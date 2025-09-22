@@ -474,6 +474,118 @@ router.post('/orders-extract', async (req, res) => {
 });
 
 /**
+ * @route GET /api/integration/orders-sync-new-base
+ * @desc Sincroniza pedidos usando a nova base de dados
+ * @param {string} dataInicial - Data inicial (formato: YYYY-MM-DD)
+ * @param {string} dataFinal - Data final (formato: YYYY-MM-DD)
+ * @param {number} pageSize - Tamanho da página (padrão: 100)
+ * @access Public
+ */
+router.get('/orders-sync-new-base', async (req, res) => {
+  try {
+    // Parâmetros da query
+    const dataInicial = req.query.dataInicial;
+    const dataFinal = req.query.dataFinal;
+    const pageSize = parseInt(req.query.pageSize) || 100;
+
+    console.log('🚀 Iniciando sincronização com nova base de dados:', {
+      dataInicial,
+      dataFinal,
+      pageSize
+    });
+
+    // Instancia o serviço de pedidos
+    const vtexOrdersService = new (require('../services/vtexOrdersService'))();
+    
+    try {
+      // Executa sincronização completa usando nova base
+      const syncResult = await vtexOrdersService.syncOrders({
+        dataInicial,
+        dataFinal,
+        pageSize
+      });
+
+      res.json({
+        success: syncResult.success,
+        data: syncResult,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (syncError) {
+      console.error('❌ Erro na sincronização:', syncError);
+      res.status(500).json({
+        success: false,
+        error: `Erro na sincronização: ${syncError.message}`,
+        details: syncError.response?.data || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Erro na sincronização com nova base:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/integration/test-new-base
+ * @desc Testa a conexão com a nova base de dados
+ * @param {number} pageSize - Tamanho da página (padrão: 10)
+ * @access Public
+ */
+router.get('/test-new-base', async (req, res) => {
+  try {
+    const pageSize = parseInt(req.query.pageSize) || 10;
+
+    console.log('🧪 Testando conexão com nova base de dados...');
+
+    // Instancia o serviço de pedidos
+    const vtexOrdersService = new (require('../services/vtexOrdersService'))();
+    
+    try {
+      // Testa apenas uma página para verificar conectividade
+      const testResult = await vtexOrdersService.fetchOrdersFromNewBase({
+        page: 1,
+        pageSize: pageSize
+      });
+
+      console.log('✅ Teste da nova base concluído com sucesso');
+
+      res.json({
+        success: true,
+        message: 'Teste da nova base concluído com sucesso',
+        data: {
+          testResult,
+          pageSize,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (testError) {
+      console.error('❌ Erro no teste da nova base:', testError);
+      res.status(500).json({
+        success: false,
+        error: `Erro no teste da nova base: ${testError.message}`,
+        details: testError.response?.data || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Erro no teste da nova base:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
  * @route GET /api/integration/orders-extract-all
  * @desc Extrai TODOS os pedidos do período (com paginação automática)
  * @param {string} brazilianDate - Data brasileira (YYYY-MM-DD) OU
@@ -591,7 +703,6 @@ router.get('/orders-extract-all', async (req, res) => {
         try {
           console.log(`🔍 Buscando detalhes do pedido ${orderId} (${i + 1}/${ordersList.length})`);
           const orderDetail = await vtexOrdersService.getOrderById(orderId);
-          console.log('orderDetail | 01/09 |', orderDetail);
           if (orderDetail) {
             detailedOrders.push(orderDetail);
             console.log(`✅ Pedido ${orderId} processado (${detailedOrders.length}/${ordersList.length})`);
@@ -639,15 +750,15 @@ router.get('/orders-extract-all', async (req, res) => {
       console.log(`✅ ETAPA 3 concluída: ${hookResults.success}/${hookResults.total} enviados com sucesso (${hookResults.failed} falhas)`);
       console.log('🎉 Fluxo concluído, enviando resposta...');
 
-      // ETAPA 4: Sincronização de orders via cron
+      // ETAPA 4: Sincronização de orders usando nova base de dados
       let syncOrdersResult = null;
       try {
-        console.log('🔄 Executando sincronização de orders após envio para hook...');
+        console.log('🔄 Executando sincronização de orders usando nova base de dados...');
         
         const axios = require('axios');
         const syncResponse = await axios({
-          method: 'POST',
-          url: 'http://localhost:3000/api/cron/sync-orders',
+          method: 'GET',
+          url: 'http://localhost:3000/api/integration/orders-sync-new-base',
           headers: {
             'Content-Type': 'application/json'
           },
