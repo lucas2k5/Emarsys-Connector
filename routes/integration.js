@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const IntegrationService = require('../services/integrationService');
+const VtexOrdersService = require('../services/vtexOrdersService');
+const { convertToBrazilianTime, getBrazilianTimestamp } = require('../utils/dateUtils');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
@@ -1865,16 +1867,22 @@ router.get('/last-sync', async (req, res) => {
     const vtexOrdersService = new VtexOrdersService();
     const lastSyncInfo = await vtexOrdersService.getLastSyncInfo();
     
+    // Converte as datas para o fuso horário do Brasil
+    const brazilianData = {
+      ...lastSyncInfo,
+      lastSync: lastSyncInfo.lastSync ? convertToBrazilianTime(lastSyncInfo.lastSync) : null
+    };
+    
     res.json({
       success: true,
-      data: lastSyncInfo,
-      timestamp: new Date().toISOString()
+      data: brazilianData,
+      timestamp: getBrazilianTimestamp()
     });
   } catch (error) {
     res.status(500).json({ 
       success: false, 
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: getBrazilianTimestamp()
     });
   }
 });

@@ -60,7 +60,7 @@ const httpLogger = (req, res, next) => {
 			msg: `HTTP ${status}`,
 			status_code: status,
 			latency_ms,
-			payload: status >= 400 ? { body: safeBody, query: safeQuery } : undefined,
+			payload: { body: safeBody, query: safeQuery },
 			err: res.locals?.error || undefined,
 		};
 

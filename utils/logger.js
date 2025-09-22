@@ -118,6 +118,8 @@ const logHelpers = {
     logger.http('HTTP Request', {
       method: req.method,
       url: req.originalUrl,
+      query: req.query && Object.keys(req.query || {}).length ? req.query : undefined,
+      body: req.method !== 'GET' && req.body && Object.keys(req.body || {}).length ? req.body : undefined,
       statusCode: res.statusCode,
       responseTime: `${responseTime}ms`,
       userAgent: req.get('User-Agent'),
