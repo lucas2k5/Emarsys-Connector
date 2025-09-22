@@ -9,7 +9,8 @@
 function getBrazilianTimestamp() {
   const now = new Date();
   const brazilianTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-  return brazilianTime.toISOString();
+  // Retorna no formato brasileiro com timezone
+  return brazilianTime.toLocaleString("sv-SE", {timeZone: "America/Sao_Paulo"}) + "-03:00";
 }
 
 /**
@@ -61,7 +62,8 @@ function getBrazilianDate(date = new Date()) {
 function convertToBrazilianTime(date) {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
   const brazilianTime = new Date(dateObj.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-  return brazilianTime.toISOString();
+  // Retorna no formato brasileiro com timezone
+  return brazilianTime.toLocaleString("sv-SE", {timeZone: "America/Sao_Paulo"}) + "-03:00";
 }
 
 /**
