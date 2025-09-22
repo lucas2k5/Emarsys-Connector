@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const IntegrationService = require('../services/integrationService');
 const VtexOrdersService = require('../services/vtexOrdersService');
+const RetryService = require('../services/retryService');
 const { convertToBrazilianTime, getBrazilianTimestamp } = require('../utils/dateUtils');
+const { logHelpers } = require('../utils/logger');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
@@ -1923,6 +1925,248 @@ router.get('/sync/error-report', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message 
+    });
+  }
+});
+
+// ===== ENDPOINTS DE REPROCESSAMENTO E RETRY =====
+
+/**
+ * @route GET /api/integration/retry-stats
+ * @desc Obtém estatísticas da fila de reprocessamento
+ * @access Public
+ */
+router.get('/retry-stats', async (req, res) => {
+  try {
+    const retryService = new RetryService();
+    const stats = await retryService.getRetryStats();
+    
+    res.json({
+      success: true,
+      data: stats,
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('retry-stats', error, req, { endpoint: '/api/integration/retry-stats' });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route POST /api/integration/process-retry-queue
+ * @desc Processa manualmente a fila de reprocessamento
+ * @access Public
+ */
+router.post('/process-retry-queue', async (req, res) => {
+  try {
+    const retryService = new RetryService();
+    const result = await retryService.processRetryQueue();
+    
+    logHelpers.logRetry('manual-process', 1, 'completed', result);
+    
+    res.json({
+      success: true,
+      message: 'Fila de reprocessamento processada',
+      data: result,
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('process-retry-queue', error, req, { endpoint: '/api/integration/process-retry-queue' });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route POST /api/integration/retry-failed-sync
+ * @desc Reprocessa uma sincronização que falhou
+ * @access Public
+ * @body {string} startDate - Data inicial
+ * @body {string} toDate - Data final
+ * @body {string} type - Tipo de reprocessamento (sync-orders, csv-generation, emarsys-sync)
+ */
+router.post('/retry-failed-sync', async (req, res) => {
+  try {
+    const { startDate, toDate, type = 'sync-orders' } = req.body;
+    
+    if (!startDate || !toDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'startDate e toDate são obrigatórios',
+        timestamp: getBrazilianTimestamp()
+      });
+    }
+
+    const retryService = new RetryService();
+    const retryId = await retryService.addToRetryQueue({
+      type,
+      payload: { startDate, toDate },
+      error: { message: 'Reprocessamento manual solicitado' },
+      context: { manual: true, requestedBy: req.ip }
+    });
+
+    logHelpers.logRetry(retryId, 1, 'manual-request', { startDate, toDate, type });
+    
+    res.json({
+      success: true,
+      message: 'Reprocessamento adicionado à fila',
+      data: { retryId, type, startDate, toDate },
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('retry-failed-sync', error, req, { body: req.body });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route POST /api/integration/cleanup-retry-queue
+ * @desc Limpa a fila de reprocessamento (remove itens antigos)
+ * @access Public
+ * @body {number} daysToKeep - Dias para manter (padrão: 7)
+ */
+router.post('/cleanup-retry-queue', async (req, res) => {
+  try {
+    const { daysToKeep = 7 } = req.body;
+    const retryService = new RetryService();
+    const result = await retryService.cleanupRetryQueue(daysToKeep);
+    
+    logHelpers.logAudit('cleanup-retry-queue', req.ip, { daysToKeep, removed: result.removed });
+    
+    res.json({
+      success: true,
+      message: 'Fila de reprocessamento limpa',
+      data: result,
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('cleanup-retry-queue', error, req, { body: req.body });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route GET /api/integration/sync-status
+ * @desc Obtém status completo da sincronização
+ * @access Public
+ */
+router.get('/sync-status', async (req, res) => {
+  try {
+    const vtexOrdersService = new VtexOrdersService();
+    const retryService = new RetryService();
+    
+    const [lastSyncInfo, retryStats] = await Promise.all([
+      vtexOrdersService.getLastSyncInfo(),
+      retryService.getRetryStats()
+    ]);
+    
+    // Converte datas para fuso horário brasileiro
+    const brazilianLastSync = {
+      ...lastSyncInfo,
+      lastSync: lastSyncInfo.lastSync ? convertToBrazilianTime(lastSyncInfo.lastSync) : null
+    };
+    
+    res.json({
+      success: true,
+      data: {
+        lastSync: brazilianLastSync,
+        retryQueue: retryStats,
+        systemStatus: {
+          healthy: retryStats.pending === 0,
+          hasFailures: retryStats.failed > 0,
+          needsAttention: retryStats.pending > 0 || retryStats.failed > 0
+        }
+      },
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('sync-status', error, req, { endpoint: '/api/integration/sync-status' });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route GET /api/integration/system-monitor
+ * @desc Obtém monitoramento completo do sistema
+ * @access Public
+ */
+router.get('/system-monitor', async (req, res) => {
+  try {
+    const SystemMonitor = require('../services/systemMonitor');
+    const systemMonitor = new SystemMonitor();
+    const systemStats = await systemMonitor.getSystemStats();
+    
+    res.json({
+      success: true,
+      data: systemStats,
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('system-monitor', error, req, { endpoint: '/api/integration/system-monitor' });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
+    });
+  }
+});
+
+/**
+ * @route GET /api/integration/restart-log
+ * @desc Obtém log de reinicializações do sistema
+ * @access Public
+ */
+router.get('/restart-log', async (req, res) => {
+  try {
+    const fs = require('fs-extra');
+    const path = require('path');
+    const restartLogFile = path.join(__dirname, '..', 'data', 'restart-log.json');
+    
+    let restartLog = [];
+    if (await fs.pathExists(restartLogFile)) {
+      restartLog = await fs.readJson(restartLogFile);
+    }
+    
+    // Converte timestamps para fuso horário brasileiro
+    const brazilianRestartLog = restartLog.map(entry => ({
+      ...entry,
+      timestamp: convertToBrazilianTime(entry.timestamp)
+    }));
+    
+    res.json({
+      success: true,
+      data: {
+        restarts: brazilianRestartLog,
+        totalRestarts: restartLog.length,
+        lastRestart: restartLog.length > 0 ? convertToBrazilianTime(restartLog[restartLog.length - 1].timestamp) : null
+      },
+      timestamp: getBrazilianTimestamp()
+    });
+  } catch (error) {
+    logHelpers.logFailure('restart-log', error, req, { endpoint: '/api/integration/restart-log' });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      timestamp: getBrazilianTimestamp()
     });
   }
 });
