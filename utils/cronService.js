@@ -65,11 +65,11 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders a cada 2 horas usando nova base
+   * Configura o cron para sincronização de orders a cada 1 hora usando nova base
    */
   setupOrdersSync() {
-    // Cron expression: 0 */2 * * * (a cada 2 horas)
-    const job = new cron.CronJob('0 */2 * * *', async () => {
+    // Cron expression: 0 */1 * * * (a cada 1 hora)
+    const job = new cron.CronJob('0 */1 * * *', async () => {
       const serviceName = 'orders-sync';
       
       // Verificar se o serviço pode executar (proteção contra loops)
@@ -125,7 +125,7 @@ class CronService {
     }, null, true, 'America/Sao_Paulo');
 
     this.jobs.set('orders-sync', job);
-    console.log('🕐 Cron de orders configurado: a cada 2 horas');
+    console.log('🕐 Cron de orders configurado: a cada 1 hora');
   }
 
   /**

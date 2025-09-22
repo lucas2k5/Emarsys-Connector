@@ -1,6 +1,7 @@
 const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
+const { getBrazilianTimestamp } = require('./dateUtils');
 
 const colors = {
   error: 'red',
@@ -8,12 +9,20 @@ const colors = {
   info: 'green',
   http: 'magenta',
   debug: 'white',
+  sync: 'cyan',
+  retry: 'blue',
+  alert: 'red'
 };
 
 winston.addColors(colors);
 
+// Formato personalizado para timestamp brasileiro
+const brazilianTimestamp = winston.format.timestamp({
+  format: () => getBrazilianTimestamp()
+});
+
 const logFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  brazilianTimestamp,
   winston.format.errors({ stack: true }),
   winston.format.json(),
   winston.format.prettyPrint()
@@ -21,7 +30,7 @@ const logFormat = winston.format.combine(
 
 const consoleFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  brazilianTimestamp,
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
     let log = `${timestamp} [${level}]: ${message}`;
     if (Object.keys(meta).length > 0) {
@@ -38,9 +47,9 @@ const transports = [
     format: consoleFormat,
   }),
 
-  // Arquivo de logs gerais
+  // Arquivo de logs gerais do sistema
   new DailyRotateFile({
-    filename: path.join('logs', 'application-%DATE%.log'),
+    filename: path.join('logs', 'piccadilly-emarsys-system-%DATE%.log'),
     datePattern: 'YYYY-MM-DD',
     maxSize: '20m',
     maxFiles: '14d',
@@ -48,9 +57,9 @@ const transports = [
     format: logFormat,
   }),
 
-  // Arquivo de logs de erro
+  // Arquivo de logs de erros e falhas
   new DailyRotateFile({
-    filename: path.join('logs', 'error-%DATE%.log'),
+    filename: path.join('logs', 'piccadilly-emarsys-errors-%DATE%.log'),
     datePattern: 'YYYY-MM-DD',
     maxSize: '20m',
     maxFiles: '30d',
@@ -60,11 +69,41 @@ const transports = [
 
   // Arquivo de logs de requisições HTTP
   new DailyRotateFile({
-    filename: path.join('logs', 'http-%DATE%.log'),
+    filename: path.join('logs', 'piccadilly-emarsys-http-%DATE%.log'),
     datePattern: 'YYYY-MM-DD',
     maxSize: '20m',
     maxFiles: '7d',
     level: 'http',
+    format: logFormat,
+  }),
+
+  // Arquivo de logs de sincronização
+  new DailyRotateFile({
+    filename: path.join('logs', 'piccadilly-emarsys-sync-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '20m',
+    maxFiles: '14d',
+    level: 'sync',
+    format: logFormat,
+  }),
+
+  // Arquivo de logs de reprocessamento
+  new DailyRotateFile({
+    filename: path.join('logs', 'piccadilly-emarsys-retry-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '20m',
+    maxFiles: '14d',
+    level: 'retry',
+    format: logFormat,
+  }),
+
+  // Arquivo de logs de alertas
+  new DailyRotateFile({
+    filename: path.join('logs', 'piccadilly-emarsys-alerts-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '20m',
+    maxFiles: '30d',
+    level: 'alert',
     format: logFormat,
   }),
 ];
@@ -81,12 +120,12 @@ const logger = winston.createLogger({
 const metricsLogger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
-    winston.format.timestamp(),
+    brazilianTimestamp,
     winston.format.json()
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'metrics-%DATE%.log'),
+      filename: path.join('logs', 'piccadilly-emarsys-metrics-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       maxSize: '20m',
       maxFiles: '30d',
@@ -98,12 +137,12 @@ const metricsLogger = winston.createLogger({
 const auditLogger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
-    winston.format.timestamp(),
+    brazilianTimestamp,
     winston.format.json()
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'audit-%DATE%.log'),
+      filename: path.join('logs', 'piccadilly-emarsys-audit-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       maxSize: '20m',
       maxFiles: '90d',
@@ -143,7 +182,6 @@ const logHelpers = {
       metric: metricName,
       value,
       tags,
-      timestamp: new Date().toISOString(),
     });
   },
 
@@ -153,7 +191,65 @@ const logHelpers = {
       action,
       userId,
       details,
-      timestamp: new Date().toISOString(),
+    });
+  },
+
+  // Log detalhado de falha com payload completo
+  logFailure: (failureType, error, requestData = {}, context = {}) => {
+    logger.error(`🚨 FALHA CRÍTICA - ${failureType}`, {
+      failureType,
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      request: {
+        method: requestData.method,
+        url: requestData.url,
+        url: requestData.url,
+        headers: requestData.headers,
+        body: requestData.body,
+        query: requestData.query,
+        params: requestData.params
+      },
+      context: {
+        ...context,
+        timestamp: getBrazilianTimestamp(),
+        severity: 'critical'
+      }
+    });
+  },
+
+  // Log de sincronização
+  logSync: (syncType, status, details = {}) => {
+    logger.log('sync', `🔄 SINCRONIZAÇÃO - ${syncType}`, {
+      syncType,
+      status,
+      details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de reprocessamento
+  logRetry: (retryId, attempt, status, details = {}) => {
+    logger.log('retry', `🔄 REPROCESSAMENTO - ${retryId}`, {
+      retryId,
+      attempt,
+      status,
+      details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de alerta
+  logAlert: (alertType, severity, message, details = {}) => {
+    logger.log('alert', `🚨 ALERTA [${severity.toUpperCase()}] - ${alertType}`, {
+      alertType,
+      severity,
+      message,
+      details,
+      timestamp: getBrazilianTimestamp()
     });
   },
 

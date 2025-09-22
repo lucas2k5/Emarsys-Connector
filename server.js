@@ -10,6 +10,10 @@ const { metricsMiddleware } = require('./utils/metrics');
 const { monitoringMiddleware, errorMonitoringMiddleware } = require('./utils/monitoring');
 const { httpLogger } = require('./utils/httpLogger');
 
+// Importar monitoramento de recursos
+const SystemMonitor = require('./services/systemMonitor');
+const ResourceMonitor = require('./middleware/resourceMonitor');
+
 const emarsysRoutes = require('./routes/emarsys');
 const vtexProductRoutes = require('./routes/vtexProducts');
 const emarsysSalesRoutes = require('./routes/emarsysSales');
@@ -56,6 +60,13 @@ app.use(cors());
 
 // Middleware de métricas
 app.use(metricsMiddleware);
+
+// Inicializar monitoramento de recursos
+const resourceMonitor = new ResourceMonitor();
+
+// Middleware de monitoramento de recursos
+app.use(resourceMonitor.monitorResources());
+app.use(resourceMonitor.resourceFailureDetector());
 
 // Middleware para validar Content-Type antes do parsing
 app.use((req, res, next) => {
@@ -166,7 +177,7 @@ app.use('*', (req, res) => {
 module.exports = app;
 
 if (require.main === module) {
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     logger.info('🚀 Servidor iniciado com sucesso', {
       port: PORT,
       host: HOST,
@@ -201,6 +212,7 @@ process.on('SIGTERM', () => {
   logger.info('🛑 Recebido SIGTERM, parando cron jobs...');
   console.log('🛑 Recebido SIGTERM, parando cron jobs...');
   cronService.stopAll();
+  websocketService.close();
   process.exit(0);
 });
 
