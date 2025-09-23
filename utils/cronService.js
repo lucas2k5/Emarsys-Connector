@@ -65,11 +65,11 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders a cada 2 horas usando nova base
+   * Configura o cron para sincronização de orders diária usando o fluxo orders-extract-all (dia anterior)
    */
   setupOrdersSync() {
-    // Cron expression: 0 */2 * * * (a cada 2 horas)
-    const job = new cron.CronJob('0 */2 * * *', async () => {
+    // Cron expression: 0 1 * * * (diariamente às 01:00)
+    const job = new cron.CronJob('0 1 * * *', async () => {
       const serviceName = 'orders-sync';
       
       // Verificar se o serviço pode executar (proteção contra loops)
@@ -78,28 +78,31 @@ class CronService {
         return;
       }
       
-      console.log('🚀 [CRON] Iniciando sincronização de orders...');
+      console.log('🚀 [CRON] Iniciando sincronização de orders (orders-extract-all)...');
       try {
-        // Usa nova base de dados
-        const url = `${this.baseUrl}/api/integration/orders-sync-new-base`;
-        
-        console.log(`📡 [CRON] Usando nova base de dados: ${url}`);
-        
-        const response = await axios.get(url, {
-          timeout: 300000 // 5 minutos de timeout para orders
-        });
+        // Define período do dia anterior completo no fuso de São Paulo
+        const now = moment().tz('America/Sao_Paulo');
+        const yesterday = now.clone().subtract(1, 'day').format('YYYY-MM-DD');
+
+        const url = `${this.baseUrl}/api/integration/orders-extract-all`;
+        const params = { brazilianDate: yesterday, startTime: '00:00', endTime: '23:59', per_page: 100 };
+
+        console.log(`📡 [CRON] Endpoint: ${url}`);
+        console.log('🗓️ [CRON] Período (Brasil):', params);
+
+        const response = await axios.get(url, { params, timeout: 300000 });
         
         console.log('✅ [CRON] Sincronização de orders concluída:', response.status);
         
         // Log detalhado da resposta
         if (response.data && response.data.data) {
           const data = response.data.data;
-          console.log(`📊 [CRON] Resumo da sincronização:`, {
-            totalOrders: data.totalOrders,
-            transformedOrders: data.transformedOrders,
-            csvGenerated: data.csvResult?.success,
-            emarsysSent: data.emarsysSendResult?.success,
-            duration: data.duration
+          console.log(`📊 [CRON] Resumo:`, {
+            totalOrdersDetailed: data.totalOrdersDetailed,
+            period: data.period,
+            perPage: data.perPage,
+            useBatching: data.useBatching,
+            syncSuccess: data.summary?.syncSuccess
           });
         }
         

@@ -698,6 +698,37 @@ class VtexOrdersService {
         try {
           const fileContent = await fs.readFile(processedOrdersFile, 'utf8');
           existingData = JSON.parse(fileContent);
+          
+          // LIMPEZA: Remove duplicatas existentes no arquivo
+          if (existingData.processedOrders && existingData.processedOrders.length > 0) {
+            const originalCount = existingData.processedOrders.length;
+            const uniqueMap = new Map();
+            
+            // Mantém apenas o mais recente para cada uniqueItemId
+            for (const order of existingData.processedOrders) {
+              const uniqueKey = order.uniqueItemId || `${order.orderId}_${order.itemId}`;
+              if (!uniqueMap.has(uniqueKey)) {
+                uniqueMap.set(uniqueKey, order);
+              } else {
+                // Se já existe, mantém o mais recente baseado na data de processamento
+                const existing = uniqueMap.get(uniqueKey);
+                const existingDate = new Date(existing.processedAt || 0);
+                const currentDate = new Date(order.processedAt || 0);
+                
+                if (currentDate > existingDate) {
+                  uniqueMap.set(uniqueKey, order);
+                }
+              }
+            }
+            
+            existingData.processedOrders = Array.from(uniqueMap.values());
+            
+            if (originalCount !== existingData.processedOrders.length) {
+              console.log(`🧹 Limpeza de duplicatas existentes: ${originalCount} → ${existingData.processedOrders.length} registros`);
+              // Salva o arquivo limpo imediatamente
+              await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
+            }
+          }
         } catch (error) {
           console.warn('⚠️ Erro ao ler arquivo de pedidos processados, criando novo:', error.message);
         }
@@ -717,33 +748,52 @@ class VtexOrdersService {
       // Cria um Set com os uniqueItemIds já processados para evitar duplicatas
       const existingUniqueIds = new Set(existingData.processedOrders.map(order => order.uniqueItemId || `${order.orderId}_${order.itemId}`));
       
-      // Filtra apenas itens que ainda não foram processados
-      const uniqueNewItems = newProcessedItems.filter(item => !existingUniqueIds.has(item.uniqueItemId));
+      // DEDUPLICAÇÃO DUPLA: Remove duplicatas tanto dos dados existentes quanto dos novos
+      const newItemsMap = new Map();
+      
+      // Primeiro, remove duplicatas entre os novos itens
+      for (const item of newProcessedItems) {
+        const uniqueKey = item.uniqueItemId || `${item.orderId}_${item.itemId}`;
+        if (!newItemsMap.has(uniqueKey)) {
+          newItemsMap.set(uniqueKey, item);
+        } else {
+          console.log(`⚠️ Duplicata detectada nos novos itens: ${uniqueKey} - removendo`);
+        }
+      }
+      
+      // Filtra apenas itens que ainda não foram processados (não existem no arquivo)
+      const uniqueNewItems = Array.from(newItemsMap.values()).filter(item => {
+        const uniqueKey = item.uniqueItemId || `${item.orderId}_${item.itemId}`;
+        return !existingUniqueIds.has(uniqueKey);
+      });
       
       // Adiciona apenas os itens únicos
       existingData.processedOrders.push(...uniqueNewItems);
       existingData.lastSync = syncTimestamp;
       
-      console.log(`🔍 Deduplicação: ${newProcessedItems.length} novos itens, ${uniqueNewItems.length} únicos adicionados, ${newProcessedItems.length - uniqueNewItems.length} duplicatas evitadas`);
+      const duplicatesInNewItems = newProcessedItems.length - newItemsMap.size;
+      const duplicatesFromExisting = newItemsMap.size - uniqueNewItems.length;
+      console.log(`🔍 Deduplicação: ${newProcessedItems.length} novos itens → ${newItemsMap.size} únicos → ${uniqueNewItems.length} adicionados (${duplicatesInNewItems} duplicatas internas, ${duplicatesFromExisting} já processados)`);
       
-      // Remove registros antigos (manter apenas últimos 48 horas)
-      const fortyEightHoursAgo = new Date();
-      fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
+      // Remove registros antigos (manter apenas período configurado)
+      const retentionHours = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720;
+      const cutoffDate = new Date();
+      cutoffDate.setHours(cutoffDate.getHours() - retentionHours);
       
       existingData.processedOrders = existingData.processedOrders.filter(record => {
         const processedDate = new Date(record.processedAt);
-        return processedDate >= fortyEightHoursAgo;
+        return processedDate >= cutoffDate;
       });
       
       // Salva arquivo atualizado
       await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
       
-      console.log(`💾 ${processedItems.length} itens marcados como processados`);
+      console.log(`💾 ${uniqueNewItems.length} itens únicos marcados como processados`);
       
       return {
         success: true,
         totalProcessed: existingData.processedOrders.length,
-        newProcessed: processedItems.length,
+        newProcessed: uniqueNewItems.length,
         timestamp: syncTimestamp
       };
       
@@ -1348,11 +1398,31 @@ class VtexOrdersService {
     ];
 
     console.log(`📊 Gerando CSV com ${orders.length} pedidos...`);
+    
+    // DEDUPLICAÇÃO: Remove duplicatas baseadas em order+item
+    const uniqueOrders = new Map();
+    let duplicateCount = 0;
+    
+    for (const order of orders) {
+      const uniqueKey = `${order.order}_${order.item}`;
+      if (uniqueOrders.has(uniqueKey)) {
+        duplicateCount++;
+        console.log(`⚠️ Duplicata detectada no CSV: ${uniqueKey} - removendo`);
+        continue;
+      }
+      uniqueOrders.set(uniqueKey, order);
+    }
+    
+    if (duplicateCount > 0) {
+      console.log(`🔍 Deduplicação CSV: ${duplicateCount} duplicatas removidas, ${uniqueOrders.size} registros únicos`);
+    }
+    
+    const deduplicatedOrders = Array.from(uniqueOrders.values());
     let csvContent = headers.join(',') + '\n';
     let processedCount = 0;
 
-    for (let i = 0; i < orders.length; i++) {
-      const order = orders[i];
+    for (let i = 0; i < deduplicatedOrders.length; i++) {
+      const order = deduplicatedOrders[i];
       
       try {
         // Validação de campos obrigatórios conforme schema da Emarsys
@@ -1360,7 +1430,7 @@ class VtexOrdersService {
         const missingFields = requiredFields.filter(field => !order[field]);
         
         if (missingFields.length > 0) {
-          console.warn(`⚠️ Pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
+          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
           continue; // Pula pedidos inválidos
         }
 
@@ -1379,13 +1449,13 @@ class VtexOrdersService {
         
         // Validação adicional para garantir que a linha tem exatamente 10 campos
         if (row.length !== 10) {
-          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
           continue;
         }
         
         // Verifica se algum campo obrigatório ficou vazio após sanitização
         if (!row[0] || !row[1] || !row[2] || !row[3] || !row[4] || !row[5]) {
-          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
           continue;
         }
         
@@ -1394,7 +1464,7 @@ class VtexOrdersService {
         processedCount++;
         
       } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}):`, error.message);
+        console.error(`❌ Erro ao processar pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}):`, error.message);
         continue;
       }
     }
@@ -1402,7 +1472,7 @@ class VtexOrdersService {
     // Remove qualquer linha vazia no final
     csvContent = csvContent.trim();
     
-    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${orders.length} pedidos processados`);
+    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${deduplicatedOrders.length} pedidos únicos processados`);
     
     return csvContent;
   }
@@ -1652,10 +1722,10 @@ class VtexOrdersService {
 
   /**
    * Limpa registros antigos de pedidos processados (manutenção)
-   * @param {number} hoursToKeep - Quantas horas manter (padrão: 48)
+   * @param {number} hoursToKeep - Quantas horas manter (padrão: PROCESSED_ORDERS_RETENTION_HOURS ou 720 = 30 dias)
    * @returns {Object} Resultado da limpeza
    */
-  async cleanupProcessedOrders(hoursToKeep = 48) {
+  async cleanupProcessedOrders(hoursToKeep = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720) {
     try {
       await this.ensureDataDirectory();
       
@@ -1695,7 +1765,8 @@ class VtexOrdersService {
       if (removedCount > 0) {
         // Salva arquivo atualizado
         await fs.writeJson(processedOrdersFile, data, { spaces: 2 });
-        console.log(`🧹 Limpeza de pedidos processados: ${removedCount} registros removidos (mantidos últimos ${hoursToKeep} horas)`);
+        const daysToKeep = Math.round(hoursToKeep / 24);
+        console.log(`🧹 Limpeza de pedidos processados: ${removedCount} registros removidos (mantidos últimos ${daysToKeep} dias)`);
       }
       
       return {
@@ -1704,7 +1775,7 @@ class VtexOrdersService {
         remainingCount: data.processedOrders.length,
         originalCount,
         cutoffDate: cutoffDate.toISOString(),
-        message: `${removedCount} registros antigos removidos (mantidos últimos ${hoursToKeep} horas)`
+        message: `${removedCount} registros antigos removidos (mantidos últimos ${Math.round(hoursToKeep / 24)} dias)`
       };
       
     } catch (error) {
@@ -1862,9 +1933,10 @@ class VtexOrdersService {
         }));
         await this.saveProcessedOrders(processedItems, syncTimestamp);
         
-        // 3.2. Limpeza automática de registros antigos (48h)
+        // 3.2. Limpeza automática de registros antigos (30 dias)
         try {
-          await this.cleanupProcessedOrders(48);
+          const retentionHours = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720;
+          await this.cleanupProcessedOrders(retentionHours);
         } catch (cleanupError) {
           console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
         }
