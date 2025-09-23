@@ -1892,7 +1892,7 @@ router.get('/last-sync', async (req, res) => {
 // Rota para limpeza manual de pedidos processados
 router.post('/cleanup-processed-orders', async (req, res) => {
   try {
-    const { hoursToKeep = 48 } = req.body || {};
+    const { hoursToKeep = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720 } = req.body || {};
     const vtexOrdersService = new VtexOrdersService();
     
     const cleanupResult = await vtexOrdersService.cleanupProcessedOrders(hoursToKeep);

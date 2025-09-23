@@ -113,121 +113,6 @@ class VtexOrdersService {
     }
   }
 
-  /**
-   * Busca pedidos da nova base de dados (endpoint personalizado)
-   * @param {Object} options - Opções de filtro (dataInicial, dataFinal, page, pageSize)
-   * @returns {Promise<Object>} Resposta da nova base de dados
-   */
-  async fetchOrdersFromNewBase(options = {}) {
-    try {
-      const url = 'https://ems--piccadilly.myvtex.com/_v/orders/list';
-      
-      // Headers mínimos para rota pública
-      const headers = {
-        'Accept': 'application/json'
-      };
-
-      // Parâmetros de consulta
-      const params = {
-        page: options.page || 1,
-        pageSize: options.pageSize || 100
-      };
-
-      // Adiciona filtros de data se fornecidos
-      if (options.dataInicial) {
-        params.dataInicial = options.dataInicial;
-      }
-      if (options.dataFinal) {
-        params.dataFinal = options.dataFinal;
-      }
-
-      console.log('🔍 Consultando nova base de dados de pedidos...');
-      console.log(`   📍 URL: ${url}`);
-      console.log(`   📄 Página: ${params.page}`);
-      console.log(`   📏 Tamanho da página: ${params.pageSize}`);
-      
-      if (params.dataInicial) {
-        console.log(`   📅 Data inicial: ${params.dataInicial}`);
-      }
-      if (params.dataFinal) {
-        console.log(`   📅 Data final: ${params.dataFinal}`);
-      }
-
-      const response = await axios.get(url, {
-        headers,
-        params,
-        timeout: 30000
-      });
-
-      if (response.data && response.data.data) {
-        console.log(`   ✅ ${response.data.data.length} pedidos encontrados na nova base`);
-        
-        // Log do primeiro pedido para debug
-        if (response.data.data.length > 0) {
-          const firstOrder = response.data.data[0];
-          console.log(`   📦 Primeiro pedido: ${firstOrder.order || firstOrder.orderId} - ${firstOrder.timestamp || firstOrder.creationDate}`);
-        }
-      }
-
-      return response.data;
-    } catch (error) {
-      console.error('❌ Erro ao consultar nova base de dados:', error?.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Busca todos os pedidos da nova base com paginação automática
-   * @param {Object} options - Opções de filtro (dataInicial, dataFinal, pageSize)
-   * @returns {Promise<Array>} Array com todos os pedidos
-   */
-  async fetchAllOrdersFromNewBase(options = {}) {
-    try {
-      console.log('🚀 Iniciando busca de todos os pedidos da nova base...');
-      
-      let allOrders = [];
-      let currentPage = 1;
-      let hasMorePages = true;
-      const pageSize = options.pageSize || 100;
-
-      while (hasMorePages) {
-        const response = await this.fetchOrdersFromNewBase({
-          ...options,
-          page: currentPage,
-          pageSize: pageSize
-        });
-        
-        if (response.success && response.data) {
-          allOrders = allOrders.concat(response.data);
-          console.log(`✅ Página ${currentPage}: ${response.data.length} pedidos encontrados`);
-          
-          // Verifica se há mais páginas
-          if (response.pagination) {
-            const totalPages = Math.ceil(response.pagination.total / response.pagination.pageSize);
-            hasMorePages = currentPage < totalPages;
-            currentPage++;
-          } else {
-            hasMorePages = false;
-          }
-        } else {
-          console.log('⚠️ Resposta inesperada da nova base:', response);
-          hasMorePages = false;
-        }
-
-        // Pausa entre requisições para não sobrecarregar
-        if (hasMorePages) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-
-      console.log(`🎉 Busca da nova base concluída! Total de ${allOrders.length} pedidos encontrados`);
-      return allOrders;
-    } catch (error) {
-      console.error('❌ Erro ao buscar todos os pedidos da nova base:', error.message);
-      throw error;
-    }
-  }
-
   // searchOrdersOMS removida: use apenas searchOrdersByPeriod
 
   /**
@@ -813,6 +698,37 @@ class VtexOrdersService {
         try {
           const fileContent = await fs.readFile(processedOrdersFile, 'utf8');
           existingData = JSON.parse(fileContent);
+          
+          // LIMPEZA: Remove duplicatas existentes no arquivo
+          if (existingData.processedOrders && existingData.processedOrders.length > 0) {
+            const originalCount = existingData.processedOrders.length;
+            const uniqueMap = new Map();
+            
+            // Mantém apenas o mais recente para cada uniqueItemId
+            for (const order of existingData.processedOrders) {
+              const uniqueKey = order.uniqueItemId || `${order.orderId}_${order.itemId}`;
+              if (!uniqueMap.has(uniqueKey)) {
+                uniqueMap.set(uniqueKey, order);
+              } else {
+                // Se já existe, mantém o mais recente baseado na data de processamento
+                const existing = uniqueMap.get(uniqueKey);
+                const existingDate = new Date(existing.processedAt || 0);
+                const currentDate = new Date(order.processedAt || 0);
+                
+                if (currentDate > existingDate) {
+                  uniqueMap.set(uniqueKey, order);
+                }
+              }
+            }
+            
+            existingData.processedOrders = Array.from(uniqueMap.values());
+            
+            if (originalCount !== existingData.processedOrders.length) {
+              console.log(`🧹 Limpeza de duplicatas existentes: ${originalCount} → ${existingData.processedOrders.length} registros`);
+              // Salva o arquivo limpo imediatamente
+              await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
+            }
+          }
         } catch (error) {
           console.warn('⚠️ Erro ao ler arquivo de pedidos processados, criando novo:', error.message);
         }
@@ -832,43 +748,52 @@ class VtexOrdersService {
       // Cria um Set com os uniqueItemIds já processados para evitar duplicatas
       const existingUniqueIds = new Set(existingData.processedOrders.map(order => order.uniqueItemId || `${order.orderId}_${order.itemId}`));
       
-      // Filtra apenas itens que ainda não foram processados
-      const uniqueNewItems = newProcessedItems.filter(item => !existingUniqueIds.has(item.uniqueItemId));
+      // DEDUPLICAÇÃO DUPLA: Remove duplicatas tanto dos dados existentes quanto dos novos
+      const newItemsMap = new Map();
+      
+      // Primeiro, remove duplicatas entre os novos itens
+      for (const item of newProcessedItems) {
+        const uniqueKey = item.uniqueItemId || `${item.orderId}_${item.itemId}`;
+        if (!newItemsMap.has(uniqueKey)) {
+          newItemsMap.set(uniqueKey, item);
+        } else {
+          console.log(`⚠️ Duplicata detectada nos novos itens: ${uniqueKey} - removendo`);
+        }
+      }
+      
+      // Filtra apenas itens que ainda não foram processados (não existem no arquivo)
+      const uniqueNewItems = Array.from(newItemsMap.values()).filter(item => {
+        const uniqueKey = item.uniqueItemId || `${item.orderId}_${item.itemId}`;
+        return !existingUniqueIds.has(uniqueKey);
+      });
       
       // Adiciona apenas os itens únicos
       existingData.processedOrders.push(...uniqueNewItems);
       existingData.lastSync = syncTimestamp;
       
-      console.log(`🔍 Deduplicação: ${newProcessedItems.length} novos itens, ${uniqueNewItems.length} únicos adicionados, ${newProcessedItems.length - uniqueNewItems.length} duplicatas evitadas`);
+      const duplicatesInNewItems = newProcessedItems.length - newItemsMap.size;
+      const duplicatesFromExisting = newItemsMap.size - uniqueNewItems.length;
+      console.log(`🔍 Deduplicação: ${newProcessedItems.length} novos itens → ${newItemsMap.size} únicos → ${uniqueNewItems.length} adicionados (${duplicatesInNewItems} duplicatas internas, ${duplicatesFromExisting} já processados)`);
       
-      // Remove registros antigos (manter apenas últimos 48 horas)
-      const fortyEightHoursAgo = new Date();
-      fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
+      // Remove registros antigos (manter apenas período configurado)
+      const retentionHours = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720;
+      const cutoffDate = new Date();
+      cutoffDate.setHours(cutoffDate.getHours() - retentionHours);
       
       existingData.processedOrders = existingData.processedOrders.filter(record => {
         const processedDate = new Date(record.processedAt);
-        return processedDate >= fortyEightHoursAgo;
+        return processedDate >= cutoffDate;
       });
-
-      // Reaplica unicidade por uniqueItemId antes de persistir
-      const dedupMap = new Map();
-      for (const rec of existingData.processedOrders) {
-        const key = rec.uniqueItemId || `${rec.orderId}_${rec.itemId}`;
-        if (!dedupMap.has(key)) {
-          dedupMap.set(key, rec);
-        }
-      }
-      existingData.processedOrders = Array.from(dedupMap.values());
       
       // Salva arquivo atualizado
       await fs.writeJson(processedOrdersFile, existingData, { spaces: 2 });
       
-      console.log(`💾 ${processedItems.length} itens marcados como processados`);
+      console.log(`💾 ${uniqueNewItems.length} itens únicos marcados como processados`);
       
       return {
         success: true,
         totalProcessed: existingData.processedOrders.length,
-        newProcessed: processedItems.length,
+        newProcessed: uniqueNewItems.length,
         timestamp: syncTimestamp
       };
       
@@ -1023,6 +948,7 @@ class VtexOrdersService {
     const emarsysData = [];
     let skippedMarketplace = 0;
     let skippedDuplicates = 0;
+    let canceledOrders = 0;
     const skippedOrders = [];
     const processedOrders = [];
     const errorOrders = [];
@@ -1104,18 +1030,38 @@ class VtexOrdersService {
           });
         }
 
+        // Verifica se o pedido está cancelado para aplicar valores negativos
+        // Inclui status: canceled, payment-pending, refunded, returned
+        const canceledStatuses = ['canceled', 'refunded', 'returned'];
+        const isCanceled = canceledStatuses.includes(order.order_status) || canceledStatuses.includes(order.status);
+        
+        // Para pedidos cancelados, aplica valores negativos
+        let quantity = order.quantity;
+        let price = order.price || '0';
+        let discount = order.discount || '0';
+        
+        if (isCanceled) {
+          // Converte para número, aplica negativo e volta para string
+          quantity = typeof quantity === 'string' ? `-${Math.abs(parseFloat(quantity))}` : -Math.abs(quantity);
+          price = `-${Math.abs(parseFloat(price)).toFixed(2)}`;
+          discount = parseFloat(discount) === 0 ? '-0.00' : `-${Math.abs(parseFloat(discount)).toFixed(2)}`;
+          canceledOrders++;
+          
+          console.log(`🔄 Pedido cancelado detectado: ${orderId} (status: ${order.order_status || order.status}) - aplicando valores negativos (qty: ${quantity}, price: ${price}, discount: ${discount})`);
+        }
+        
         // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
         const saleRecord = {
           order: orderId,
           item: order.item,
           email: order.email,
-          quantity: order.quantity,
+          quantity: quantity,
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-          price: order.price || '0',
+          price: price,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'piccadilly',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: order.discount || '0'
+          s_discount: discount
         };
 
         emarsysData.push(saleRecord);
@@ -1152,6 +1098,7 @@ class VtexOrdersService {
       totalProcessed: emarsysData.length,
       skippedMarketplace,
       skippedDuplicates,
+      canceledOrders,
       errorCount: errorOrders.length,
       successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
     };
@@ -1164,7 +1111,7 @@ class VtexOrdersService {
     });
 
     console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${errorOrders.length} com erro`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
     
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
@@ -1172,6 +1119,10 @@ class VtexOrdersService {
     
     if (skippedDuplicates > 0) {
       console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
+    }
+    
+    if (canceledOrders > 0) {
+      console.log(`🔄 ${canceledOrders} pedidos cancelados processados com valores negativos`);
     }
     
     return {
@@ -1182,6 +1133,7 @@ class VtexOrdersService {
         totalProcessed: emarsysData.length,
         skippedMarketplace,
         skippedDuplicates,
+        canceledOrders,
         errorCount: errorOrders.length,
         successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
       }
@@ -1222,10 +1174,6 @@ class VtexOrdersService {
       // Usa os dados diretamente (já estão no formato correto)
       const ordersToProcess = orders;
       console.log(`📊 Processando ${ordersToProcess.length} registros para Emarsys`);
-
-      // Importante: não filtrar aqui por processed-orders.json.
-      // A deduplicação já é feita em transformOrdersForEmarsys usando getProcessedItemsStatus.
-      // Se filtrarmos aqui, como saveProcessedOrders roda antes do CSV, vamos zerar a primeira execução.
 
       // Gera nome do arquivo com timestamp
       const timestamp = getBrazilianTimestampForFilename();
@@ -1477,11 +1425,31 @@ class VtexOrdersService {
     ];
 
     console.log(`📊 Gerando CSV com ${orders.length} pedidos...`);
+    
+    // DEDUPLICAÇÃO: Remove duplicatas baseadas em order+item
+    const uniqueOrders = new Map();
+    let duplicateCount = 0;
+    
+    for (const order of orders) {
+      const uniqueKey = `${order.order}_${order.item}`;
+      if (uniqueOrders.has(uniqueKey)) {
+        duplicateCount++;
+        console.log(`⚠️ Duplicata detectada no CSV: ${uniqueKey} - removendo`);
+        continue;
+      }
+      uniqueOrders.set(uniqueKey, order);
+    }
+    
+    if (duplicateCount > 0) {
+      console.log(`🔍 Deduplicação CSV: ${duplicateCount} duplicatas removidas, ${uniqueOrders.size} registros únicos`);
+    }
+    
+    const deduplicatedOrders = Array.from(uniqueOrders.values());
     let csvContent = headers.join(',') + '\n';
     let processedCount = 0;
 
-    for (let i = 0; i < orders.length; i++) {
-      const order = orders[i];
+    for (let i = 0; i < deduplicatedOrders.length; i++) {
+      const order = deduplicatedOrders[i];
       
       try {
         // Validação de campos obrigatórios conforme schema da Emarsys
@@ -1489,7 +1457,7 @@ class VtexOrdersService {
         const missingFields = requiredFields.filter(field => !order[field]);
         
         if (missingFields.length > 0) {
-          console.warn(`⚠️ Pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
+          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
           continue; // Pula pedidos inválidos
         }
 
@@ -1508,13 +1476,13 @@ class VtexOrdersService {
         
         // Validação adicional para garantir que a linha tem exatamente 10 campos
         if (row.length !== 10) {
-          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
           continue;
         }
         
         // Verifica se algum campo obrigatório ficou vazio após sanitização
         if (!row[0] || !row[1] || !row[2] || !row[3] || !row[4] || !row[5]) {
-          console.error(`❌ Pedido ${i + 1}/${orders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
           continue;
         }
         
@@ -1523,7 +1491,7 @@ class VtexOrdersService {
         processedCount++;
         
       } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${i + 1}/${orders.length} (${order.order || 'sem ID'}):`, error.message);
+        console.error(`❌ Erro ao processar pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}):`, error.message);
         continue;
       }
     }
@@ -1531,7 +1499,7 @@ class VtexOrdersService {
     // Remove qualquer linha vazia no final
     csvContent = csvContent.trim();
     
-    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${orders.length} pedidos processados`);
+    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${deduplicatedOrders.length} pedidos únicos processados`);
     
     return csvContent;
   }
@@ -1781,10 +1749,10 @@ class VtexOrdersService {
 
   /**
    * Limpa registros antigos de pedidos processados (manutenção)
-   * @param {number} hoursToKeep - Quantas horas manter (padrão: 48)
+   * @param {number} hoursToKeep - Quantas horas manter (padrão: PROCESSED_ORDERS_RETENTION_HOURS ou 720 = 30 dias)
    * @returns {Object} Resultado da limpeza
    */
-  async cleanupProcessedOrders(hoursToKeep = 48) {
+  async cleanupProcessedOrders(hoursToKeep = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720) {
     try {
       await this.ensureDataDirectory();
       
@@ -1824,7 +1792,8 @@ class VtexOrdersService {
       if (removedCount > 0) {
         // Salva arquivo atualizado
         await fs.writeJson(processedOrdersFile, data, { spaces: 2 });
-        console.log(`🧹 Limpeza de pedidos processados: ${removedCount} registros removidos (mantidos últimos ${hoursToKeep} horas)`);
+        const daysToKeep = Math.round(hoursToKeep / 24);
+        console.log(`🧹 Limpeza de pedidos processados: ${removedCount} registros removidos (mantidos últimos ${daysToKeep} dias)`);
       }
       
       return {
@@ -1833,7 +1802,7 @@ class VtexOrdersService {
         remainingCount: data.processedOrders.length,
         originalCount,
         cutoffDate: cutoffDate.toISOString(),
-        message: `${removedCount} registros antigos removidos (mantidos últimos ${hoursToKeep} horas)`
+        message: `${removedCount} registros antigos removidos (mantidos últimos ${Math.round(hoursToKeep / 24)} dias)`
       };
       
     } catch (error) {
@@ -1943,7 +1912,7 @@ class VtexOrdersService {
 
   /**
    * Executa sincronização completa de pedidos (buscar + salvar + gerar CSV)
-   * @param {Object} options - Opções de configuração (dataInicial, dataFinal)
+   * @param {Object} options - Opções de configuração
    * @returns {Object} Resultado da sincronização
    */
   async syncOrders(options = {}) {
@@ -1951,13 +1920,9 @@ class VtexOrdersService {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
       const startTime = Date.now();
       
-      // 1. Buscar todos os pedidos da nova base
-      console.log('📦 Buscando pedidos da nova base de dados...');
-      const orders = await this.fetchAllOrdersFromNewBase({
-        dataInicial: options.dataInicial,
-        dataFinal: options.dataFinal,
-        pageSize: options.pageSize || 100
-      });
+      // 1. Buscar todos os pedidos
+      console.log('📦 Buscando pedidos da VTEX...');
+      const orders = await this.fetchAllOrders();
       
       if (!orders || orders.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado');
@@ -1981,32 +1946,8 @@ class VtexOrdersService {
       }
       
       // 3. Transformar dados para formato Emarsys
+      console.log('🔄 Transformando dados para formato Emarsys...', orders);
       const transformedOrders = await this.transformOrdersForEmarsys(orders);
-
-      // 3.0. Se não houver dados novos após deduplicação, não gerar CSV
-      if (!transformedOrders.emarsysData || transformedOrders.emarsysData.length === 0) {
-        console.log('ℹ️ Nenhum registro novo para CSV após deduplicação. Processo finalizado sem gerar arquivo.');
-        const durationNoop = Date.now() - startTime;
-        await this.saveSyncStats({
-          phase: 'sync_complete',
-          totalOrders: orders.length,
-          transformedOrders: 0,
-          csvGenerated: false,
-          emarsysSent: false,
-          duration: durationNoop,
-          saveSuccess: saveResult.success,
-          overallSuccess: true,
-          message: 'Sem novos registros (deduplicado)'
-        });
-        return {
-          success: true,
-          totalOrders: orders.length,
-          transformedOrders: 0,
-          message: 'Sem novos registros para CSV (já processados)',
-          duration: durationNoop,
-          timestamp: getBrazilianTimestamp()
-        };
-      }
       
       // 3.1. Salva controle de pedidos processados para evitar duplicatas
       if (transformedOrders.processedOrders && transformedOrders.processedOrders.length > 0) {
@@ -2019,23 +1960,19 @@ class VtexOrdersService {
         }));
         await this.saveProcessedOrders(processedItems, syncTimestamp);
         
-        // 3.2. Limpeza automática de registros antigos (48h) — desativada por padrão
-        const processedCleanupEnabled = process.env.ENABLE_PROCESSED_CLEANUP === 'true';
-        if (processedCleanupEnabled) {
-          try {
-            await this.cleanupProcessedOrders(48);
-          } catch (cleanupError) {
-            console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
-          }
-        } else {
-          console.log('⏸️ Limpeza de processed-orders desativada (ENABLE_PROCESSED_CLEANUP!=true)');
+        // 3.2. Limpeza automática de registros antigos (30 dias)
+        try {
+          const retentionHours = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720;
+          await this.cleanupProcessedOrders(retentionHours);
+        } catch (cleanupError) {
+          console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
         }
       }
       
       // 4. Gerar CSV
-      console.log('📄 Gerando CSV...');
+      console.log('📄 Gerando CSV...| 22/08 |');
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, options);
-      console.log('📄 CSV gerado:', csvResult);
+      console.log('📄 Gerando CSV...| 22/08 |', csvResult);
       
       if (!csvResult.success) {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');
@@ -2077,7 +2014,7 @@ class VtexOrdersService {
       const finalStats = {
         phase: 'sync_complete',
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.emarsysData?.length || 0,
+        transformedOrders: transformedOrders.length,
         csvGenerated: csvResult.success,
         emarsysSent: emarsysSendResult.success,
         duration: duration,
@@ -2087,13 +2024,13 @@ class VtexOrdersService {
 
       await this.saveSyncStats(finalStats);
       
-      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms`);
-      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.emarsysData?.length || 0} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
+      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
+      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.length} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
         success: true,
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.emarsysData?.length || 0,
+        transformedOrders: transformedOrders.length,
         message: 'Sincronização de pedidos concluída com sucesso',
         orders: orders,
         saveResult: saveResult,
