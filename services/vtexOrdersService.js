@@ -17,6 +17,12 @@ class VtexOrdersService {
     };
     
     const baseURL = process.env.VTEX_BASE_URL;
+    if (!baseURL) {
+      throw new Error('VTEX_BASE_URL não configurada');
+    }
+    
+    console.log(`🔧 Configurando cliente VTEX com baseURL: ${baseURL}`);
+    
     this.client = rateLimit(axios.create({
       baseURL: baseURL,
       headers
@@ -124,18 +130,104 @@ class VtexOrdersService {
   async fetchOrders(page = 1, pageSize = 200) {
     try {
       console.log(`🔄 Buscando pedidos da VTEX - Página ${page}`);
-      const response = await this.client.get(this.ordersUrl, {
-        params: {
-          page,
-          pageSize
-        },
-        timeout: 30000
-      });
+      
+      // Garante que a URL seja válida
+      let ordersUrl = this.ordersUrl;
+      if (!ordersUrl) {
+        throw new Error('VTEX_ORDERS_URL não configurada');
+      }
+      
+      // Se a URL não for absoluta, usa o endpoint padrão
+      if (!ordersUrl.startsWith('http')) {
+        ordersUrl = '/_v/orders/list';
+      }
+      
+      console.log(`🔗 Usando URL: ${ordersUrl}`);
+      
+      // Se a URL é absoluta, usa axios diretamente; caso contrário, usa o client com baseURL
+      let response;
+      if (ordersUrl.startsWith('http')) {
+        // URL absoluta - usa axios diretamente
+        response = await axios.get(ordersUrl, {
+          params: {
+            page,
+            pageSize
+          },
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+            'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+          },
+          timeout: 30000
+        });
+      } else {
+        // URL relativa - usa o client com baseURL
+        response = await this.client.get(ordersUrl, {
+          params: {
+            page,
+            pageSize
+          },
+          timeout: 30000
+        });
+      }
 
       return response.data;
     } catch (error) {
       console.error('❌ Erro ao buscar pedidos da VTEX:', error.message);
       throw new Error(`Erro ao buscar pedidos: ${error.message}`);
+    }
+  }
+
+  /**
+   * Busca pedidos da nova base de dados
+   * @param {Object} options - Opções de busca (page, pageSize, dataInicial, dataFinal)
+   * @returns {Object} Dados dos pedidos
+   */
+  async fetchOrdersFromNewBase(options = {}) {
+    try {
+      const { page = 1, pageSize = 100, dataInicial, dataFinal } = options;
+      
+      console.log(`🔄 Buscando pedidos da nova base - Página ${page}`);
+      
+      // Se há datas especificadas, usa searchOrdersByPeriod
+      if (dataInicial && dataFinal) {
+        console.log(`📅 Buscando por período: ${dataInicial} até ${dataFinal}`);
+        return await this.searchOrdersByPeriod(dataInicial, dataFinal, page, { per_page: pageSize });
+      }
+      
+      // Caso contrário, usa o método padrão
+      return await this.fetchOrders(page, pageSize);
+      
+    } catch (error) {
+      console.error('❌ Erro ao buscar pedidos da nova base:', error.message);
+      throw new Error(`Erro ao buscar pedidos da nova base: ${error.message}`);
+    }
+  }
+
+  /**
+   * Busca todos os pedidos da nova base
+   * @param {Object} options - Opções de busca
+   * @returns {Array} Array com todos os pedidos
+   */
+  async fetchAllOrdersFromNewBase(options = {}) {
+    try {
+      const { dataInicial, dataFinal, pageSize = 100 } = options;
+      
+      console.log('🚀 Iniciando busca de todos os pedidos da nova base...');
+      
+      // Se há datas especificadas, usa getAllOrdersInPeriod
+      if (dataInicial && dataFinal) {
+        console.log(`📅 Buscando por período: ${dataInicial} até ${dataFinal}`);
+        return await this.getAllOrdersInPeriod(dataInicial, dataFinal, false);
+      }
+      
+      // Caso contrário, usa o método padrão
+      return await this.fetchAllOrders();
+      
+    } catch (error) {
+      console.error('❌ Erro ao buscar todos os pedidos da nova base:', error.message);
+      throw error;
     }
   }
 
@@ -1920,9 +2012,17 @@ class VtexOrdersService {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
       const startTime = Date.now();
       
-      // 1. Buscar todos os pedidos
+      // 1. Buscar pedidos (com ou sem filtro de data)
       console.log('📦 Buscando pedidos da VTEX...');
-      const orders = await this.fetchAllOrders();
+      let orders;
+      
+      if (options.dataInicial && options.dataFinal) {
+        console.log(`📅 Buscando pedidos por período: ${options.dataInicial} até ${options.dataFinal}`);
+        orders = await this.getAllOrdersInPeriod(options.dataInicial, options.dataFinal, false);
+      } else {
+        console.log('📦 Buscando todos os pedidos (sem filtro de data)');
+        orders = await this.fetchAllOrders();
+      }
       
       if (!orders || orders.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado');
