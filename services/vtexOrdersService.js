@@ -948,6 +948,7 @@ class VtexOrdersService {
     const emarsysData = [];
     let skippedMarketplace = 0;
     let skippedDuplicates = 0;
+    let canceledOrders = 0;
     const skippedOrders = [];
     const processedOrders = [];
     const errorOrders = [];
@@ -1029,18 +1030,38 @@ class VtexOrdersService {
           });
         }
 
+        // Verifica se o pedido está cancelado para aplicar valores negativos
+        // Inclui status: canceled, payment-pending, refunded, returned
+        const canceledStatuses = ['canceled', 'refunded', 'returned'];
+        const isCanceled = canceledStatuses.includes(order.order_status) || canceledStatuses.includes(order.status);
+        
+        // Para pedidos cancelados, aplica valores negativos
+        let quantity = order.quantity;
+        let price = order.price || '0';
+        let discount = order.discount || '0';
+        
+        if (isCanceled) {
+          // Converte para número, aplica negativo e volta para string
+          quantity = typeof quantity === 'string' ? `-${Math.abs(parseFloat(quantity))}` : -Math.abs(quantity);
+          price = `-${Math.abs(parseFloat(price)).toFixed(2)}`;
+          discount = parseFloat(discount) === 0 ? '-0.00' : `-${Math.abs(parseFloat(discount)).toFixed(2)}`;
+          canceledOrders++;
+          
+          console.log(`🔄 Pedido cancelado detectado: ${orderId} (status: ${order.order_status || order.status}) - aplicando valores negativos (qty: ${quantity}, price: ${price}, discount: ${discount})`);
+        }
+        
         // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
         const saleRecord = {
           order: orderId,
           item: order.item,
           email: order.email,
-          quantity: order.quantity,
+          quantity: quantity,
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-          price: order.price || '0',
+          price: price,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'piccadilly',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: order.discount || '0'
+          s_discount: discount
         };
 
         emarsysData.push(saleRecord);
@@ -1077,6 +1098,7 @@ class VtexOrdersService {
       totalProcessed: emarsysData.length,
       skippedMarketplace,
       skippedDuplicates,
+      canceledOrders,
       errorCount: errorOrders.length,
       successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
     };
@@ -1089,7 +1111,7 @@ class VtexOrdersService {
     });
 
     console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${errorOrders.length} com erro`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
     
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
@@ -1097,6 +1119,10 @@ class VtexOrdersService {
     
     if (skippedDuplicates > 0) {
       console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
+    }
+    
+    if (canceledOrders > 0) {
+      console.log(`🔄 ${canceledOrders} pedidos cancelados processados com valores negativos`);
     }
     
     return {
@@ -1107,6 +1133,7 @@ class VtexOrdersService {
         totalProcessed: emarsysData.length,
         skippedMarketplace,
         skippedDuplicates,
+        canceledOrders,
         errorCount: errorOrders.length,
         successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
       }
