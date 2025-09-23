@@ -763,6 +763,11 @@ router.get('/orders-extract-all', async (req, res) => {
         const syncResponse = await axios({
           method: 'GET',
           url: 'http://localhost:3000/api/integration/orders-sync-new-base',
+          params: {
+            dataInicial: startDate,
+            dataFinal: toDate,
+            pageSize: perPage || 100
+          },
           headers: {
             'Content-Type': 'application/json'
           },

@@ -301,39 +301,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * @route GET /api/vtex/products/:id
- * @desc Obtém detalhes de um produto específico
- * @access Public
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const products = await vtexProductService.loadProductsFromFile();
-    
-    const product = products.find(p => p.id.toString() === id);
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Produto não encontrado',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: product,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// NOTE: Dynamic route moved to the end to avoid capturing specific paths like /sync
 
 /**
  * @route POST /api/vtex/products/sync
@@ -959,6 +927,40 @@ router.get('/filter', async (req, res) => {
         department: department || null,
         active: active !== undefined ? active === 'true' : null
       },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/vtex/products/:id
+ * @desc Obtém detalhes de um produto específico
+ * @access Public
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const products = await vtexProductService.loadProductsFromFile();
+    
+    const product = products.find(p => p.id.toString() === id);
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: product,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
