@@ -773,12 +773,15 @@ class VtexOrdersService {
   }
 
   /**
-   * Salva controle de pedidos processados para evitar duplicatas
+   * [DEPRECATED] Salva controle de pedidos processados para evitar duplicatas
+   * Agora usa a entidade emsOrdersV2 para controle de sincronização
    * @param {Array} orderIds - Array de IDs dos pedidos processados
    * @param {string} syncTimestamp - Timestamp da sincronização
    * @returns {Object} Resultado da operação
    */
   async saveProcessedOrders(processedItems, syncTimestamp) {
+    console.log('⚠️ [DEPRECATED] saveProcessedOrders - Agora usa emsOrdersV2.isSync para controle de sincronização');
+    return { success: true, message: 'Deprecated - usando emsOrdersV2' };
     try {
       await this.ensureDataDirectory();
       
@@ -1036,198 +1039,42 @@ class VtexOrdersService {
    * @param {boolean} checkDuplicates - Se deve verificar duplicatas (padrão: true)
    * @returns {Array} Array com dados no formato da Emarsys
    */
-  async transformOrdersForEmarsys(orders, checkDuplicates = true) {
+  async transformOrdersForEmarsys(orders) {
     const emarsysData = [];
-    let skippedMarketplace = 0;
-    let skippedDuplicates = 0;
-    let canceledOrders = 0;
-    const skippedOrders = [];
-    const processedOrders = [];
-    const errorOrders = [];
     
-    console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
-    
-    // Verifica duplicatas se solicitado
-    let processedItemIds = new Set();
-    if (checkDuplicates) {
-      // Cria identificadores únicos para cada item (orderId + item)
-      const uniqueItemIds = orders.map(order => `${order.order}_${order.item}`).filter(Boolean);
-      const duplicateCheck = await this.getProcessedItemsStatus(uniqueItemIds);
-      processedItemIds = new Set(duplicateCheck.processed);
-      
-      console.log(`🔍 Verificação de duplicatas: ${duplicateCheck.totalProcessed} itens já processados, ${duplicateCheck.totalUnprocessed} novos`);
-      
-      if (duplicateCheck.totalProcessed > 0) {
-        console.log(`⏭️ Pulando ${duplicateCheck.totalProcessed} itens já processados`);
-      }
-    }
+    console.log(`🔄 Transformando ${orders.length} pedidos para Emarsys...`);
     
     for (const order of orders) {
-      try {
-        const orderId = order.order;
-        
-        // Cria identificador único para o item do pedido (orderId + item)
-        const uniqueItemId = `${orderId}_${order.item}`;
-        
-        // Verifica se já foi processado (controle de duplicatas por item)
-        if (checkDuplicates && processedItemIds.has(uniqueItemId)) {
-          console.log(`⏭️ Pulando item já processado: ${uniqueItemId}`);
-          skippedDuplicates++;
-          skippedOrders.push({
-            orderId,
-            itemId: order.item,
-            uniqueItemId,
-            reason: 'already_processed',
-            originalOrder: order
-          });
-          continue;
-        }
-        
-        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
-        const orderIdPattern = /^\d{13}-01$/;
-        if (!orderIdPattern.test(orderId)) {
-          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
-          skippedMarketplace++;
-          skippedOrders.push({
-            orderId,
-            reason: 'marketplace_order_pattern',
-            pattern: orderId,
-            originalOrder: order
-          });
-          continue;
-        }
+      // Mapeia os campos diretamente dos dados formatados
+      const email = order.email || order.clientEmail || order.customerEmail || `cliente_${order.order}@exemplo.com`;
+      const item = order.item || order.sku || order.productId || `ITEM_${order.order}`;
+      const quantity = order.quantity || order.totalItems || 1;
+      const price = order.price || order.totalValue || order.value || '0';
+      
+      // Cria o registro de venda
+      const saleRecord = {
+        order: order.order,
+        item: item,
+        email: email,
+        quantity: quantity,
+        timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+        price: price,
+        s_channel_source: order.s_channel_source || 'web',
+        s_store_id: order.s_store_id || 'piccadilly',
+        s_sales_channel: order.s_sales_channel || 'ecommerce',
+        s_discount: order.s_discount || order.discount || '0'
+      };
 
-        // Validações de campos obrigatórios
-        const missingFields = [];
-        if (!order.email) missingFields.push('email');
-        if (!order.item) missingFields.push('item');
-        if (!order.quantity) missingFields.push('quantity');
-        if (!order.price) missingFields.push('price');
-
-        if (missingFields.length > 0) {
-          console.warn(`⚠️ Pedido ${orderId} com campos faltando: ${missingFields.join(', ')}`);
-          errorOrders.push({
-            orderId,
-            reason: 'missing_required_fields',
-            missingFields,
-            originalOrder: order
-          });
-          
-          // Salva log de erro
-          await this.saveErrorLog({
-            type: 'missing_fields',
-            orderId,
-            missingFields,
-            order: order
-          });
-        }
-
-        // Verifica se o pedido está cancelado para aplicar valores negativos
-        // Inclui status: canceled, payment-pending, refunded, returned
-        const canceledStatuses = ['canceled', 'refunded', 'returned'];
-        const isCanceled = canceledStatuses.includes(order.order_status) || canceledStatuses.includes(order.status);
-        
-        // Para pedidos cancelados, aplica valores negativos
-        let quantity = order.quantity;
-        let price = order.price || '0';
-        let discount = order.discount || '0';
-        
-        if (isCanceled) {
-          // Converte para número, aplica negativo e volta para string
-          quantity = typeof quantity === 'string' ? `-${Math.abs(parseFloat(quantity))}` : -Math.abs(quantity);
-          price = `-${Math.abs(parseFloat(price)).toFixed(2)}`;
-          discount = parseFloat(discount) === 0 ? '-0.00' : `-${Math.abs(parseFloat(discount)).toFixed(2)}`;
-          canceledOrders++;
-          
-          console.log(`🔄 Pedido cancelado detectado: ${orderId} (status: ${order.order_status || order.status}) - aplicando valores negativos (qty: ${quantity}, price: ${price}, discount: ${discount})`);
-        }
-        
-        // Os dados já vêm no formato correto, apenas ajustamos os nomes dos campos
-        const saleRecord = {
-          order: orderId,
-          item: order.item,
-          email: order.email,
-          quantity: quantity,
-          timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-          price: price,
-          s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
-          s_store_id: order.s_store_id || 'piccadilly',
-          s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: discount
-        };
-
-        emarsysData.push(saleRecord);
-        processedOrders.push({
-          orderId,
-          itemId: order.item,
-          uniqueItemId,
-          status: 'processed'
-        });
-
-      } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${order.order}:`, error.message);
-        errorOrders.push({
-          orderId: order.order,
-          reason: 'processing_error',
-          error: error.message,
-          originalOrder: order
-        });
-
-        // Salva log de erro
-        await this.saveErrorLog({
-          type: 'processing_error',
-          orderId: order.order,
-          error: error.message,
-          stack: error.stack,
-          order: order
-        });
-      }
-    }
-
-    // Salva estatísticas detalhadas
-    const stats = {
-      totalInput: orders.length,
-      totalProcessed: emarsysData.length,
-      skippedMarketplace,
-      skippedDuplicates,
-      canceledOrders,
-      errorCount: errorOrders.length,
-      successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
-    };
-
-    await this.saveSyncStats({
-      phase: 'transformation',
-      ...stats,
-      skippedOrders: skippedOrders.length > 0 ? skippedOrders.slice(0, 10) : [], // Primeiros 10 para não sobrecarregar
-      errorOrders: errorOrders.length > 0 ? errorOrders.slice(0, 10) : []
-    });
-
-    console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
-    
-    if (skippedMarketplace > 0) {
-      console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
+      emarsysData.push(saleRecord);
     }
     
-    if (skippedDuplicates > 0) {
-      console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
-    }
-    
-    if (canceledOrders > 0) {
-      console.log(`🔄 ${canceledOrders} pedidos cancelados processados com valores negativos`);
-    }
+    console.log(`✅ ${emarsysData.length} registros preparados para Emarsys`);
     
     return {
       emarsysData,
-      processedOrders,
       stats: {
         totalInput: orders.length,
-        totalProcessed: emarsysData.length,
-        skippedMarketplace,
-        skippedDuplicates,
-        canceledOrders,
-        errorCount: errorOrders.length,
-        successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
+        totalProcessed: emarsysData.length
       }
     };
   }
@@ -1682,14 +1529,30 @@ class VtexOrdersService {
         success: result.success
       });
 
-      // Após envio bem-sucedido, tenta limpar a base de orders (não bloqueia o retorno)
+      // Após envio bem-sucedido, marca pedidos como sincronizados na emsOrdersV2
       if (result && result.success) {
+        console.log('✅ Envio bem-sucedido, marcando pedidos como sincronizados...');
+        
+        // Busca pedidos enviados para marcar como sincronizados
+        try {
+          const emsOrdersService = require('./emsOrdersService');
+          const pendingOrders = await emsOrdersService.listEmsOrdersV2PendingSync();
+          
+          if (pendingOrders.length > 0) {
+            await emsOrdersService.markAsSynced(pendingOrders);
+            console.log(`✅ ${pendingOrders.length} pedidos marcados como sincronizados na emsOrdersV2`);
+          }
+        } catch (syncError) {
+          console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
+        }
+        
         // Verifica se a limpeza está habilitada via variável de ambiente
         const cleanupEnabled = process.env.ENABLE_ORDER_CLEANUP !== 'false';
         
         if (!cleanupEnabled) {
           console.log('⏸️ Limpeza de orders pausada via ENABLE_ORDER_CLEANUP=false');
         } else {
+          console.log('⚠️ ATENÇÃO: Limpeza de orders habilitada. Recomenda-se manter ENABLE_ORDER_CLEANUP=false para preservar histórico.');
           // Captura a referência do axios antes da função assíncrona
           const axiosInstance = axios;
           
@@ -2045,34 +1908,83 @@ class VtexOrdersService {
         throw new Error(`Falha ao salvar pedidos: ${saveResult.error}`);
       }
       
-      // 3. Transformar dados para formato Emarsys
-      console.log('🔄 Transformando dados para formato Emarsys...');
-      const transformedOrders = await this.transformOrdersForEmarsys(orders);
+      // 3. Buscar dados formatados do endpoint /_v/orders/list
+      console.log('🔄 Buscando dados formatados do endpoint /_v/orders/list...');
+      let formattedOrders = [];
       
-      // 3.1. Salva controle de pedidos processados para evitar duplicatas
-      if (transformedOrders.processedOrders && transformedOrders.processedOrders.length > 0) {
-        const syncTimestamp = getBrazilianTimestamp();
-        // Agora salva os identificadores únicos de item (orderId + item)
-        const processedItems = transformedOrders.processedOrders.map(item => ({
-          orderId: item.orderId,
-          itemId: item.itemId,
-          uniqueItemId: item.uniqueItemId
-        }));
-        await this.saveProcessedOrders(processedItems, syncTimestamp);
+      try {
+        const axios = require('axios');
+        const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/list`;
+        const response = await axios.get(formattedUrl, {
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+            'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+          },
+          timeout: 30000
+        });
         
-        // 3.2. Limpeza automática de registros antigos (30 dias)
-        try {
-          const retentionHours = parseInt(process.env.PROCESSED_ORDERS_RETENTION_HOURS) || 720;
-          await this.cleanupProcessedOrders(retentionHours);
-        } catch (cleanupError) {
-          console.warn('⚠️ Erro na limpeza automática de pedidos processados:', cleanupError.message);
+        if (response.data && Array.isArray(response.data)) {
+          const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
+          formattedOrders = response.data.filter(o => orderIds.includes(o.order || o.orderId));
+        } else {
+          console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response.data);
         }
+      } catch (error) {
+        console.warn('⚠️ Erro ao buscar dados formatados:', error.message);
+        console.log('ℹ️ Continuando com dados da VTEX OMS...');
+        // Fallback: usa dados da VTEX OMS mapeados
+        formattedOrders = orders.map(order => ({
+          order: order.orderId || order.id,
+          email: order.clientProfileData?.email,
+          item: order.items?.[0]?.id,
+          price: order.items?.[0]?.price,
+          quantity: order.items?.[0]?.quantity,
+          timestamp: order.creationDate,
+          s_channel_source: 'web',
+          s_store_id: 'piccadilly',
+          s_sales_channel: 'ecommerce',
+          s_discount: '0'
+        }));
+      }
+
+      if (formattedOrders.length === 0) {
+        console.warn('⚠️ Nenhum pedido formatado encontrado, usando dados da VTEX OMS mapeados');
+        formattedOrders = orders.map(order => ({
+          order: order.orderId || order.id,
+          email: order.clientProfileData?.email,
+          item: order.items?.[0]?.id,
+          price: order.items?.[0]?.price,
+          quantity: order.items?.[0]?.quantity,
+          timestamp: order.creationDate,
+          s_channel_source: 'web',
+          s_store_id: 'piccadilly',
+          s_sales_channel: 'ecommerce',
+          s_discount: '0'
+        }));
+      }
+
+      console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
+
+      // 4. Transformar dados formatados para Emarsys
+      console.log('🔄 Transformando dados formatados para Emarsys...');
+      const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
+      
+      // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync
+      if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
+        console.log('ℹ️ Registros já existem na emsOrdersV2 - apenas controle de isSync será feito');
+        const emsOrdersService = require('./emsOrdersService');
+        
+        // Apenas registra que os pedidos foram processados
+        const result = await emsOrdersService.upsertEmsOrdersV2(transformedOrders.emarsysData);
+        console.log(`ℹ️ ${result.upserts.length} pedidos processados (registros já existem na base)`);
       }
       
       // 4. Gerar CSV
-      console.log('📄 Gerando CSV...| 22/08 |');
+      console.log('📄 Gerando CSV...| 24/08 |');
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, options);
-      console.log('📄 Gerando CSV...| 22/08 |', csvResult);
+      console.log('📄 Gerando CSV...| 24/08 |', csvResult);
       
       if (!csvResult.success) {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');

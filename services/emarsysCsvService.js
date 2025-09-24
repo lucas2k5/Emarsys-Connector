@@ -70,7 +70,6 @@ class EmarsysCsvService {
               }
               return '';
             };
-            console.log(product.categories?.[0] || product.category);
             const row = [
                this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
                this.sanitizeField(product.productName, 100), // title

@@ -369,7 +369,6 @@ router.get('/orders-extract', async (req, res) => {
       res.json({
         success: true,
         data: {
-          orders: orders.list || [],
           pagination: orders.paging || null,
           totalOrders: orders.list ? orders.list.length : 0,
           period: {
@@ -666,12 +665,6 @@ router.get('/orders-extract-all', async (req, res) => {
         ordersList = await vtexOrdersService.getAllOrdersInPeriod(startDate, toDate, false);
       }
       
-      console.log(`📊 Resultado da ETAPA 1:`, {
-        ordersListType: typeof ordersList,
-        ordersListLength: ordersList ? ordersList.length : 'null/undefined',
-        ordersListSample: ordersList && ordersList.length > 0 ? ordersList[0] : 'nenhum'
-      });
-      
       if (!ordersList || ordersList.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado, retornando resposta vazia');
         return res.json({
@@ -896,12 +889,6 @@ router.get('/orders-extract-test', async (req, res) => {
         console.log('🔄 Usando busca normal...');
         ordersList = await vtexOrdersService.getAllOrdersInPeriod(startDate, toDate, false);
       }
-      
-      console.log(`📊 Resultado da ETAPA 1:`, {
-        ordersListType: typeof ordersList,
-        ordersListLength: ordersList ? ordersList.length : 'null/undefined',
-        ordersListSample: ordersList && ordersList.length > 0 ? ordersList[0] : 'nenhum'
-      });
       
       if (!ordersList || ordersList.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado, retornando resposta vazia');
