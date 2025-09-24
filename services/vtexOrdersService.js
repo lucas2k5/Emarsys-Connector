@@ -2046,7 +2046,7 @@ class VtexOrdersService {
       }
       
       // 3. Transformar dados para formato Emarsys
-      console.log('🔄 Transformando dados para formato Emarsys...', orders);
+      console.log('🔄 Transformando dados para formato Emarsys...');
       const transformedOrders = await this.transformOrdersForEmarsys(orders);
       
       // 3.1. Salva controle de pedidos processados para evitar duplicatas
