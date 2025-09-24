@@ -38,21 +38,70 @@ const PORT = process.env.PORT;
 const HOST = process.env.HOST;
 const cronService = new CronService();
 
+// Early deny de paths suspeitos
+app.use((req, res, next) => {
+  const bad = [
+    /^\/\./,                                          // dotfiles
+    /\.(env|ini|ya?ml|log|gz|sql|zip|bak|old)$/i,
+    /\/(phpmyadmin|wp-admin|wp-login|vendor|\.git)/i
+  ];
+  if (bad.some(r => r.test(req.path))) {
+    return res.sendStatus(404);
+  }
+  return next();
+});
+
+// Bloqueio de rotas não pertencentes à aplicação + rate limit (5 tentativas/30min)
+const ALLOWED_PREFIXES = [
+  '/api/emarsys',
+  '/api/vtex',
+  '/api/integration',
+  '/api/background',
+  '/api/cron',
+  '/api/cron-management',
+  '/api/crash-protection',
+  '/api/metrics',
+  '/api/alerts',
+  '/api/contact-errors',
+  '/health',
+  '/favicon.ico'
+];
+
+const unknownRouteAttempts = new Map();
+const UNKNOWN_WINDOW_MS = 30 * 60 * 1000; // 30 minutos
+const UNKNOWN_MAX_ATTEMPTS = 5; // permite 5, bloqueia a partir da 6ª
+
+app.use((req, res, next) => {
+  const path = req.path || req.originalUrl || '';
+  if (ALLOWED_PREFIXES.some(prefix => path.startsWith(prefix))) {
+    return next();
+  }
+
+  const now = Date.now();
+  const ip = req.ip || req.headers['x-forwarded-for'] || (req.connection && req.connection.remoteAddress) || 'unknown';
+  let entry = unknownRouteAttempts.get(ip);
+
+  if (!entry || (now - entry.firstSeen) > UNKNOWN_WINDOW_MS) {
+    entry = { count: 0, firstSeen: now };
+  }
+
+  entry.count += 1;
+  unknownRouteAttempts.set(ip, entry);
+
+  if (entry.count > UNKNOWN_MAX_ATTEMPTS) {
+    return res.status(429).json({
+      error: 'too_many_requests',
+      message: 'Muitas tentativas em rotas inválidas. Tente novamente mais tarde.'
+    });
+  }
+
+  return res.status(404).json({ error: 'Route not found' });
+});
+
 // Middleware de segurança
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-    },
-  },
+  contentSecurityPolicy: false,
+  referrerPolicy: { policy: 'no-referrer' }
 }));
 
 // Middleware de CORS
