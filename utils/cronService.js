@@ -1,12 +1,17 @@
 const cron = require('cron');
 const axios = require('axios');
-const moment = require('moment');
+const moment = require('moment-timezone');
 const crashProtection = require('./crashProtection');
 
 class CronService {
   constructor() {
     this.jobs = new Map();
     this.baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+    
+    // Configurações de cron jobs via variáveis de ambiente
+    this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON || '0 */8 * * *';
+    this.ordersSyncCron = process.env.ORDERS_SYNC_CRON || '*/8 * * * *';
+    this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
   }
 
   /**
@@ -19,11 +24,11 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de produtos a cada 8 horas
+   * Configura o cron para sincronização de produtos
    */
   setupProductsSync() {
-    // Cron expression: 0 */8 * * * (a cada 8 horas)
-    const job = new cron.CronJob('0 */8 * * *', async () => {
+    // Cron expression configurável via variável de ambiente
+    const job = new cron.CronJob(this.productsSyncCron, async () => {
       const serviceName = 'products-sync';
       
       // Verificar se o serviço pode executar (proteção contra loops)
@@ -58,18 +63,18 @@ class CronService {
           });
         }
       }
-    }, null, true, 'America/Sao_Paulo');
+    }, null, true, this.cronTimezone);
 
     this.jobs.set('products-sync', job);
-    console.log('🕐 Cron de produtos configurado: a cada 8 horas');
+    console.log(`🕐 Cron de produtos configurado: ${this.productsSyncCron} (${this.cronTimezone})`);
   }
 
   /**
-   * Configura o cron para sincronização de orders diária usando o fluxo orders-extract-all (dia anterior)
+   * Configura o cron para sincronização de orders usando o fluxo orders-extract-all (dia anterior)
    */
   setupOrdersSync() {
-    // Cron expression: 0 1 * * * (diariamente às 01:00)
-    const job = new cron.CronJob('0 1 * * *', async () => {
+    // Cron expression configurável via variável de ambiente
+    const job = new cron.CronJob(this.ordersSyncCron, async () => {
       const serviceName = 'orders-sync';
       
       // Verificar se o serviço pode executar (proteção contra loops)
@@ -125,10 +130,10 @@ class CronService {
           });
         }
       }
-    }, null, true, 'America/Sao_Paulo');
+    }, null, true, this.cronTimezone);
 
     this.jobs.set('orders-sync', job);
-    console.log('🕐 Cron de orders configurado: a cada 2 horas');
+    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone})`);
   }
 
   /**
