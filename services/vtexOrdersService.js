@@ -1039,42 +1039,202 @@ class VtexOrdersService {
    * @param {boolean} checkDuplicates - Se deve verificar duplicatas (padrão: true)
    * @returns {Array} Array com dados no formato da Emarsys
    */
-  async transformOrdersForEmarsys(orders) {
+  async transformOrdersForEmarsys(orders, checkDuplicates = true) {
     const emarsysData = [];
+    let skippedMarketplace = 0;
+    let skippedDuplicates = 0;
+    let canceledOrders = 0;
+    const skippedOrders = [];
+    const processedOrders = [];
+    const errorOrders = [];
     
-    console.log(`🔄 Transformando ${orders.length} pedidos para Emarsys...`);
+    console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
-    for (const order of orders) {
-      // Mapeia os campos diretamente dos dados formatados
-      const email = order.email || order.clientEmail || order.customerEmail || `cliente_${order.order}@exemplo.com`;
-      const item = order.item || order.sku || order.productId || `ITEM_${order.order}`;
-      const quantity = order.quantity || order.totalItems || 1;
-      const price = order.price || order.totalValue || order.value || '0';
+    // Verifica duplicatas se solicitado
+    let processedItemIds = new Set();
+    if (checkDuplicates) {
+      // Cria identificadores únicos para cada item (orderId + item)
+      const uniqueItemIds = orders.map(order => `${order.order}_${order.item}`).filter(Boolean);
+      const duplicateCheck = await this.getProcessedItemsStatus(uniqueItemIds);
+      processedItemIds = new Set(duplicateCheck.processed);
       
-      // Cria o registro de venda
-      const saleRecord = {
-        order: order.order,
-        item: item,
-        email: email,
-        quantity: quantity,
-        timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        price: price,
-        s_channel_source: order.s_channel_source || 'web',
-        s_store_id: order.s_store_id || 'piccadilly',
-        s_sales_channel: order.s_sales_channel || 'ecommerce',
-        s_discount: order.s_discount || order.discount || '0'
-      };
-
-      emarsysData.push(saleRecord);
+      
+      if (duplicateCheck.totalProcessed > 0) {
+        console.log(`⏭️ Pulando ${duplicateCheck.totalProcessed} itens já processados`);
+      }
     }
     
-    console.log(`✅ ${emarsysData.length} registros preparados para Emarsys`);
+    for (const order of orders) {
+      try {
+        const orderId = order.order;
+        
+        // Cria identificador único para o item do pedido (orderId + item)
+        const uniqueItemId = `${orderId}_${order.item}`;
+        
+        // Verifica se já foi processado (controle de duplicatas por item)
+        if (checkDuplicates && processedItemIds.has(uniqueItemId)) {
+          console.log(`⏭️ Pulando item já processado: ${uniqueItemId}`);
+          skippedDuplicates++;
+          skippedOrders.push({
+            orderId,
+            itemId: order.item,
+            uniqueItemId,
+            reason: 'already_processed',
+            originalOrder: order
+          });
+          continue;
+        }
+        
+        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
+        const orderIdPattern = /^\d{13}-01$/;
+        if (!orderIdPattern.test(orderId)) {
+          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
+          skippedMarketplace++;
+          skippedOrders.push({
+            orderId,
+            reason: 'marketplace_order_pattern',
+            pattern: orderId,
+            originalOrder: order
+          });
+          continue;
+        }
+
+        // Validações de campos obrigatórios - com fallbacks
+        const email = order.email || order.customer_email || order.clientEmail;
+        const item = order.item || order.sku || order.productId || `ITEM_${orderId}`;
+        const quantity = order.quantity || order.totalItems || 1;
+        const price = order.price || order.totalValue || order.value || '0';
+        
+        const missingFields = [];
+        if (!email) missingFields.push('email');
+        if (!item) missingFields.push('item');
+        if (!quantity) missingFields.push('quantity');
+        if (!price) missingFields.push('price');
+
+        if (missingFields.length > 0) {
+          console.warn(`⚠️ Pedido ${orderId} com campos faltando: ${missingFields.join(', ')}`);
+          errorOrders.push({
+            orderId,
+            reason: 'missing_required_fields',
+            missingFields,
+            originalOrder: order
+          });
+          
+          // Salva log de erro
+          await this.saveErrorLog({
+            type: 'missing_fields',
+            orderId,
+            missingFields,
+            order: order
+          });
+        }
+
+        // Verifica se o pedido está cancelado para aplicar valores negativos
+        // Inclui status: canceled, payment-pending, refunded, returned
+        const canceledStatuses = ['canceled', 'refunded', 'returned'];
+        const isCanceled = canceledStatuses.includes(order.order_status) || canceledStatuses.includes(order.status);
+        
+        // Para pedidos cancelados, aplica valores negativos
+        let finalQuantity = quantity;
+        let finalPrice = price;
+        let discount = order.discount || '0';
+        
+        if (isCanceled) {
+          // Converte para número, aplica negativo e volta para string
+          finalQuantity = typeof finalQuantity === 'string' ? `-${Math.abs(parseFloat(finalQuantity))}` : -Math.abs(finalQuantity);
+          finalPrice = `-${Math.abs(parseFloat(finalPrice)).toFixed(2)}`;
+          discount = parseFloat(discount) === 0 ? '-0.00' : `-${Math.abs(parseFloat(discount)).toFixed(2)}`;
+          canceledOrders++;
+          
+          console.log(`🔄 Pedido cancelado detectado: ${orderId} (status: ${order.order_status || order.status}) - aplicando valores negativos (qty: ${finalQuantity}, price: ${finalPrice}, discount: ${discount})`);
+        }
+        
+        // Cria o registro de venda com os campos mapeados
+        const saleRecord = {
+          order: orderId,
+          item: item,
+          email: email,
+          quantity: finalQuantity,
+          timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+          price: finalPrice,
+          s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
+          s_store_id: order.s_store_id || 'piccadilly',
+          s_sales_channel: order.s_sales_channel || 'ecommerce',
+          s_discount: discount
+        };
+
+        emarsysData.push(saleRecord);
+        processedOrders.push({
+          orderId,
+          itemId: order.item,
+          uniqueItemId,
+          status: 'processed'
+        });
+
+      } catch (error) {
+        console.error(`❌ Erro ao processar pedido ${order.order}:`, error.message);
+        errorOrders.push({
+          orderId: order.order,
+          reason: 'processing_error',
+          error: error.message,
+          originalOrder: order
+        });
+
+        // Salva log de erro
+        await this.saveErrorLog({
+          type: 'processing_error',
+          orderId: order.order,
+          error: error.message,
+          stack: error.stack,
+          order: order
+        });
+      }
+    }
+
+    // Salva estatísticas detalhadas
+    const stats = {
+      totalInput: orders.length,
+      totalProcessed: emarsysData.length,
+      skippedMarketplace,
+      skippedDuplicates,
+      canceledOrders,
+      errorCount: errorOrders.length,
+      successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
+    };
+
+    await this.saveSyncStats({
+      phase: 'transformation',
+      ...stats,
+      skippedOrders: skippedOrders.length > 0 ? skippedOrders.slice(0, 10) : [], // Primeiros 10 para não sobrecarregar
+      errorOrders: errorOrders.length > 0 ? errorOrders.slice(0, 10) : []
+    });
+
+    console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
+    
+    if (skippedMarketplace > 0) {
+      console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
+    }
+    
+    if (skippedDuplicates > 0) {
+      console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
+    }
+    
+    if (canceledOrders > 0) {
+      console.log(`🔄 ${canceledOrders} pedidos cancelados processados com valores negativos`);
+    }
     
     return {
       emarsysData,
+      processedOrders,
       stats: {
         totalInput: orders.length,
-        totalProcessed: emarsysData.length
+        totalProcessed: emarsysData.length,
+        skippedMarketplace,
+        skippedDuplicates,
+        canceledOrders,
+        errorCount: errorOrders.length,
+        successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
       }
     };
   }
@@ -1082,7 +1242,7 @@ class VtexOrdersService {
   /**
    * Gera arquivo CSV completo para envio à Emarsys
    * @param {Array} orders - Array de pedidos já formatados para CSV
-   * @param {Object} options - Opções de configuração (filename, etc.)
+   * @param {Object} options - Opções de configuração (filename, autoSend, etc.)
    * @returns {Object} Resultado da operação
    */
   async generateCsvFromOrders(orders, options = {}) {
@@ -1128,7 +1288,6 @@ class VtexOrdersService {
 
       const filePath = path.join(outputDir, filename);
 
-      // Valida os dados antes de gerar CSV
       const validationResult = this.validateOrderDataForEmarsys(ordersToProcess);
       if (validationResult.errors.length > 0) {
         console.error(`❌ ${validationResult.errors.length} erros de validação encontrados:`);
@@ -1144,7 +1303,7 @@ class VtexOrdersService {
         });
 
         // Filtra apenas pedidos válidos
-        const validOrders = ordersToProcess.filter((order, index) => {
+        const validOrders = ordersToProcess.filter((_, index) => {
           const lineNum = index + 2;
           const hasErrors = validationResult.errors.some(error => error.includes(`Linha ${lineNum}:`));
           return !hasErrors;
@@ -1243,6 +1402,93 @@ class VtexOrdersService {
         originalOrders: orders.length
       };
 
+      // Se autoSend estiver habilitado, envia o CSV e marca como sincronizado
+      if (options.autoSend === true) {
+        const debugMode = process.env.DEBUG === 'true';
+        
+        if (debugMode) {
+          console.log('🐛 [DEBUG MODE] Enviando CSV em modo DEBUG (sem envio real para Emarsys)...');
+        } else {
+          console.log('📤 Enviando CSV automaticamente para Emarsys...');
+        }
+        
+        try {
+          const emarsysSalesService = require('./emarsysSalesService');
+          const sendResult = await emarsysSalesService.sendCsvFileToEmarsys(filename);
+          
+          if (sendResult.success) {
+            if (debugMode) {
+              console.log('✅ [DEBUG] Simulação de envio bem-sucedida, marcando pedidos como sincronizados...');
+            } else {
+              console.log('✅ CSV enviado com sucesso para Emarsys, marcando pedidos como sincronizados...');
+            }
+            
+            // Marca pedidos como sincronizados na emsOrdersV2
+            // Usa apenas os pedidos que foram efetivamente processados no CSV
+            try {
+              const emsOrdersService = require('./emsOrdersService');
+              
+              // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
+              const marketplaceValidator = require('../utils/marketplaceValidator');
+              const filteredForSync = ordersToProcess.filter(o => {
+                const oid = o.order || o.orderId || o.id || '';
+                return !marketplaceValidator.isMarketplaceOrder(oid);
+              });
+
+              // Cria array com os pedidos que foram processados no CSV e não são marketplace
+              const ordersToMarkAsSynced = filteredForSync.map(order => ({
+                id: order.id,
+                order: order.order,
+                email: order.email,
+                item: order.item,
+                quantity: order.quantity,
+                price: order.price,
+                timestamp: order.timestamp
+              }));
+
+              const skippedMarketplace = ordersToProcess.length - filteredForSync.length;
+              if (skippedMarketplace > 0) {
+                console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
+              }
+              
+              if (ordersToMarkAsSynced.length > 0) {
+                await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
+                console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
+              }
+            } catch (syncError) {
+              console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
+            }
+            
+            // Deleta o arquivo orders.json após envio bem-sucedido
+            try {
+              if (fs.existsSync(this.ordersFile)) {
+                await fs.unlink(this.ordersFile);
+                console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
+                result.ordersFileDeleted = true;
+              } else {
+                console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
+                result.ordersFileDeleted = false;
+              }
+            } catch (deleteError) {
+              console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
+              result.ordersFileDeleted = false;
+              result.deleteError = deleteError.message;
+            }
+            
+            result.emarsysSent = true;
+            result.sendResult = sendResult;
+          } else {
+            console.error('❌ Falha ao enviar CSV para Emarsys:', sendResult.error);
+            result.emarsysSent = false;
+            result.sendError = sendResult.error;
+          }
+        } catch (sendError) {
+          console.error('❌ Erro ao enviar CSV para Emarsys:', sendError.message);
+          result.emarsysSent = false;
+          result.sendError = sendError.message;
+        }
+      }
+
       return result;
 
     } catch (error) {
@@ -1263,7 +1509,6 @@ class VtexOrdersService {
   validateOrderDataForEmarsys(orders) {
     const errors = [];
     const warnings = [];
-
     orders.forEach((order, index) => {
       const lineNum = index + 2; // +2 porque linha 1 é header
 
@@ -1533,17 +1778,52 @@ class VtexOrdersService {
       if (result && result.success) {
         console.log('✅ Envio bem-sucedido, marcando pedidos como sincronizados...');
         
-        // Busca pedidos enviados para marcar como sincronizados
+        // Marca pedidos enviados como sincronizados na emsOrdersV2
+        // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
           const emsOrdersService = require('./emsOrdersService');
-          const pendingOrders = await emsOrdersService.listEmsOrdersV2PendingSync();
           
-          if (pendingOrders.length > 0) {
-            await emsOrdersService.markAsSynced(pendingOrders);
-            console.log(`✅ ${pendingOrders.length} pedidos marcados como sincronizados na emsOrdersV2`);
+          // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
+          const marketplaceValidator = require('../utils/marketplaceValidator');
+          const filteredForSync = orders.filter(o => {
+            const oid = o.order || o.orderId || o.id || '';
+            return !marketplaceValidator.isMarketplaceOrder(oid);
+          });
+
+          // Cria array com os pedidos que foram enviados para Emarsys e não são marketplace
+          const ordersToMarkAsSynced = filteredForSync.map(order => ({
+            id: order.id,
+            order: order.order || order.orderId,
+            email: order.email,
+            item: order.item,
+            quantity: order.quantity,
+            price: order.price,
+            timestamp: order.timestamp
+          }));
+
+          const skippedMarketplace = orders.length - filteredForSync.length;
+          if (skippedMarketplace > 0) {
+            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
+          }
+          
+          if (ordersToMarkAsSynced.length > 0) {
+            await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
+            console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
           }
         } catch (syncError) {
           console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
+        }
+        
+        // Deleta o arquivo orders.json após envio bem-sucedido
+        try {
+          if (fs.existsSync(this.ordersFile)) {
+            await fs.unlink(this.ordersFile);
+            console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
+          } else {
+            console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
+          }
+        } catch (deleteError) {
+          console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
         }
         
         // Verifica se a limpeza está habilitada via variável de ambiente
@@ -1835,6 +2115,82 @@ class VtexOrdersService {
           orderDetail: orderDetail 
         };
       }
+
+      // Verifica se o registro já existe na emsOrdersV2 antes de enviar para o hook
+      const emsOrdersService = require('./emsOrdersService');
+      
+      // Extrai informações do pedido de forma mais robusta
+      const orderStatus = orderDetail.status || orderDetail.orderStatus || 'unknown';
+      
+      // Busca o item de forma mais robusta - prioriza diferentes campos
+      let item = null;
+      
+      // 1. Tenta orderDetail.item primeiro
+      if (orderDetail.item) {
+        item = orderDetail.item;
+      }
+      // 2. Tenta items[0] com diferentes campos
+      else if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
+        const firstItem = orderDetail.items[0];
+        item = firstItem.id || 
+               firstItem.productId || 
+               firstItem.refId ||
+               firstItem.sku ||
+               firstItem.itemId ||
+               firstItem.productRefId;
+      }
+      
+      if (!item) {
+        console.error('❌ Não foi possível extrair item do pedido:', {
+          orderId: orderId,
+          hasItem: !!orderDetail.item,
+          hasItems: !!orderDetail.items,
+          itemsLength: orderDetail.items?.length,
+          firstItem: orderDetail.items?.[0]
+        });
+        return { 
+          success: false, 
+          error: 'Item não encontrado no pedido', 
+          orderDetail: orderDetail 
+        };
+      }
+      
+      console.log(`🔍 Buscando item para verificação: ${item} (de orderDetail.item: ${orderDetail.item})`);
+      console.log(`🔍 Estrutura do orderDetail:`, {
+        hasItem: !!orderDetail.item,
+        hasItems: !!orderDetail.items,
+        itemsLength: orderDetail.items?.length,
+        orderId: orderDetail.orderId || orderDetail.id,
+        orderStatus: orderStatus
+      });
+      
+      // ETAPA 1: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
+      console.log(`🔍 ETAPA 1: Verificando se registro existe na emsOrdersV2: order=${orderId} + item=${item} + status=${orderStatus} + isSync=false`);
+      
+      const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
+      
+      if (existingRecord) {
+        if (existingRecord.isSync === true) {
+          console.log(`⏭️ Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
+          return { 
+            success: true, 
+            skipped: true, 
+            message: 'Registro já sincronizado',
+            existingRecord: existingRecord
+          };
+        } else {
+          console.log(`⏭️ Registro pendente já existe na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
+          return { 
+            success: true, 
+            skipped: true, 
+            message: 'Registro pendente já existe na base',
+            existingRecord: existingRecord
+          };
+        }
+      }
+      
+      // ETAPA 2: Se não existe, envia para o hook
+      console.log(`📨 ETAPA 2: Registro não existe na base - enviando para hook: order=${orderId} + item=${item}`);
       
       // Cria o payload garantindo que orderId esteja no nível raiz
       const payload = {
@@ -1909,8 +2265,9 @@ class VtexOrdersService {
       }
       
       // 3. Buscar dados formatados do endpoint /_v/orders/list
-      console.log('🔄 Buscando dados formatados do endpoint /_v/orders/list...');
+      console.log('🔄 Buscando dados formatados do emsOrdersV2');
       let formattedOrders = [];
+      let formattedData = null; // Armazena os dados formatados para uso no fallback
       
       try {
         const axios = require('axios');
@@ -1925,44 +2282,69 @@ class VtexOrdersService {
           timeout: 30000
         });
         
-        if (response.data && Array.isArray(response.data)) {
+        console.log('📋 DEBUG - Estrutura da resposta:', {
+          status: response?.status,
+          hasData: !!response?.data,
+          dataType: typeof response?.data,
+          isArray: Array.isArray(response?.data),
+          dataLength: response?.data?.length,
+          dataKeys: response?.data ? Object.keys(response?.data) : 'sem keys'
+        });
+        
+        // O endpoint retorna {success: true, data: [...], pagination: {...}}
+        if (response && response.data && response.data.success && Array.isArray(response.data.data)) {
+          formattedData = response.data.data; // Armazena para uso no fallback
+          
+          // Mapeia orderIds da VTEX OMS para comparar com os dados formatados
           const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
-          formattedOrders = response.data.filter(o => orderIds.includes(o.order || o.orderId));
+          console.log('🔍 OrderIds da VTEX OMS para filtro:', orderIds.slice(0, 5));
+          
+          // Debug: mostra os orderIds dos dados formatados
+          const formattedOrderIds = formattedData.map(o => o.order || o.orderId).filter(Boolean);
+          console.log('🔍 OrderIds dos dados formatados:', formattedOrderIds.slice(0, 5));
+          
+          // Verifica se há correspondência
+          const matchingIds = orderIds.filter(id => formattedOrderIds.includes(id));
+          console.log('🔍 OrderIds que coincidem:', matchingIds.slice(0, 5));
+          
+          // Filtra os dados formatados que correspondem aos pedidos da VTEX OMS
+          formattedOrders = formattedData.filter(o => orderIds.includes(o.order || o.orderId));
+          console.log('📋 Dados formatados filtrados:[REGISTROS]', JSON.stringify(formattedOrders.slice(0, 2), null, 2));
         } else {
-          console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response.data);
+          console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response?.data?.data?.length || 'sem data');
+          console.log('📋 Resposta completa para debug:', {
+            status: response?.status,
+            headers: response?.headers,
+            data: response?.data
+          });
         }
       } catch (error) {
         console.warn('⚠️ Erro ao buscar dados formatados:', error.message);
         console.log('ℹ️ Continuando com dados da VTEX OMS...');
-        // Fallback: usa dados da VTEX OMS mapeados
-        formattedOrders = orders.map(order => ({
-          order: order.orderId || order.id,
-          email: order.clientProfileData?.email,
-          item: order.items?.[0]?.id,
-          price: order.items?.[0]?.price,
-          quantity: order.items?.[0]?.quantity,
-          timestamp: order.creationDate,
-          s_channel_source: 'web',
-          s_store_id: 'piccadilly',
-          s_sales_channel: 'ecommerce',
-          s_discount: '0'
-        }));
       }
 
       if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado encontrado, usando dados da VTEX OMS mapeados');
-        formattedOrders = orders.map(order => ({
-          order: order.orderId || order.id,
-          email: order.clientProfileData?.email,
-          item: order.items?.[0]?.id,
-          price: order.items?.[0]?.price,
-          quantity: order.items?.[0]?.quantity,
-          timestamp: order.creationDate,
-          s_channel_source: 'web',
-          s_store_id: 'piccadilly',
-          s_sales_channel: 'ecommerce',
-          s_discount: '0'
-        }));
+        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, tentando usar dados formatados sem filtro...');
+        
+        // Se não encontrou correspondência, usa todos os dados formatados disponíveis
+        if (formattedData && formattedData.length > 0) {
+          console.log('📋 Usando todos os dados formatados disponíveis (sem filtro)');
+          formattedOrders = formattedData;
+        } else {
+          console.warn('⚠️ Nenhum dado formatado disponível, usando dados da VTEX OMS mapeados');
+          formattedOrders = orders.map(order => ({
+            order: order.orderId || order.id,
+            email: order.email,
+            item: order.items?.[0]?.id,
+            price: order.items?.[0]?.price,
+            quantity: order.items?.[0]?.quantity,
+            timestamp: order.creationDate,
+            s_channel_source: 'web',
+            s_store_id: 'piccadilly',
+            s_sales_channel: 'ecommerce',
+            s_discount: order.discount
+          }));
+        }
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
@@ -1971,54 +2353,28 @@ class VtexOrdersService {
       console.log('🔄 Transformando dados formatados para Emarsys...');
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
-      // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync
+      // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync será feito após envio
       if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
-        console.log('ℹ️ Registros já existem na emsOrdersV2 - apenas controle de isSync será feito');
-        const emsOrdersService = require('./emsOrdersService');
-        
-        // Apenas registra que os pedidos foram processados
-        const result = await emsOrdersService.upsertEmsOrdersV2(transformedOrders.emarsysData);
-        console.log(`ℹ️ ${result.upserts.length} pedidos processados (registros já existem na base)`);
+        console.log('ℹ️ Registros já existem na emsOrdersV2 - controle de isSync será feito após envio para Emarsys');
       }
       
-      // 4. Gerar CSV
-      console.log('📄 Gerando CSV...| 24/08 |');
-      const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, options);
+      const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
+        ...options,
+        autoSend: true  // Habilita envio automático e marca isSync=true após sucesso
+      });
       console.log('📄 Gerando CSV...| 24/08 |', csvResult);
       
       if (!csvResult.success) {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');
       }
       
-      // 5. Enviar CSV para Emarsys
-      let emarsysSendResult = null;
-      try {
-        console.log('📤 Enviando CSV para Emarsys...');
-        const axios = require('axios');
-        const emarsysResponse = await axios({
-          method: 'POST',
-          url: 'http://localhost:3000/api/emarsys/sales/send-csv-file',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: 120000 // 2 minutos para envio
-        });
-        
-        console.log('✅ CSV enviado para Emarsys com sucesso:', emarsysResponse.status);
-        emarsysSendResult = {
-          success: true,
-          status: emarsysResponse.status,
-          data: emarsysResponse.data
-        };
-        
-      } catch (emarsysError) {
-        console.error('❌ Erro ao enviar CSV para Emarsys:', emarsysError?.message);
-        emarsysSendResult = {
-          success: false,
-          error: emarsysError?.message,
-          status: emarsysError?.response?.status
-        };
-      }
+      // 5. O envio para Emarsys já foi feito no generateCsvFromOrders com autoSend: true
+      // Não é necessário fazer uma segunda tentativa para evitar duplicidade
+      const emarsysSendResult = {
+        success: csvResult.emarsysSent || false,
+        error: csvResult.sendError || null,
+        message: csvResult.emarsysSent ? 'Envio realizado via generateCsvFromOrders' : 'Envio falhou via generateCsvFromOrders'
+      };
 
       const duration = Date.now() - startTime;
       

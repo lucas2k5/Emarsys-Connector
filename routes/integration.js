@@ -443,7 +443,6 @@ router.post('/orders-extract', async (req, res) => {
       res.json({
         success: true,
         data: {
-          orders: orders.list || [],
           pagination: orders.paging || null,
           totalOrders: orders.list ? orders.list.length : 0,
           period: {
@@ -731,10 +730,25 @@ router.get('/orders-extract-all', async (req, res) => {
       for (let i = 0; i < detailedOrders.length; i++) {
         const orderDetail = detailedOrders[i];
         const orderId = orderDetail.orderId || orderDetail.id;
+        
+        // Filtra pedidos de marketplace antes do envio para o hook
+        const marketplaceValidator = require('../utils/marketplaceValidator');
+        
+        if (marketplaceValidator.isMarketplaceOrder(orderId)) {
+          console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
+          hookResults.total--; // Ajusta o total para refletir apenas pedidos processados
+          continue;
+        }
+        
         console.log(`📨 Enviando pedido ${orderId} para hook (${i + 1}/${detailedOrders.length})...`);
         const result = await vtexOrdersService.sendOrderToHook(orderDetail);
         if (result.success) {
-          hookResults.success++;
+          if (result.skipped) {
+            console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
+            hookResults.success++; // Conta como sucesso pois não é um erro
+          } else {
+            hookResults.success++;
+          }
         } else {
           hookResults.failed++;
           hookResults.errors.push({ orderId, status: result.status, error: result.error, data: result.data });
@@ -805,7 +819,7 @@ router.get('/orders-extract-all', async (req, res) => {
             syncSuccess: syncOrdersResult?.success || false
           },
           hookErrorsSample: hookResults.errors.slice(0, 5),
-          syncOrdersResult: syncOrdersResult
+          syncOrdersResult: syncOrdersResult?.data?.data?.totalOrders
         },
         timestamp: new Date().toISOString()
       });
@@ -1069,10 +1083,25 @@ router.get('/orders-extract-test-details', async (req, res) => {
       for (let i = 0; i < detailedOrders.length; i++) {
         const orderDetail = detailedOrders[i];
         const orderId = orderDetail.orderId || orderDetail.id;
+        
+        // Filtra pedidos de marketplace antes do envio para o hook
+        const marketplaceValidator = require('../utils/marketplaceValidator');
+        
+        if (marketplaceValidator.isMarketplaceOrder(orderId)) {
+          console.log(`🔄 TESTE: Pulando pedido de marketplace: ${orderId}`);
+          hookResults.total--; // Ajusta o total para refletir apenas pedidos processados
+          continue;
+        }
+        
         console.log(`📨 TESTE: Enviando pedido ${orderId} para hook (${i + 1}/${detailedOrders.length})...`);
         const result = await vtexOrdersService.sendOrderToHook(orderDetail);
         if (result.success) {
-          hookResults.success++;
+          if (result.skipped) {
+            console.log(`⏭️ TESTE: Pedido ${orderId} já existe na base - pulando`);
+            hookResults.success++; // Conta como sucesso pois não é um erro
+          } else {
+            hookResults.success++;
+          }
         } else {
           hookResults.failed++;
           hookResults.errors.push({ orderId, status: result.status, error: result.error, data: result.data });

@@ -2,8 +2,42 @@
 
 Sistema de integração completo entre VTEX e Emarsys para sincronização de produtos, pedidos e contatos.
 
+## 🐛 **MODO DEBUG - LEIA PRIMEIRO**
+
+> **⚠️ IMPORTANTE:** Antes de executar qualquer sincronização, configure `DEBUG=true` no arquivo `.env` para testar a lógica de marcação `isSync=true` sem enviar dados reais para a Emarsys.
+
+### 🎯 **Para que serve o DEBUG:**
+- ✅ **Testa marcação `isSync=true`** sem envio real para Emarsys
+- ✅ **Evita duplicação** de pedidos na próxima execução
+- ✅ **Valida fluxo completo** antes do envio real
+- ✅ **Debug de problemas** de sincronização
+
+### 🚀 **Como usar:**
+```bash
+# 1. Ativar DEBUG
+echo "DEBUG=true" >> .env
+
+# 2. Executar sincronização (simula envio)
+curl --location 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3&startTime=00:00&endTime=05:00&per_page=100'
+
+# 3. Verificar se pedidos foram marcados
+curl http://localhost:3000/api/ems-orders/pending-sync
+
+# 4. Desativar DEBUG para produção
+echo "DEBUG=false" >> .env
+```
+
+### 📋 **Comportamento:**
+- **DEBUG=true**: Gera CSV + Simula envio + Marca `isSync=true` + Deleta `orders.json`
+- **DEBUG=false**: Gera CSV + Envia real + Marca `isSync=true` + Deleta `orders.json`
+
+### 📖 **Documentação completa:** [Especificação do Modo DEBUG](docs/debug-mode-specification.md)
+
+---
+
 ## 📋 Índice
 
+- [🐛 Modo DEBUG](#-modo-debug---leia-primeiro)
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
 - [Funcionalidades](#funcionalidades)
@@ -152,11 +186,15 @@ PORT=3000
 HOST=0.0.0.0
 NODE_ENV=development
 
+# Debug Mode - CRÍTICO: Configure DEBUG=true para testar antes do envio real
+DEBUG=false
+
 # VTEX Configuration
 VTEX_ACCOUNT_NAME=piccadilly
 VTEX_APP_KEY=seu_app_key
 VTEX_APP_TOKEN=seu_app_token
 VTEX_BASE_URL=https://piccadilly.myvtex.com
+VTEX_AUTH_TOKEN=seu_auth_token_aqui
 
 # Emarsys Configuration
 EMARSYS_USER=seu_usuario
@@ -174,6 +212,22 @@ SFTP_REMOTE_PATH=/home/storage/catalog/catalog.csv.gz
 LOG_LEVEL=info
 ALERT_ERROR_RATE=0.1
 ALERT_RESPONSE_TIME=5000
+
+# Data Entities
+EMS_ORDERS_ENTITY_ID=emsOrdersV2
+ENABLE_ORDER_CLEANUP=false
+```
+
+### 🐛 Configuração do Modo DEBUG
+
+**IMPORTANTE:** Configure `DEBUG=true` para testar a lógica de marcação `isSync=true` antes de enviar dados reais para a Emarsys.
+
+```env
+# Para testes (recomendado)
+DEBUG=true
+
+# Para produção (apenas após validar em DEBUG)
+DEBUG=false
 ```
 
 ### Passo 4: Preparar Diretórios
@@ -207,7 +261,34 @@ Após iniciar, a aplicação estará disponível em:
 
 ### Fluxo de Trabalho Básico
 
-#### 1. Verificar Status do Sistema
+#### 🐛 1. Testar em Modo DEBUG (OBRIGATÓRIO)
+
+**SEMPRE execute em DEBUG primeiro para validar a marcação `isSync=true`:**
+
+```bash
+# 1. Ativar modo DEBUG
+echo "DEBUG=true" >> .env
+
+# 2. Reiniciar aplicação
+npm run dev
+
+# 3. Verificar status DEBUG
+curl -X POST http://localhost:3000/api/ems-orders/test-debug-mode
+
+# 4. Listar pedidos pendentes para teste
+curl http://localhost:3000/api/ems-orders/pending-for-test
+
+# 5. Executar sincronização em DEBUG (simula envio)
+curl --location 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3&startTime=00:00&endTime=05:00&per_page=100'
+
+# 6. Verificar se pedidos foram marcados como isSync=true
+curl http://localhost:3000/api/ems-orders/pending-sync
+
+# 7. Desativar DEBUG para produção
+echo "DEBUG=false" >> .env
+```
+
+#### 2. Verificar Status do Sistema
 
 ```bash
 # Health check
@@ -217,7 +298,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/api/integration/test-connections
 ```
 
-#### 2. Sincronizar Produtos
+#### 3. Sincronizar Produtos
 
 ```bash
 # Sincronização manual
@@ -229,7 +310,7 @@ curl -X POST http://localhost:3000/api/background/sync-products \
   -d '{"maxProducts": 1000}'
 ```
 
-#### 3. Sincronizar Pedidos
+#### 4. Sincronizar Pedidos
 
 ```bash
 # Buscar pedidos dos últimos 7 dias
@@ -238,7 +319,7 @@ curl -X POST http://localhost:3000/api/integration/sales-feed \
   -d '{"startDate": "2025-09-12", "toDate": "2025-09-19"}'
 ```
 
-#### 4. Processar Contatos
+#### 5. Processar Contatos
 
 ```bash
 # Extrair contatos recentes (últimas 6h)
@@ -247,7 +328,7 @@ curl -X POST http://localhost:3000/api/emarsys/contacts/extract-recent \
   -d '{"hours": 6, "useScroll": true}'
 ```
 
-#### 5. Monitorar Jobs
+#### 6. Monitorar Jobs
 
 ```bash
 # Listar jobs em execução
@@ -282,6 +363,56 @@ curl -X POST http://localhost:3000/api/cron-management/start/sync-products
 ```
 
 ## 📡 APIs e Endpoints
+
+### 🐛 Modo DEBUG
+
+#### `POST /api/ems-orders/test-debug-mode`
+Testa o modo DEBUG e executa marcação de pedidos pendentes.
+
+**Resposta DEBUG=true:**
+```json
+{
+  "success": true,
+  "message": "Modo DEBUG ativado - Teste de marcação concluído",
+  "debugMode": true,
+  "testOrders": 3,
+  "result": {
+    "updated": 3,
+    "errors": 0,
+    "total": 3
+  }
+}
+```
+
+#### `GET /api/ems-orders/pending-for-test`
+Lista pedidos pendentes para teste (primeiros 5).
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "message": "5 pedidos pendentes encontrados",
+  "totalPending": 15,
+  "testOrders": [
+    {
+      "id": "12345",
+      "order": "1563641491289-01",
+      "email": "cliente@email.com",
+      "isSync": false
+    }
+  ]
+}
+```
+
+#### `POST /api/ems-orders/test-edit-single`
+Testa edição de um registro específico.
+
+**Body:**
+```json
+{
+  "orderId": "1563641491289-01"
+}
+```
 
 ### Integração Principal
 

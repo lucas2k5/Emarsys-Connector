@@ -90,6 +90,43 @@ class EmarsysSalesService {
    */
   async sendCsvFileToEmarsys(filename = null) {
     try {
+      // Verifica se está em modo DEBUG
+      const debugMode = process.env.DEBUG === 'true';
+      
+      if (debugMode) {
+        console.log('🐛 [DEBUG MODE] Pulando envio para Emarsys - apenas simulando envio...');
+        
+        let csvFile;
+        if (filename) {
+          const filePath = path.join(this.exportsDir, filename);
+          try {
+            const stats = await fs.stat(filePath);
+            csvFile = { filename, filePath, size: stats.size, modified: stats.mtime };
+            console.log(`📄 [DEBUG] Arquivo encontrado: ${filename}`);
+          } catch (error) {
+            throw new Error(`Arquivo não encontrado: ${filename}`);
+          }
+        } else {
+          csvFile = await this.getLatestOrdersCsvFile();
+          if (!csvFile) {
+            throw new Error('Nenhum arquivo CSV de orders encontrado');
+          }
+        }
+        
+        // Simula o envio bem-sucedido
+        console.log('✅ [DEBUG] Simulação de envio bem-sucedida para Emarsys');
+        
+        return {
+          success: true,
+          response: { message: 'DEBUG MODE - Envio simulado' },
+          source: 'debug',
+          filename: csvFile.filename,
+          csvSize: csvFile.size,
+          fileSize: csvFile.size,
+          debugMode: true
+        };
+      }
+      
       console.log('📤 [EmarsysSalesService] Enviando arquivo CSV para Emarsys...');
       
       const token = this.getAuthToken();
