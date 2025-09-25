@@ -399,8 +399,8 @@ router.post('/test-edit-single', async (req, res) => {
 router.get('/scroll', async (req, res) => {
   try {
     console.log('🔎 [ROUTE] /api/ems-orders/scroll called');
-    const appKey = req.query.appKey;
-    const appToken = req.query.appToken;
+    const appKey = req.query.appKey || req.get('X-VTEX-API-AppKey') || process.env.VTEX_APP_KEY;
+    const appToken = req.query.appToken || req.get('X-VTEX-API-AppToken') || process.env.VTEX_APP_TOKEN;
 
     if (!appKey || !appToken) {
       return res.status(400).json({
