@@ -1,10 +1,11 @@
 const axios = require('axios');
 const path = require('path');
 const OrderSyncHelper = require('../helpers/orderSyncHelper');
+const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
 
 class EmsOrdersService {
   constructor() {
-    this.vtexBaseUrl = process.env.VTEX_BASE_URL;
+    this.vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
     this.entity = 'emsOrdersV2';
     this.exportsDir = path.join(__dirname, '..', 'exports');
     this.orderSyncHelper = new OrderSyncHelper(this.vtexBaseUrl, this.entity, () => this.getVtexHeaders());
@@ -20,7 +21,6 @@ class EmsOrdersService {
       'cache-control': 'max-age=0'
     };
   }
-
 
   /**
    * [DEPRECATED] Os registros já existem na base, não precisa inserir novos
@@ -50,29 +50,39 @@ class EmsOrdersService {
   async listEmsOrdersV2PendingSync() {
     try {
       const url = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
+      const perPage = 100;
+      let page = 1;
+      let fetched = 0;
+      let pages = 0;
+      const pending = [];
       
-      // Busca por isSync=false (sempre false por padrão)
-      const params = {
-        _where: 'isSync=false',
-        _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync',
-        _size: 1000,
-        _sort: 'timestamp ASC'
-      };
+      console.log('🔍 Buscando pedidos pendentes via data entities com paginação (_page/_perPage)...');
       
-      console.log('🔍 Buscando pedidos pendentes via data entities (isSync=false)...');
-      
-      const response = await axios.get(url, { 
-        params, 
-        headers: this.getVtexHeaders(), 
-        timeout: 60000 
-      });
-      
-      if (Array.isArray(response.data)) {
-        console.log(`✅ ${response.data.length} pedidos pendentes encontrados (isSync=false)`);
-        return response.data;
+      while (true) {
+        const params = {
+          _where: 'isSync=false OR isSync="false" OR isSync IS NULL',
+          _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
+          _schema: this.entity,
+          _page: page,
+          _perPage: perPage,
+          _sort: 'timestamp ASC'
+        };
+        
+        const response = await axios.get(url, {
+          params,
+          headers: this.getVtexHeaders(),
+          timeout: 60000
+        });
+        const items = Array.isArray(response.data) ? response.data : [];
+        if (items.length > 0) pending.push(...items);
+        fetched += items.length;
+        pages += 1;
+        if (items.length < perPage) break;
+        page += 1;
       }
       
-      return [];
+      console.log(`✅ ${pending.length} pendentes (pages=${pages}, fetched=${fetched})`);
+      return pending;
       
     } catch (error) {
       console.error('❌ Erro ao buscar pedidos pendentes via data entities:', error.message);
@@ -87,77 +97,38 @@ class EmsOrdersService {
    * @param {string} status - Status do pedido (opcional)
    * @returns {Promise<Object|null>} Registro existente ou null
    */
-  async checkExistingRecord(order, item, status = null) {
+  async checkExistingRecord(order, item, status) {
     try {
       const searchUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
       
-      // Busca simplificada: apenas order + item (sem isSync para evitar problemas do Master Data V2)
-      let whereClause = `order="${order}" AND item="${item}"`;
-      if (status) {
-        whereClause += ` AND order_status="${status}"`;
-      }
-      
+      // Busca direta e resiliente com where completo e paginação mínima
+      const where = `order="${order}" AND item="${item}" AND (isSync=false OR isSync="false" OR isSync IS NULL)`;
       const params = {
-        _where: whereClause,
+        _where: where,
         _fields: 'id,order,item,isSync,order_status',
-        _size: 100
+        _schema: this.entity,
+        _page: 1,
+        _perPage: 1
       };
 
-      console.log(`🔍 Verificando se registro existe: order=${order} + item=${item} + status=${status}...`);
-      console.log(`🔍 WHERE clause simplificada: ${whereClause}`);
+      console.log(`🔍 Verificando registro pendente: order=${order} + item=${item} (status esperado: ${status || 'qualquer'})...`);
 
-      try {
-        const searchRes = await axios.get(searchUrl, {
-          params,
-          headers: this.getVtexHeaders(),
-          timeout: 30000
-        });
+      const searchRes = await axios.get(searchUrl, {
+        params,
+        headers: this.getVtexHeaders(),
+        timeout: 30000
+      });
 
-        if (Array.isArray(searchRes.data) && searchRes.data.length > 0) {
-          // Filtra apenas os que têm isSync=false (já que nunca será null)
-          const pendingRecords = searchRes.data.filter(record => record.isSync === false);
-          
-          if (pendingRecords.length > 0) {
-            const found = pendingRecords[0];
-            console.log(`✅ Registro encontrado: ${found.id} (isSync: ${found.isSync}, status: ${found.order_status})`);
-            return found;
-          } else {
-            console.log(`ℹ️ Registro encontrado mas já sincronizado: order=${order} + item=${item} (isSync: ${searchRes.data[0].isSync})`);
-          }
+      const items = Array.isArray(searchRes.data) ? searchRes.data : [];
+      const found = items[0];
+      if (found && found.id) {
+        if (status == null || status === undefined || found.order_status === status) {
+          console.log(`✅ Registro encontrado: ${found.id} (isSync: ${found.isSync}, status: ${found.order_status})`);
+          return found;
         }
-      } catch (error) {
-        console.warn(`⚠️ Erro na busca:`, error.message);
       }
 
-      console.log(`ℹ️ Registro não encontrado: order=${order} + item=${item} + status=${status}`);
-      
-      // Busca alternativa sem filtro de status para debug
-      const debugParams = {
-        _where: `order="${order}" AND item="${item}"`,
-        _fields: 'id,order,item,isSync,order_status',
-        _size: 10
-      };
-      
-      try {
-        const debugRes = await axios.get(searchUrl, {
-          params: debugParams,
-          headers: this.getVtexHeaders(),
-          timeout: 30000
-        });
-        
-        if (Array.isArray(debugRes.data) && debugRes.data.length > 0) {
-          console.log(`🔍 Registros encontrados sem filtro de status:`, debugRes.data.map(r => ({
-            id: r.id,
-            order: r.order,
-            item: r.item,
-            isSync: r.isSync,
-            status: r.order_status
-          })));
-        }
-      } catch (debugError) {
-        console.log(`🔍 Erro na busca de debug:`, debugError.message);
-      }
-      
+      console.log(`ℹ️ Registro não encontrado entre pendentes: order=${order} + item=${item} + status=${status}`);
       return null;
     } catch (error) {
       console.error(`❌ Erro ao verificar registro existente:`, {
@@ -179,101 +150,10 @@ class EmsOrdersService {
    * @returns {Object} Resultado da operação
    */
   async markAsSynced(records) {
-    return await this.orderSyncHelper.markAsSynced(records);
+    console.log('▶️ markAsSynced | Iniciando marcação de pedidos como sincronizados...');
+    return await this.orderSyncHelper.markAsSynced(records, this.getVtexHeaders());
   }
-
-  /**
-   * Processa pedidos pendentes e envia para Emarsys
-   * @param {Object} options - Opções de processamento
-   * @returns {Object} Resultado do processamento
-   */
-  async processPendingOrders(options = {}) {
-    try {
-      console.log('🔄 Iniciando processamento de pedidos pendentes...');
-      
-      // 1. Lista pedidos pendentes
-      const pending = await this.listEmsOrdersV2PendingSync();
-      if (!pending.length) {
-        return { success: true, message: 'Sem pedidos pendentes para enviar', sent: 0 };
-      }
-      
-      console.log(`📊 ${pending.length} pedidos pendentes encontrados`);
-      
-      // 2. Envia para Emarsys usando o serviço existente
-      const emarsysSalesService = require('./emarsysSalesService');
-      const result = await emarsysSalesService.sendUnsyncedOrders(pending);
-      
-      // 3. Se o envio foi bem-sucedido, marca como sincronizados
-      if (result.success && result.total > 0) {
-        await this.markAsSynced(pending);
-        console.log(`✅ ${pending.length} pedidos marcados como sincronizados`);
-      }
-      
-      return {
-        success: result.success,
-        sent: result.total || 0,
-        failed: result.failed || 0,
-        message: result.message || 'Processamento concluído',
-        details: result
-      };
-      
-    } catch (error) {
-      console.error('❌ Erro ao processar pedidos pendentes:', error);
-      return {
-        success: false,
-        error: error.message,
-        sent: 0,
-        failed: 0
-      };
-    }
-  }
-
-  /**
-   * Reprocessa pedidos não enviados (força reprocessamento)
-   * @param {Object} options - Opções de reprocessamento
-   * @returns {Object} Resultado do reprocessamento
-   */
-  async reprocessUnsentOrders(options = {}) {
-    try {
-      console.log('🔄 Iniciando reprocessamento de pedidos não enviados...');
-      
-      // 1. Lista todos os pedidos com isSync=false
-      const unsent = await this.listEmsOrdersV2PendingSync();
-      if (!unsent.length) {
-        return { success: true, message: 'Nenhum pedido não enviado encontrado', processed: 0 };
-      }
-      
-      console.log(`📊 ${unsent.length} pedidos não enviados encontrados`);
-      
-      // 2. Envia para Emarsys
-      const emarsysSalesService = require('./emarsysSalesService');
-      const result = await emarsysSalesService.sendUnsyncedOrders(unsent);
-      
-      // 3. Marca como sincronizados se o envio foi bem-sucedido
-      if (result.success && result.total > 0) {
-        await this.markAsSynced(unsent);
-        console.log(`✅ ${unsent.length} pedidos reprocessados e marcados como sincronizados`);
-      }
-      
-      return {
-        success: result.success,
-        processed: result.total || 0,
-        failed: result.failed || 0,
-        message: result.message || 'Reprocessamento concluído',
-        details: result
-      };
-      
-    } catch (error) {
-      console.error('❌ Erro ao reprocessar pedidos:', error);
-      return {
-        success: false,
-        error: error.message,
-        processed: 0,
-        failed: 0
-      };
-    }
-  }
-
+  
   /**
    * Busca pedidos por período (registros já existem na base)
    * @param {string} startDate - Data inicial

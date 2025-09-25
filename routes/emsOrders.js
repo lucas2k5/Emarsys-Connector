@@ -1,69 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const emsOrdersService = require('../services/emsOrdersService');
-
-
-/**
- * @route POST /api/ems-orders/reprocess-unsent
- * @desc Reprocessa pedidos não enviados para Emarsys
- * @access Public
- */
-router.post('/reprocess-unsent', async (req, res) => {
-  try {
-    console.log('🔄 [ROUTE] Iniciando reprocessamento de pedidos não enviados...');
-    
-    const result = await emsOrdersService.reprocessUnsentOrders();
-    
-    res.json({
-      success: result.success,
-      message: result.message || 'Reprocessamento concluído',
-      processed: result.processed || 0,
-      failed: result.failed || 0,
-      details: result.details || null,
-      error: result.error || null,
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('❌ [ROUTE] Erro ao reprocessar pedidos:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * @route POST /api/ems-orders/process-pending
- * @desc Processa pedidos pendentes de sincronização
- * @access Public
- */
-router.post('/process-pending', async (req, res) => {
-  try {
-    console.log('🔄 [ROUTE] Processando pedidos pendentes...');
-    
-    const result = await emsOrdersService.processPendingOrders();
-    
-    res.json({
-      success: result.success,
-      message: result.message || 'Processamento concluído',
-      sent: result.sent || 0,
-      failed: result.failed || 0,
-      details: result.details || null,
-      error: result.error || null,
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('❌ [ROUTE] Erro ao processar pedidos pendentes:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+const { scrollOrders } = require('../utils/mdScroll');
 
 /**
  * @route GET /api/ems-orders/pending
@@ -308,148 +246,6 @@ router.post('/test-order-lookup', async (req, res) => {
   }
 });
 
-router.post('/test-mark-sync', async (req, res) => {
-  try {
-    const { orderIds } = req.body;
-    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'orderIds deve ser um array não vazio',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    console.log(`🔄 [ROUTE] Testando marcação de sincronização para ${orderIds.length} pedidos...`);
-    
-    // Cria registros de teste baseados nos orderIds
-    const testRecords = orderIds.map(orderId => ({
-      order: orderId,
-      email: 'teste@email.com',
-      item: 'ITEM_TESTE',
-      quantity: 1,
-      price: '99.90',
-      timestamp: new Date().toISOString()
-    }));
-    
-    const result = await emsOrdersService.markAsSynced(testRecords);
-    
-    res.json({
-      success: true,
-      message: 'Teste de marcação concluído',
-      orderIds,
-      result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ [ROUTE] Erro ao testar marcação:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-router.post('/test-debug-mode', async (req, res) => {
-  try {
-    const debugMode = process.env.DEBUG === 'true';
-    
-    console.log(`🐛 [ROUTE] Testando modo DEBUG - Status: ${debugMode ? 'ATIVADO' : 'DESATIVADO'}`);
-    
-    if (debugMode) {
-      console.log('🐛 [DEBUG] Executando teste de marcação isSync=true sem envio para Emarsys...');
-      
-      // Busca pedidos pendentes para teste
-      const pendingOrders = await emsOrdersService.listEmsOrdersV2PendingSync();
-      
-      if (pendingOrders.length > 0) {
-        // Pega apenas os primeiros 3 para teste
-        const testOrders = pendingOrders.slice(0, 3);
-        console.log(`🐛 [DEBUG] Testando marcação de ${testOrders.length} pedidos...`);
-        
-        const result = await emsOrdersService.markAsSynced(testOrders);
-        
-        res.json({
-          success: true,
-          message: 'Modo DEBUG ativado - Teste de marcação concluído',
-          debugMode: true,
-          testOrders: testOrders.length,
-          result,
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        res.json({
-          success: true,
-          message: 'Modo DEBUG ativado - Nenhum pedido pendente encontrado',
-          debugMode: true,
-          testOrders: 0,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } else {
-      res.json({
-        success: true,
-        message: 'Modo DEBUG desativado - Configure DEBUG=true no .env para ativar',
-        debugMode: false,
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    console.error('❌ [ROUTE] Erro ao testar modo DEBUG:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Endpoint para listar pedidos pendentes para teste
-router.get('/pending-for-test', async (req, res) => {
-  try {
-    console.log('📋 [ROUTE] Listando pedidos pendentes para teste...');
-    
-    const pendingOrders = await emsOrdersService.listEmsOrdersV2PendingSync();
-    
-    if (pendingOrders.length === 0) {
-      return res.json({
-        success: true,
-        message: 'Nenhum pedido pendente encontrado',
-        count: 0,
-        orders: [],
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    // Retorna apenas os primeiros 5 para teste
-    const testOrders = pendingOrders.slice(0, 5).map(order => ({
-      id: order.id,
-      order: order.order,
-      email: order.email,
-      isSync: order.isSync,
-      timestamp: order.timestamp
-    }));
-    
-    console.log(`📋 Encontrados ${pendingOrders.length} pedidos pendentes, retornando ${testOrders.length} para teste`);
-    
-    res.json({
-      success: true,
-      message: `${pendingOrders.length} pedidos pendentes encontrados`,
-      totalPending: pendingOrders.length,
-      testOrders,
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('❌ [ROUTE] Erro ao listar pedidos pendentes:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // Endpoint para testar edição de um registro específico
 router.post('/test-edit-single', async (req, res) => {
   try {
@@ -586,6 +382,47 @@ router.post('/test-edit-single', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// module.exports moved to bottom to ensure routes below are registered
+
+/**
+ * @route GET /api/ems-orders/scroll
+ * @desc Proxy do VTEX MD Scroll enviando body x-www-form-urlencoded via GET
+ *       Headers (AppKey/AppToken) vêm via query params para este teste.
+ *       Ex.: /api/ems-orders/scroll?appKey=XXX&appToken=YYY
+ * @access Public (não enviar chaves reais em produção)
+ */
+router.get('/scroll', async (req, res) => {
+  try {
+    console.log('🔎 [ROUTE] /api/ems-orders/scroll called');
+    const appKey = req.query.appKey;
+    const appToken = req.query.appToken;
+
+    if (!appKey || !appToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Parâmetros appKey e appToken são obrigatórios',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const headers = {
+      'X-VTEX-API-AppKey': appKey,
+      'X-VTEX-API-AppToken': appToken
+    };
+
+    const json = await scrollOrders(headers);
+
+    return res.status(200).json(json);
+  } catch (err) {
+    console.error('❌ [ROUTE] Erro no scroll:', err);
+    return res.status(502).json({
+      success: false,
+      error: err.message || 'Erro ao consultar VTEX MD scroll',
       timestamp: new Date().toISOString()
     });
   }

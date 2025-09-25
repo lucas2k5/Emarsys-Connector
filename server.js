@@ -56,6 +56,7 @@ app.use((req, res, next) => {
 const ALLOWED_PREFIXES = [
   '/api/emarsys',
   '/api/vtex',
+  '/api/ems-orders',
   '/api/integration',
   '/api/background',
   '/api/cron',

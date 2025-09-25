@@ -1430,8 +1430,9 @@ class VtexOrdersService {
               
               // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
               const marketplaceValidator = require('../utils/marketplaceValidator');
-              const filteredForSync = ordersToProcess.filter(o => {
-                const oid = o.order || o.orderId || o.id || '';
+
+              const filteredForSync = orders.filter(o => {
+                const oid = o.order;
                 return !marketplaceValidator.isMarketplaceOrder(oid);
               });
 
@@ -1439,21 +1440,42 @@ class VtexOrdersService {
               const ordersToMarkAsSynced = filteredForSync.map(order => ({
                 id: order.id,
                 order: order.order,
-                email: order.email,
                 item: order.item,
-                quantity: order.quantity,
-                price: order.price,
-                timestamp: order.timestamp
+                order_status: order.order_status,
+                isSync: true
               }));
 
-              const skippedMarketplace = ordersToProcess.length - filteredForSync.length;
+              const skippedMarketplace = orders.length - filteredForSync.length;
               if (skippedMarketplace > 0) {
                 console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
               }
               
+              
               if (ordersToMarkAsSynced.length > 0) {
                 await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
                 console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
+
+                // Chama a rota interna de scroll para buscar próximos pendentes
+                try {
+                  const axios = require('axios');
+                  const baseUrl = process.env.INTERNAL_BASE_URL || `http://localhost:${process.env.PORT}`;
+                  const appKey = process.env.VTEX_APP_KEY;
+                  const appToken = process.env.VTEX_APP_TOKEN;
+
+                  if (appKey && appToken) {
+                    const url = `${baseUrl}/api/ems-orders/scroll`;
+                    console.log('🔎 Disparando scroll de emsOrdersV2 via rota interna...', { url });
+                    const scrollResp = await axios.get(url, {
+                      params: { appKey, appToken },
+                      timeout: 20000
+                    });
+                    console.log('📥 Scroll executado. Status:', scrollResp.status);
+                  } else {
+                    console.warn('⚠️ VTEX_APP_KEY/VTEX_APP_TOKEN não definidos. Pulando chamada ao scroll.');
+                  }
+                } catch (scrollErr) {
+                  console.error('❌ Falha ao chamar rota interna de scroll:', scrollErr.message);
+                }
               }
             } catch (syncError) {
               console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
@@ -1582,11 +1604,6 @@ class VtexOrdersService {
     return { errors, warnings };
   }
 
-  /**
-   * Gera conteúdo CSV para Emarsys
-   * @param {Array} orders - Array de pedidos
-   * @returns {string} Conteúdo CSV
-   */
   /**
    * Gera conteúdo CSV no formato específico da Emarsys com validação
    * @param {Array} orders - Array de pedidos
@@ -1736,14 +1753,6 @@ class VtexOrdersService {
    }
 
   /**
-   * Gera conteúdo CSV simples para uso por outros serviços
-   * @param {Array} order - Array de pedidos
-   * @param {Array} headers - Headers personalizados (opcional)
-   * @returns {string} Conteúdo CSV
-   */
-
-
-  /**
    * Envia pedidos para Emarsys
    * @param {Array} orders - Array de pedidos
    * @returns {Object} Resultado do envio
@@ -1786,7 +1795,7 @@ class VtexOrdersService {
           // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
           const marketplaceValidator = require('../utils/marketplaceValidator');
           const filteredForSync = orders.filter(o => {
-            const oid = o.order || o.orderId || o.id || '';
+            const oid = o.order;
             return !marketplaceValidator.isMarketplaceOrder(oid);
           });
 
@@ -1833,42 +1842,7 @@ class VtexOrdersService {
           console.log('⏸️ Limpeza de orders pausada via ENABLE_ORDER_CLEANUP=false');
         } else {
           console.log('⚠️ ATENÇÃO: Limpeza de orders habilitada. Recomenda-se manter ENABLE_ORDER_CLEANUP=false para preservar histórico.');
-          // Captura a referência do axios antes da função assíncrona
-          const axiosInstance = axios;
           
-          // Executa a limpeza de forma assíncrona sem bloquear o retorno
-          setImmediate(async () => {
-            try {
-              console.log('🧹 Limpando base de orders após envio bem-sucedido para Emarsys...');
-            
-            const cleanupResponse = await axiosInstance({
-              method: 'DELETE',
-              url: `${process.env.VTEX_BASE_URL}/_v2/orderss/all`,
-              headers: {
-                'Content-Type': 'application/json',
-                'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-                'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
-              },
-              data: {
-                confirm: 'DELETE_ALL_ORDERS'
-              },
-              timeout: 60000
-            });
-            console.log('🧹 Limpeza de orders retornou status:', cleanupResponse);
-            if (cleanupResponse.status >= 200 && cleanupResponse.status < 300) {
-              console.log('✅ Base de orders limpa com sucesso');
-            } else {
-              console.warn(`⚠️ Limpeza de orders retornou status inesperado: ${cleanupResponse.status}`);
-            }
-          } catch (cleanupError) {
-            const status = cleanupError?.response?.status;
-            if (status === 504) {
-              console.log('✅ Operação de limpeza iniciada. 504 indica execução em segundo plano. Verifique os logs.');
-            } else {
-              console.error('❌ Erro ao limpar base de orders após envio:', cleanupError?.message || cleanupError);
-            }
-          }
-        });
         }
       }
       
@@ -2104,6 +2078,7 @@ class VtexOrdersService {
     try {
       // URL completa do VTEX Store Framework para o hook
       const hookUrl = 'https://ems--piccadilly.myvtex.com/_v/order/hook';
+      const axios = require('axios');
       
       if (!orderId) {
         console.error('❌ Pedido sem orderId fornecido');
@@ -2130,18 +2105,14 @@ class VtexOrdersService {
       // ETAPA 2: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
       const emsOrdersService = require('./emsOrdersService');
       
-      // Extrai informações do pedido de forma mais robusta
-      const orderStatus = orderDetail.status || orderDetail.orderStatus || 'unknown';
+      const orderStatus = orderDetail.status;
       
       // Busca o item - sempre usa refId (não productId)
       let item = null;
       
       // 1. Tenta orderDetail.item primeiro
-      if (orderDetail.item) {
-        item = orderDetail.item;
-      }
-      // 2. Tenta items[0].refId (sempre refId, nunca productId)
-      else if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
+      if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
+        
         const firstItem = orderDetail.items[0];
         item = firstItem.refId || firstItem.sku || firstItem.itemId;
       }
@@ -2149,18 +2120,6 @@ class VtexOrdersService {
       if (!item) {
         console.error(`❌ [${orderId}] Não foi possível extrair item (refId) do pedido:`, {
           orderId: orderId,
-          hasItem: !!orderDetail.item,
-          hasItems: !!orderDetail.items,
-          itemsLength: orderDetail.items?.length,
-          firstItem: orderDetail.items?.[0],
-          allItems: orderDetail.items?.map((item, index) => ({
-            index,
-            refId: item.refId,
-            sku: item.sku,
-            itemId: item.itemId,
-            productId: item.productId,
-            id: item.id
-          }))
         });
         return { 
           success: false, 
@@ -2168,24 +2127,6 @@ class VtexOrdersService {
           orderDetail: orderDetail 
         };
       }
-      
-      console.log(`🔍 Buscando item (refId) para verificação: ${item} (de orderDetail.item: ${orderDetail.item})`);
-      console.log(`🔍 Estrutura do orderDetail:`, {
-        hasItem: !!orderDetail.item,
-        hasItems: !!orderDetail.items,
-        itemsLength: orderDetail.items?.length,
-        orderId: orderDetail.orderId,
-        orderStatus: orderStatus
-      });
-      
-      console.log(`🔍 [${orderId}] ETAPA 2: Verificando se registro existe na emsOrdersV2: order=${orderId} + item=${item} + status=${orderStatus} + isSync=false`);
-      console.log(`🔍 [${orderId}] Valores para consulta:`, {
-        order: orderId,
-        item: item,
-        status: orderStatus,
-        itemType: typeof item,
-        statusType: typeof orderStatus
-      });
       
       const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
       
@@ -2237,8 +2178,8 @@ class VtexOrdersService {
     } catch (error) {
       const status = error?.response?.status;
       const data = error?.response?.data;
-      const orderId = orderDetail?.orderId || orderDetail?.id || 'sem-id';
-      console.error(`❌ Erro ao enviar pedido ${orderId} para hook:`, status || error.message, data || '');
+      const safeOrderId = orderId || 'sem-id';
+      console.error(`❌ Erro ao enviar pedido ${safeOrderId} para hook:`, status || error.message, data || '');
       return { success: false, error: error.message, status, data };
     }
   }
