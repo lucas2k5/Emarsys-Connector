@@ -415,7 +415,6 @@ router.get('/scroll', async (req, res) => {
       'X-VTEX-API-AppToken': appToken
     };
 
-    // Parâmetros do scroll baseados nos query params
     const params = {
     _where: req.query.where,
       _fields: req.query.fields,
@@ -424,8 +423,6 @@ router.get('/scroll', async (req, res) => {
       _perPage: req.query.perPage || '100'
     };
 
-    console.log('📋 Parâmetros do scroll:', params);
-
     const json = await scrollOrders(headers, params);
 
     return res.status(200).json(json);
@@ -433,7 +430,7 @@ router.get('/scroll', async (req, res) => {
     console.error('❌ [ROUTE] Erro no scroll:', err);
     return res.status(502).json({
       success: false,
-      error: err.message || 'Erro ao consultar VTEX MD scroll',
+      error: err.message.data || 'Erro ao consultar VTEX MD scroll',
       timestamp: new Date().toISOString()
     });
   }
