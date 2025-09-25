@@ -2129,8 +2129,9 @@ class VtexOrdersService {
       }
       
       const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
-      
+      console.log('🔍 existingRecord | sendOrderToHook:', existingRecord);
       if (existingRecord) {
+        console.log('🔍 existingRecord |IF| sendOrderToHook:', existingRecord);
         if (existingRecord.isSync === true) {
           console.log(`⏭️ [${orderId}] Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
           return { 

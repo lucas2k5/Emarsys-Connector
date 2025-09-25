@@ -60,7 +60,7 @@ class EmsOrdersService {
       
       while (true) {
         const params = {
-          _where: 'isSync=false OR isSync="false" OR isSync IS NULL',
+          _where: 'isSync=false OR isSync=null',
           _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
           _schema: this.entity,
           _page: page,
@@ -101,13 +101,22 @@ class EmsOrdersService {
     const https = require('https');
     const querystring = require('querystring');
     const { URL } = require('url');
-    
     return new Promise((resolve, reject) => {
       try {
         // Prepara options para enviar body urlencoded em requisição GET
+        const whereParts = [
+          'isSync=false',
+          `order="${order}"`
+        ];
+        if (item) {
+          whereParts.push(`item="${item}"`);
+        }
+        if (status) {
+          whereParts.push(`order_status="${status}"`);
+        }
         const formBody = querystring.stringify({
           '_schema': 'emsOrdersV2',
-          '_where': `order="${order}" AND item="${item}" AND (isSync=false OR isSync="false")`,
+          '_where': whereParts.join(' AND '),
           '_fields': 'id,order,item,isSync,order_status',
           '_sort': 'timestamp ASC',
           '_page': '1',
@@ -129,8 +138,6 @@ class EmsOrdersService {
           }
         };
 
-        console.log(`🔍 Verificando registro pendente: order=${order} + item=${item} (status esperado: ${status || 'qualquer'})...`);
-
         // Faz a requisição
         const req = https.request(options, (res) => {
           let data = '';
@@ -144,27 +151,19 @@ class EmsOrdersService {
           res.on('end', () => {
             try {
               const jsonData = JSON.parse(data);
-              console.log('🔎 searchRes | checkExistingRecord:', jsonData);
               
               const items = Array.isArray(jsonData) ? jsonData : [];
               const found = items[0];
       
               if (found && found.id) {
-                if (status == null || status === undefined || found.order_status === status) {
-                  console.log(`✅ Registro encontrado: ${found.id} (isSync: ${found.isSync}, status: ${found.order_status})`);
+                  console.log(`✅ Registro encontrado: ${found.id}`);
                   resolve(found);
-                  return;
-                } else {
-                  console.log(`⚠️ Status não confere: esperado=${status}, encontrado=${found.order_status}`);
-                }
+                  return;                
               }
-              
               resolve(null);
               
             } catch (parseError) {
-              console.error('🚨🚨🚨 ERRO CRÍTICO - Falha ao parsear resposta 🚨🚨🚨');
-              console.error('📋 Resposta bruta:', data);
-              console.error('❌ Erro de parse:', parseError.message);
+              console.error('❌ checkExistingRecord | Erro de parse:', parseError.message);
               resolve(null);
             }
           });
@@ -179,8 +178,7 @@ class EmsOrdersService {
           resolve(null);
         });
 
-        // Envia o body
-        req.write(formBody);
+        // Não enviar body em GET
         req.end();
 
       } catch (error) {
