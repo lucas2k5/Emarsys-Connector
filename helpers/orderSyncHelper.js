@@ -25,7 +25,16 @@ class OrderSyncHelper {
     const pendingByKey = new Map();
     try {
       console.log('🔎 Buscando registros via util mdScrollAll (Master Data /scroll)...');
-      const items = await scrollOrders(headers);
+      
+      const params = {
+        _where: 'isSync=false OR isSync="false"',
+        _fields: 'id,order,item,isSync,order_status,timestamp',
+        _sort: 'timestamp ASC',
+        _page: '1',
+        _perPage: '100'
+      };
+      
+      const items = await scrollOrders(headers, params);
 
       // scrollOrders costuma retornar apenas { id, _self }. Precisamos enriquecer para obter order/item
       let fetchedCount = Array.isArray(items) ? items.length : 0;

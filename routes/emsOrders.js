@@ -415,7 +415,18 @@ router.get('/scroll', async (req, res) => {
       'X-VTEX-API-AppToken': appToken
     };
 
-    const json = await scrollOrders(headers);
+    // Parâmetros do scroll baseados nos query params
+    const params = {
+      _where: req.query.where || 'isSync=false OR isSync="false"',
+      _fields: req.query.fields || 'id,order,item,isSync,order_status,timestamp',
+      _sort: req.query.sort || 'timestamp ASC',
+      _page: req.query.page || '1',
+      _perPage: req.query.perPage || '100'
+    };
+
+    console.log('📋 Parâmetros do scroll:', params);
+
+    const json = await scrollOrders(headers, params);
 
     return res.status(200).json(json);
   } catch (err) {

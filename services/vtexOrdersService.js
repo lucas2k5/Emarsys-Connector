@@ -2272,7 +2272,7 @@ class VtexOrdersService {
           
           // Filtra os dados formatados que correspondem aos pedidos da VTEX OMS
           formattedOrders = formattedData.filter(o => orderIds.includes(o.order || o.orderId));
-          console.log('📋 Dados formatados filtrados:[REGISTROS]', JSON.stringify(formattedOrders.slice(0, 2), null, 2));
+          
         } else {
           console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response?.data?.data?.length || 'sem data');
           console.log('📋 Resposta completa para debug:', {

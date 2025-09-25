@@ -98,50 +98,98 @@ class EmsOrdersService {
    * @returns {Promise<Object|null>} Registro existente ou null
    */
   async checkExistingRecord(order, item, status) {
-    try {
-      const searchUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
+    const https = require('https');
+    const querystring = require('querystring');
+    const { URL } = require('url');
+    
+    return new Promise((resolve, reject) => {
+      try {
+        // Prepara options para enviar body urlencoded em requisição GET
+        const formBody = querystring.stringify({
+          '_schema': 'emsOrdersV2',
+          '_where': `order="${order}" AND item="${item}" AND (isSync=false OR isSync="false")`,
+          '_fields': 'id,order,item,isSync,order_status',
+          '_sort': 'timestamp ASC',
+          '_page': '1',
+          '_perPage': '1'
+        });
+
+        const url = new URL('https://piccadilly.vtexcommercestable.com.br/api/dataentities/emsOrdersV2/search');
+        const headers = this.getVtexHeaders();
+
+        const options = {
+          hostname: url.hostname,
+          path: url.pathname,
+          method: 'GET',
+          headers: {
+            ...headers,
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': Buffer.byteLength(formBody)
+          }
+        };
+
+        console.log(`🔍 Verificando registro pendente: order=${order} + item=${item} (status esperado: ${status || 'qualquer'})...`);
+
+        // Faz a requisição
+        const req = https.request(options, (res) => {
+          let data = '';
+
+          // Coleta os dados da resposta
+          res.on('data', (chunk) => {
+            data += chunk;
+          });
+
+          // Quando a resposta terminar
+          res.on('end', () => {
+            try {
+              const jsonData = JSON.parse(data);
+              console.log('🔎 searchRes | checkExistingRecord:', jsonData);
+              
+              const items = Array.isArray(jsonData) ? jsonData : [];
+              const found = items[0];
       
-      // Busca direta e resiliente com where completo e paginação mínima
-      const where = `order="${order}" AND item="${item}" AND (isSync=false OR isSync="false" OR isSync IS NULL)`;
-      const params = {
-        _where: where,
-        _fields: 'id,order,item,isSync,order_status',
-        _schema: this.entity,
-        _page: 1,
-        _perPage: 1
-      };
+              if (found && found.id) {
+                if (status == null || status === undefined || found.order_status === status) {
+                  console.log(`✅ Registro encontrado: ${found.id} (isSync: ${found.isSync}, status: ${found.order_status})`);
+                  resolve(found);
+                  return;
+                } else {
+                  console.log(`⚠️ Status não confere: esperado=${status}, encontrado=${found.order_status}`);
+                }
+              }
+              
+              resolve(null);
+              
+            } catch (parseError) {
+              console.error('🚨🚨🚨 ERRO CRÍTICO - Falha ao parsear resposta 🚨🚨🚨');
+              console.error('📋 Resposta bruta:', data);
+              console.error('❌ Erro de parse:', parseError.message);
+              resolve(null);
+            }
+          });
+        });
 
-      console.log(`🔍 Verificando registro pendente: order=${order} + item=${item} (status esperado: ${status || 'qualquer'})...`);
+        // Trata erros de requisição
+        req.on('error', (error) => {
+          console.error('🚨🚨🚨 ERRO CRÍTICO - Falha na requisição 🚨🚨🚨');
+          console.error('📋 Detalhes da falha:');
+          console.error(`   🔍 order: ${order}`);
+          console.error(`   ❌ message: ${error.message}`);
+          resolve(null);
+        });
 
-      const searchRes = await axios.get(searchUrl, {
-        params,
-        headers: this.getVtexHeaders(),
-        timeout: 30000
-      });
+        // Envia o body
+        req.write(formBody);
+        req.end();
 
-      const items = Array.isArray(searchRes.data) ? searchRes.data : [];
-      const found = items[0];
-      if (found && found.id) {
-        if (status == null || status === undefined || found.order_status === status) {
-          console.log(`✅ Registro encontrado: ${found.id} (isSync: ${found.isSync}, status: ${found.order_status})`);
-          return found;
-        }
+      } catch (error) {
+        console.error('🚨🚨🚨 ERRO CRÍTICO - Falha na configuração 🚨🚨🚨');
+        console.error(`📋 order: ${order}, item: ${item}, status: ${status}`);
+        console.error(`❌ message: ${error.message}`);
+        resolve(null);
       }
-
-      console.log(`ℹ️ Registro não encontrado entre pendentes: order=${order} + item=${item} + status=${status}`);
-      return null;
-    } catch (error) {
-      console.error(`❌ Erro ao verificar registro existente:`, {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-        order: order,
-        item: item,
-        status: status,
-        url: `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`
-      });
-      return null;
-    }
+    });
   }
 
   /**
