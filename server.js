@@ -20,6 +20,7 @@ const emarsysSalesRoutes = require('./routes/emarsysSales');
 const emarsysCsvRoutes = require('./routes/emarsysCsv');
 const emarsysContactsRoutes = require('./routes/emarsysContacts');
 const emsClientsRoutes = require('./routes/emsClients');
+const emsOrdersRoutes = require('./routes/emsOrders');
 const metricsRoutes = require('./routes/metrics');
 const alertsRoutes = require('./routes/alerts');
 const contactErrorsRoutes = require('./routes/contactErrors');
@@ -55,6 +56,7 @@ app.use((req, res, next) => {
 const ALLOWED_PREFIXES = [
   '/api/emarsys',
   '/api/vtex',
+  '/api/ems-orders',
   '/api/integration',
   '/api/background',
   '/api/cron',
@@ -185,6 +187,7 @@ app.use('/api/emarsys/sales', emarsysSalesRoutes);
 app.use('/api/emarsys/csv', emarsysCsvRoutes);
 app.use('/api/emarsys/contacts', emarsysContactsRoutes);
 app.use('/api/emarsys/ems-clients', emsClientsRoutes);
+app.use('/api/ems-orders', emsOrdersRoutes);
 app.use('/api/integration', integrationRoutes);
 app.use('/api/background', backgroundJobsRoutes);
 app.use('/api/cron', cronJobsRoutes);
@@ -241,14 +244,19 @@ if (require.main === module) {
     console.log(`Metrics Dashboard: http://localhost:${PORT}/api/metrics/dashboard`);
     console.log(`Prometheus Metrics: http://localhost:${PORT}/api/metrics/prometheus`);
     console.log(`Emarsys API: http://localhost:${PORT}/api/emarsys`);
-    console.log(`VTEX API: http://localhost:${PORT}/api/vtex`);
     console.log(`VTEX Products API: http://localhost:${PORT}/api/vtex/products`);
     console.log(`Emarsys Sales API: http://localhost:${PORT}/api/emarsys/sales`);
     console.log(`Emarsys CSV API: http://localhost:${PORT}/api/emarsys/csv`);
     console.log(`Emarsys Contacts API: http://localhost:${PORT}/api/emarsys/contacts`);
+    console.log(`EMS Clients API: http://localhost:${PORT}/api/emarsys/ems-clients`);
+    console.log(`EMS Orders API: http://localhost:${PORT}/api/ems-orders`);
     console.log(`Integration API: http://localhost:${PORT}/api/integration`);
     console.log(`Background Jobs API: http://localhost:${PORT}/api/background`);
     console.log(`Cron Jobs API: http://localhost:${PORT}/api/cron`);
+    console.log(`Cron Management API: http://localhost:${PORT}/api/cron-management`);
+    console.log(`Crash Protection API: http://localhost:${PORT}/api/crash-protection`);
+    console.log(`Alerts API: http://localhost:${PORT}/api/alerts`);
+    console.log(`Contact Errors API: http://localhost:${PORT}/api/contact-errors`);
     
     logger.info('🚀 Iniciando cron jobs nativos para sincronização automática...');
     app.set('cronService', cronService);
