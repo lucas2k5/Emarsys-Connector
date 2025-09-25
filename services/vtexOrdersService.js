@@ -2096,82 +2096,102 @@ class VtexOrdersService {
   }
 
   /**
-   * Envia um pedido detalhado para o hook do VTEX Store Framework
-   * @param {Object} orderDetail - Pedido detalhado (payload completo)
+   * Envia um pedido para o hook do VTEX Store Framework
+   * @param {string} orderId - ID do pedido
    * @returns {Promise<Object>} Resposta do hook
    */
-  async sendOrderToHook(orderDetail) {
+  async sendOrderToHook(orderId) {
     try {
       // URL completa do VTEX Store Framework para o hook
       const hookUrl = 'https://ems--piccadilly.myvtex.com/_v/order/hook';
       
-      // Garante que o orderId esteja presente no payload
-      const orderId = orderDetail.orderId || orderDetail.id;
       if (!orderId) {
-        console.error('❌ Pedido sem orderId encontrado:', orderDetail);
+        console.error('❌ Pedido sem orderId fornecido');
         return { 
           success: false, 
-          error: 'Pedido sem orderId', 
-          orderDetail: orderDetail 
+          error: 'Pedido sem orderId' 
         };
       }
 
-      // Verifica se o registro já existe na emsOrdersV2 antes de enviar para o hook
+      // ETAPA 1: Busca os detalhes completos do pedido
+      console.log(`🔍 ETAPA 1: Buscando detalhes do pedido ${orderId}...`);
+      const orderDetail = await this.getOrderById(orderId);
+      
+      if (!orderDetail) {
+        console.error(`❌ Não foi possível obter detalhes do pedido ${orderId}`);
+        return { 
+          success: false, 
+          error: 'Detalhes do pedido não encontrados' 
+        };
+      }
+
+      console.log(`✅ Detalhes do pedido ${orderId} obtidos com sucesso`);
+
+      // ETAPA 2: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
       const emsOrdersService = require('./emsOrdersService');
       
       // Extrai informações do pedido de forma mais robusta
       const orderStatus = orderDetail.status || orderDetail.orderStatus || 'unknown';
       
-      // Busca o item de forma mais robusta - prioriza diferentes campos
+      // Busca o item - sempre usa refId (não productId)
       let item = null;
       
       // 1. Tenta orderDetail.item primeiro
       if (orderDetail.item) {
         item = orderDetail.item;
       }
-      // 2. Tenta items[0] com diferentes campos
+      // 2. Tenta items[0].refId (sempre refId, nunca productId)
       else if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
         const firstItem = orderDetail.items[0];
-        item = firstItem.id || 
-               firstItem.productId || 
-               firstItem.refId ||
-               firstItem.sku ||
-               firstItem.itemId ||
-               firstItem.productRefId;
+        item = firstItem.refId || firstItem.sku || firstItem.itemId;
       }
       
       if (!item) {
-        console.error('❌ Não foi possível extrair item do pedido:', {
+        console.error(`❌ [${orderId}] Não foi possível extrair item (refId) do pedido:`, {
           orderId: orderId,
           hasItem: !!orderDetail.item,
           hasItems: !!orderDetail.items,
           itemsLength: orderDetail.items?.length,
-          firstItem: orderDetail.items?.[0]
+          firstItem: orderDetail.items?.[0],
+          allItems: orderDetail.items?.map((item, index) => ({
+            index,
+            refId: item.refId,
+            sku: item.sku,
+            itemId: item.itemId,
+            productId: item.productId,
+            id: item.id
+          }))
         });
         return { 
           success: false, 
-          error: 'Item não encontrado no pedido', 
+          error: 'Item (refId) não encontrado no pedido', 
           orderDetail: orderDetail 
         };
       }
       
-      console.log(`🔍 Buscando item para verificação: ${item} (de orderDetail.item: ${orderDetail.item})`);
+      console.log(`🔍 Buscando item (refId) para verificação: ${item} (de orderDetail.item: ${orderDetail.item})`);
       console.log(`🔍 Estrutura do orderDetail:`, {
         hasItem: !!orderDetail.item,
         hasItems: !!orderDetail.items,
         itemsLength: orderDetail.items?.length,
-        orderId: orderDetail.orderId || orderDetail.id,
+        orderId: orderDetail.orderId,
         orderStatus: orderStatus
       });
       
-      // ETAPA 1: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
-      console.log(`🔍 ETAPA 1: Verificando se registro existe na emsOrdersV2: order=${orderId} + item=${item} + status=${orderStatus} + isSync=false`);
+      console.log(`🔍 [${orderId}] ETAPA 2: Verificando se registro existe na emsOrdersV2: order=${orderId} + item=${item} + status=${orderStatus} + isSync=false`);
+      console.log(`🔍 [${orderId}] Valores para consulta:`, {
+        order: orderId,
+        item: item,
+        status: orderStatus,
+        itemType: typeof item,
+        statusType: typeof orderStatus
+      });
       
       const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
       
       if (existingRecord) {
         if (existingRecord.isSync === true) {
-          console.log(`⏭️ Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
+          console.log(`⏭️ [${orderId}] Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
           return { 
             success: true, 
             skipped: true, 
@@ -2179,7 +2199,7 @@ class VtexOrdersService {
             existingRecord: existingRecord
           };
         } else {
-          console.log(`⏭️ Registro pendente já existe na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
+          console.log(`⏭️ [${orderId}] Registro pendente já existe na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
           return { 
             success: true, 
             skipped: true, 
@@ -2187,10 +2207,12 @@ class VtexOrdersService {
             existingRecord: existingRecord
           };
         }
+      } else {
+        console.log(`🔍 [${orderId}] Registro NÃO encontrado na emsOrdersV2 - continuando para envio ao hook`);
       }
       
-      // ETAPA 2: Se não existe, envia para o hook
-      console.log(`📨 ETAPA 2: Registro não existe na base - enviando para hook: order=${orderId} + item=${item}`);
+      // ETAPA 3: Se não existe, envia para o hook
+      console.log(`📨 [${orderId}] ETAPA 3: Registro não existe na base - enviando para hook: order=${orderId} + item=${item}`);
       
       // Cria o payload garantindo que orderId esteja no nível raiz
       const payload = {
@@ -2198,7 +2220,7 @@ class VtexOrdersService {
         ...orderDetail
       };
       
-      console.log(`📨 Enviando payload para hook com orderId: ${orderId}`);
+      console.log(`📨 [${orderId}] Enviando payload para hook com orderId: ${orderId}`);
       
       // Usa axios diretamente com a URL completa e headers VTEX
       const response = await axios.post(hookUrl, payload, {

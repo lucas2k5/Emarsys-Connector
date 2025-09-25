@@ -741,7 +741,7 @@ router.get('/orders-extract-all', async (req, res) => {
         }
         
         console.log(`📨 Enviando pedido ${orderId} para hook (${i + 1}/${detailedOrders.length})...`);
-        const result = await vtexOrdersService.sendOrderToHook(orderDetail);
+        const result = await vtexOrdersService.sendOrderToHook(orderId);
         if (result.success) {
           if (result.skipped) {
             console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
@@ -1094,7 +1094,7 @@ router.get('/orders-extract-test-details', async (req, res) => {
         }
         
         console.log(`📨 TESTE: Enviando pedido ${orderId} para hook (${i + 1}/${detailedOrders.length})...`);
-        const result = await vtexOrdersService.sendOrderToHook(orderDetail);
+        const result = await vtexOrdersService.sendOrderToHook(orderId);
         if (result.success) {
           if (result.skipped) {
             console.log(`⏭️ TESTE: Pedido ${orderId} já existe na base - pulando`);
