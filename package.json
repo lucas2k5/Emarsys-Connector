@@ -18,6 +18,7 @@
     "prod:status": "pm2 status",
     "test": "echo \"Error: no test specified\" && exit 1",
     "logs": "tail -f logs/piccadilly-emarsys-$(date +%Y-%m-%d).log",
+    "clear-logs": "node scripts/clear-logs.js",
     "dashboards": "echo 'Dashboards disponíveis: http://localhost:3000/api/metrics/dashboard | http://localhost:3000/api/alerts/dashboard'",
     "monitoring:setup": "mkdir -p logs data && echo 'Sistema de monitoramento configurado!'",
     "postinstall": "node scripts/postinstall.js"
