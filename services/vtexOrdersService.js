@@ -2,6 +2,7 @@ const axios = require('axios');
 const rateLimit = require('axios-rate-limit');
 const fs = require('fs-extra');
 const path = require('path');
+const crypto = require('crypto');
 const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../utils/dateUtils');
 require('dotenv').config();
 
@@ -98,12 +99,28 @@ class VtexOrdersService {
     console.log(`   📅 Data inicial recebida: ${startDateISO}`);
     console.log(`   📅 Data final recebida: ${endDateISO}`);
     console.log(`   🔍 Filtro aplicado: ${params.f_creationDate}`);
+    
+    console.log('🔍 searchOrdersByPeriod debug:', {
+      startDateISO,
+      endDateISO,
+      page,
+      options,
+      params
+    });
     console.log(`   📄 Página: ${page}`);
     
     try {
+      console.log('🔍 Fazendo requisição para VTEX OMS:', { url, params });
       const res = await this.client.get(url, { params });
       
       // Log da resposta para debug
+      console.log('🔍 Resposta da VTEX OMS:', {
+        status: res.status,
+        dataLength: res.data?.list?.length || 0,
+        hasData: !!res.data,
+        hasList: !!res.data?.list
+      });
+      
       if (res.data && res.data.list && res.data.list.length > 0) {
         const firstOrder = res.data.list[0];
         const lastOrder = res.data.list[res.data.list.length - 1];
@@ -114,7 +131,13 @@ class VtexOrdersService {
       
       return res.data;
     } catch (error) {
-      console.error('Erro ao buscar pedidos (OMS):', error?.response?.data || error.message);
+      console.error('Erro ao buscar pedidos (OMS):', error?.data || error?.response?.data || error.message);
+      console.log('🔍 Erro detalhado:', {
+        error: error.message,
+        status: error?.response?.status,
+        data: error?.response?.data,
+        config: error?.config
+      });
       throw error;
     }
   }
@@ -130,6 +153,12 @@ class VtexOrdersService {
   async fetchOrders(page = 1, pageSize = 200) {
     try {
       console.log(`🔄 Buscando pedidos da VTEX - Página ${page}`);
+      
+      console.log('🔍 fetchOrders debug:', {
+        page,
+        pageSize,
+        ordersUrl: this.ordersUrl
+      });
       
       // Garante que a URL seja válida
       let ordersUrl = this.ordersUrl;
@@ -174,7 +203,7 @@ class VtexOrdersService {
 
       return response.data;
     } catch (error) {
-      console.error('❌ Erro ao buscar pedidos da VTEX:', error.message);
+      console.error('❌ Erro ao buscar pedidos da VTEX:', error?.data || error.message);
       throw new Error(`Erro ao buscar pedidos: ${error.message}`);
     }
   }
@@ -200,7 +229,7 @@ class VtexOrdersService {
       return await this.fetchOrders(page, pageSize);
       
     } catch (error) {
-      console.error('❌ Erro ao buscar pedidos da nova base:', error.message);
+      console.error('❌ Erro ao buscar pedidos da nova base:', error?.data || error.message);
       throw new Error(`Erro ao buscar pedidos da nova base: ${error.message}`);
     }
   }
@@ -226,7 +255,7 @@ class VtexOrdersService {
       return await this.fetchAllOrders();
       
     } catch (error) {
-      console.error('❌ Erro ao buscar todos os pedidos da nova base:', error.message);
+      console.error('❌ Erro ao buscar todos os pedidos da nova base:', error?.data || error.message);
       throw error;
     }
   }
@@ -273,7 +302,7 @@ class VtexOrdersService {
       console.log('------------- end -----------');
       return allOrders;
     } catch (error) {
-      console.error('❌ Erro ao buscar todos os pedidos:', error.message);
+      console.error('❌ Erro ao buscar todos os pedidos:', error?.data || error.message);
       throw error;
     }
   }
@@ -317,7 +346,7 @@ class VtexOrdersService {
       
       console.log('📝 Log de erro salvo:', errorEntry.type || 'erro-generico');
     } catch (error) {
-      console.error('❌ Erro ao salvar log de erro:', error.message);
+      console.error('❌ Erro ao salvar log de erro:', error?.data || error.message);
     }
   }
 
@@ -359,7 +388,7 @@ class VtexOrdersService {
       await fs.writeFile(statsFile, JSON.stringify(existingStats, null, 2));
       console.log('📊 Estatísticas de sincronização salvas');
     } catch (error) {
-      console.error('❌ Erro ao salvar estatísticas:', error.message);
+      console.error('❌ Erro ao salvar estatísticas:', error?.data || error.message);
     }
   }
 
@@ -395,7 +424,7 @@ class VtexOrdersService {
       return logs.slice(0, limit);
 
     } catch (error) {
-      console.error('❌ Erro ao ler logs de erro:', error.message);
+      console.error('❌ Erro ao ler logs de erro:', error?.data || error.message);
       return [];
     }
   }
@@ -428,7 +457,7 @@ class VtexOrdersService {
       return stats.slice(0, limit);
 
     } catch (error) {
-      console.error('❌ Erro ao ler estatísticas:', error.message);
+      console.error('❌ Erro ao ler estatísticas:', error?.data || error.message);
       return [];
     }
   }
@@ -470,7 +499,7 @@ class VtexOrdersService {
       };
 
     } catch (error) {
-      console.error('❌ Erro ao gerar relatório:', error.message);
+      console.error('❌ Erro ao gerar relatório:', error?.data || error.message);
       return { error: error.message };
     }
   }
@@ -573,7 +602,7 @@ class VtexOrdersService {
           allOrders = allOrders.concat(batchOrders);
           console.log(`✅ Lote concluído: ${batchOrders.length} pedidos`);
         } catch (error) {
-          console.error(`❌ Erro no lote ${batchStartISO} - ${batchEndISO}:`, error.message);
+          console.error(`❌ Erro no lote ${batchStartISO} - ${batchEndISO}:`, error?.data || error.message);
           // Continua com o próximo lote mesmo se um falhar
         }
         
@@ -610,6 +639,12 @@ class VtexOrdersService {
     
     try {
       console.log(`🔄 Buscando pedidos de ${startDate} até ${toDate}...`);
+      
+      console.log('🔍 getAllOrdersInPeriod debug:', {
+        startDate,
+        toDate,
+        useBatching
+      });
       
 
       let allOrders = [];
@@ -663,7 +698,7 @@ class VtexOrdersService {
             console.warn(`⚠️ Para buscar mais pedidos, refine o filtro de período`);
             hasMorePages = false;
           } else {
-            console.error(`❌ Erro na página ${page}:`, error.message);
+            console.error(`❌ Erro na página ${page}:`, error?.data || error.message);
             throw error;
           }
         }
@@ -712,6 +747,10 @@ class VtexOrdersService {
    */
   async ensureDataDirectory() {
     try {
+      console.log('🔍 ensureDataDirectory debug:', {
+        dataDir: this.dataDir,
+        exportsDir: this.exportsDir
+      });
       await fs.ensureDir(this.dataDir);
       await fs.ensureDir(this.exportsDir);
     } catch (error) {
@@ -733,8 +772,54 @@ class VtexOrdersService {
       console.log(`📁 Diretório de exports criado/verificado: ${outputDir}`);
       return outputDir;
     } catch (error) {
-      console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
+      console.error(`❌ Erro ao criar diretório ${outputDir}:`, error?.data || error.message);
+      throw error; // Re-throw para que o erro seja tratado no nível superior
     }
+  }
+
+  /**
+   * Retorna o caminho do último CSV de pedidos gerado (mais recente)
+   * @returns {Promise<string|null>} Caminho do arquivo ou null se não existir
+   */
+  async getLatestOrdersCsvFile() {
+    try {
+      const outputDir = await this.ensureOutputDirectory();
+      const files = await fs.readdir(outputDir);
+      const csvFiles = files
+        .filter(f => f.startsWith('emarsys-sales-piccadilly-') && f.endsWith('.csv'))
+        .map(f => path.join(outputDir, f));
+      
+      
+      if (csvFiles.length === 0) return null;
+      const filesWithStats = await Promise.all(csvFiles.map(async f => ({ f, stat: await fs.stat(f) })));
+      filesWithStats.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+      return filesWithStats[0].f;
+    } catch (error) {
+      console.warn('⚠️ Não foi possível obter último CSV:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Calcula uma assinatura estável do CSV, ignorando BOM, header e ordem das linhas
+   * @param {string} csvContent - Conteúdo CSV completo
+   * @returns {string} hash sha256
+   */
+  computeCsvSignature(csvContent) {
+    const content = (csvContent || '')
+      .replace(/^\ufeff/, '') // remove BOM inicial
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+    if (content.length === 0) return '';
+    const header = content[0];
+    const rows = content.slice(1); // ignora header
+    rows.sort(); // ordem determinística
+    const normalized = header + '\n' + rows.join('\n');
+    const hash = crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
+    
+    
+    return hash;
   }
 
   /**
@@ -957,6 +1042,12 @@ class VtexOrdersService {
       
       const processedOrdersFile = path.join(this.dataDir, 'processed-orders.json');
       
+      console.log('🔍 getProcessedItemsStatus debug:', {
+        uniqueItemIdsLength: uniqueItemIds.length,
+        processedOrdersFile,
+        fileExists: fs.existsSync(processedOrdersFile)
+      });
+      
       if (!fs.existsSync(processedOrdersFile)) {
         return {
           processed: [],
@@ -1049,6 +1140,12 @@ class VtexOrdersService {
     const errorOrders = [];
     
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
+    
+    console.log('🔍 transformOrdersForEmarsys debug:', {
+      ordersLength: orders.length,
+      checkDuplicates,
+      ordersSample: orders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
+    });
     
     // Verifica duplicatas se solicitado
     let processedItemIds = new Set();
@@ -1172,7 +1269,7 @@ class VtexOrdersService {
         });
 
       } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${order.order}:`, error.message);
+        console.error(`❌ Erro ao processar pedido ${order.order}:`, error?.data || error.message);
         errorOrders.push({
           orderId: order.order,
           reason: 'processing_error',
@@ -1274,19 +1371,98 @@ class VtexOrdersService {
       const ordersToProcess = orders;
       console.log(`📊 Processando ${ordersToProcess.length} registros para Emarsys`);
 
-      // Gera nome do arquivo com timestamp
-      const timestamp = getBrazilianTimestampForFilename();
-      const filename = options.filename || `openflow-piccadilly-orders-data-${timestamp}.csv`;
+      // Gera nome do arquivo com timestamp e período
+      let timestamp;
+      let period = options.period;
+      
+      // Se não foi fornecido período, tenta gerar baseado nas datas
+      if (!options.period && options.startDate && options.endDate) {
+        try {
+          const startTime = new Date(options.startDate).toLocaleTimeString('pt-BR', { 
+            timeZone: 'America/Sao_Paulo', 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }).replace(':', '-');
+          const endTime = new Date(options.endDate).toLocaleTimeString('pt-BR', { 
+            timeZone: 'America/Sao_Paulo', 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }).replace(':', '-');
+          period = `${startTime}-${endTime}`;
+        } catch (error) {
+          console.warn('⚠️ Erro ao gerar período das datas, usando padrão:', error.message);
+        }
+      }
+      
+      // Gera timestamp baseado na data da consulta ou data atual
+      if (options.brazilianDate) {
+        try {
+          // Usa a data brasileira original da consulta
+          const brazilianDate = options.brazilianDate; // Ex: "2025-09-22"
+          const currentTime = new Date().toLocaleTimeString('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }).replace(/:/g, '-');
+          
+          timestamp = `${brazilianDate}T${currentTime}`;
+        } catch (error) {
+          console.warn('⚠️ Erro ao gerar timestamp da data brasileira, usando data atual:', error.message);
+          timestamp = getBrazilianTimestampForFilename();
+        }
+      } else if (options.startDate) {
+        try {
+          const consultDate = new Date(options.startDate);
+          const brazilianTime = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).formatToParts(consultDate);
+          
+          const parts = {};
+          brazilianTime.forEach(part => {
+            parts[part.type] = part.value;
+          });
+          
+          timestamp = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}-${parts.minute}-${parts.second}`;
+        } catch (error) {
+          console.warn('⚠️ Erro ao gerar timestamp da data da consulta, usando data atual:', error.message);
+          timestamp = getBrazilianTimestampForFilename();
+        }
+      } else {
+        timestamp = getBrazilianTimestampForFilename();
+      }
+      
+      // Sanitiza o período para ser válido em nomes de arquivo
+      const sanitizedPeriod = period.replace(/[<>:"/\\|?*]/g, '-');
+      
+      const filename = options.filename || `emarsys-sales-piccadilly-${timestamp}-period-${sanitizedPeriod}.csv`;
       
       // Adiciona extensão .csv se não tiver
       if (!filename.endsWith('.csv')) {
         filename += '.csv';
       }
+      
+      console.log('📁 Nome do arquivo gerado:', filename);
+      console.log('📁 Período original:', period);
+      console.log('📁 Período sanitizado:', sanitizedPeriod);
+      console.log('📁 Timestamp usado:', timestamp);
 
       // Cria o diretório de saída se não existir
       const outputDir = await this.ensureOutputDirectory();
 
       const filePath = path.join(outputDir, filename);
+      console.log('📁 Caminho completo do arquivo:', filePath);
+      console.log('📁 Diretório existe?', await fs.access(outputDir).then(() => true).catch(() => false));
 
       const validationResult = this.validateOrderDataForEmarsys(ordersToProcess);
       if (validationResult.errors.length > 0) {
@@ -1298,7 +1474,7 @@ class VtexOrdersService {
           type: 'validation_errors',
           phase: 'csv_generation',
           totalErrors: validationResult.errors.length,
-          errors: validationResult.errors.slice(0, 50), // Primeiros 50 erros
+          errors: validationResult.errors.slice(0, 70), // Primeiros 50 erros
           totalOrders: ordersToProcess.length
         });
 
@@ -1346,11 +1522,75 @@ class VtexOrdersService {
       }
 
       // Gera o conteúdo CSV
+      console.log(`🔍 Gerando CSV para ${ordersToProcess.length} pedidos...`);
       const csvContent = this.generateEmarsysCsvContent(ordersToProcess);
+      console.log(`🔍 CSV gerado com ${csvContent.length} caracteres`);
+      
+
+      // Comparação com o último CSV: se o conteúdo for idêntico (ignorando ordem), não gerar novo
+      try {
+        console.log(`🔍 Verificando último CSV...`);
+        const lastCsvPath = await this.getLatestOrdersCsvFile();
+        if (lastCsvPath) {
+          console.log(`🔍 Último CSV encontrado: ${path.basename(lastCsvPath)}`);
+          
+          // Verifica se o último CSV é do mesmo período
+          const lastCsvFilename = path.basename(lastCsvPath);
+          const currentFilename = filename;
+          
+          console.log(`🔍 Comparando arquivos:`, {
+            lastCsv: lastCsvFilename,
+            currentCsv: currentFilename,
+            samePeriod: lastCsvFilename.includes(period) && currentFilename.includes(period)
+          });
+          
+          // Só compara se for do mesmo período
+          if (lastCsvFilename.includes(period) && currentFilename.includes(period)) {
+            const lastCsvContent = await fs.readFile(lastCsvPath, 'utf8');
+            const lastSig = this.computeCsvSignature(lastCsvContent);
+            const newSig = this.computeCsvSignature(csvContent);
+            
+            console.log(`🔍 Comparando assinaturas do mesmo período:`, {
+              lastSig: lastSig?.substring(0, 8) + '...',
+              newSig: newSig?.substring(0, 8) + '...',
+              areEqual: lastSig === newSig
+            });
+            
+            if (lastSig && newSig && lastSig === newSig) {
+              console.log('⏭️ CSV idêntico ao último gerado. Pulando criação de novo arquivo.');
+              return {
+                success: true,
+                skipped: true,
+                reason: 'same_as_last_csv',
+                lastFilePath: lastCsvPath,
+                totalOrders: ordersToProcess.length,
+                timestamp: getBrazilianTimestamp()
+              };
+            } else {
+              console.log(`🔍 CSVs diferentes - gerando novo arquivo`);
+            }
+          } else {
+            console.log(`🔍 Período diferente - gerando novo arquivo`);
+          }
+        }
+      } catch (cmpErr) {
+        console.warn('⚠️ Falha na comparação com último CSV, prosseguindo com geração:', cmpErr.message);
+      }
 
       // Verifica se o CSV tem conteúdo válido antes de salvar
       const lines = csvContent.split('\n').filter(line => line.trim() !== '');
       console.log(`📊 CSV final: ${lines.length} linhas (incluindo header)`);
+      console.log(`🔍 CSV content preview: ${csvContent.substring(0, 200)}...`);
+      
+      if (lines.length <= 1) {
+        console.log('⚠️ CSV vazio ou apenas header - não gerando arquivo');
+        return {
+          success: false,
+          error: 'CSV vazio ou apenas header',
+          totalOrders: ordersToProcess.length,
+          timestamp: getBrazilianTimestamp()
+        };
+      }
       
       // Valida que todas as linhas tenham exatamente 10 colunas
       const invalidLines = [];
@@ -1388,9 +1628,19 @@ class VtexOrdersService {
       
       // Salva o arquivo com BOM para UTF-8
       const csvWithBom = '\ufeff' + cleanCsvContent;
-      await fs.writeFile(filePath, csvWithBom, 'utf8');
-
-      console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
+      
+      console.log(`🔍 Salvando arquivo CSV: ${filePath}`);
+      console.log(`🔍 Tamanho do arquivo: ${csvWithBom.length} caracteres`);
+      
+      try {
+        await fs.writeFile(filePath, csvWithBom, 'utf8');
+        console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
+      } catch (writeError) {
+        console.error('❌ Erro ao escrever arquivo CSV:', writeError);
+        console.error('📁 Caminho do arquivo:', filePath);
+        console.error('📁 Diretório pai existe?', await fs.access(path.dirname(filePath)).then(() => true).catch(() => false));
+        throw writeError;
+      }
 
       const result = {
         success: true,
@@ -1577,11 +1827,6 @@ class VtexOrdersService {
         errors.push(`Linha ${lineNum}: price deve ser um número válido`);
       }
 
-      
-      // Validações específicas do Smart Insight
-      // email é o campo obrigatório para identificação do cliente
-
-      // Validação de comprimento dos campos (baseado na documentação oficial da Emarsys)
       const maxLengths = {
         item: 25,
         order: 25,
@@ -1629,6 +1874,11 @@ class VtexOrdersService {
     
     // DEDUPLICAÇÃO: Remove duplicatas baseadas em order+item
     const uniqueOrders = new Map();
+    
+    console.log('🔍 generateEmarsysCsvContent debug:', {
+      ordersLength: orders.length,
+      ordersSample: orders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
+    });
     let duplicateCount = 0;
     
     for (const order of orders) {
@@ -1692,7 +1942,7 @@ class VtexOrdersService {
         processedCount++;
         
       } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}):`, error.message);
+        console.error(`❌ Erro ao processar pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}):`, error?.data || error.message);
         continue;
       }
     }
@@ -2180,7 +2430,7 @@ class VtexOrdersService {
       const status = error?.response?.status;
       const data = error?.response?.data;
       const safeOrderId = orderId || 'sem-id';
-      console.error(`❌ Erro ao enviar pedido ${safeOrderId} para hook:`, status || error.message, data || '');
+      console.error(`❌ Erro ao enviar pedido ${safeOrderId} para hook:`, error?.data || status || error.message, data || '');
       return { success: false, error: error.message, status, data };
     }
   }
@@ -2194,6 +2444,13 @@ class VtexOrdersService {
     try {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
       const startTime = Date.now();
+      
+      console.log('🔍 syncOrders debug:', {
+        options,
+        dataInicial: options.dataInicial,
+        dataFinal: options.dataFinal,
+        pageSize: options.pageSize
+      });
       
       // 1. Buscar pedidos (com ou sem filtro de data)
       console.log('📦 Buscando pedidos da VTEX...');
@@ -2313,8 +2570,40 @@ class VtexOrdersService {
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
 
+      // 3.1 Opcional: Filtra apenas registros pendentes em emsOrdersV2 (isSync=false) antes de transformar/gerar CSV
+      try {
+        const emsOrdersService = require('./emsOrdersService');
+        const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
+        if (Array.isArray(pending) && pending.length > 0) {
+          const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
+          const before = formattedOrders.length;
+          formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
+          console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
+          if (formattedOrders.length === 0) {
+            console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
+            return {
+              success: true,
+              totalOrders: orders.length,
+              transformedOrders: 0,
+              csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
+              emarsysSendResult: { success: false, message: 'Sem pendentes' },
+              duration: Date.now() - startTime,
+              timestamp: getBrazilianTimestamp()
+            };
+          }
+        } else {
+          console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
+        }
+      } catch (pendErr) {
+        console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
+      }
+
       // 4. Transformar dados formatados para Emarsys
       console.log('🔄 Transformando dados formatados para Emarsys...');
+      console.log('🔍 transformOrdersForEmarsys debug:', {
+        formattedOrdersLength: formattedOrders.length,
+        formattedOrdersSample: formattedOrders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
+      });
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
       // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync será feito após envio
@@ -2324,7 +2613,9 @@ class VtexOrdersService {
       
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
         ...options,
-        autoSend: true  // Habilita envio automático e marca isSync=true após sucesso
+        autoSend: true,  // Habilita envio automático e marca isSync=true após sucesso
+        startDate: options.dataInicial,
+        endDate: options.dataFinal
       });
       console.log('📄 Gerando CSV...| 24/08 |', csvResult);
       
@@ -2332,12 +2623,10 @@ class VtexOrdersService {
         console.warn('⚠️ Falha ao gerar CSV, mas sincronização continuará');
       }
       
-      // 5. O envio para Emarsys já foi feito no generateCsvFromOrders com autoSend: true
-      // Não é necessário fazer uma segunda tentativa para evitar duplicidade
       const emarsysSendResult = {
-        success: csvResult.emarsysSent || false,
+        success: csvResult.emarsysSent || csvResult.skipped || false,
         error: csvResult.sendError || null,
-        message: csvResult.emarsysSent ? 'Envio realizado via generateCsvFromOrders' : 'Envio falhou via generateCsvFromOrders'
+        message: csvResult.emarsysSent ? 'Envio realizado' : (csvResult.skipped ? 'CSV pulado (idêntico)' : 'Envio falhou ao enviar')
       };
 
       const duration = Date.now() - startTime;
@@ -2346,7 +2635,7 @@ class VtexOrdersService {
       const finalStats = {
         phase: 'sync_complete',
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.length,
+        transformedOrders: transformedOrders.emarsysData?.length || 0,
         csvGenerated: csvResult.success,
         emarsysSent: emarsysSendResult.success,
         duration: duration,
@@ -2357,12 +2646,12 @@ class VtexOrdersService {
       await this.saveSyncStats(finalStats);
       
       console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
-      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.length} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
+      console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.emarsysData?.length || 0} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
         success: true,
         totalOrders: orders.length,
-        transformedOrders: transformedOrders.length,
+        transformedOrders: transformedOrders.emarsysData?.length || 0,
         message: 'Sincronização de pedidos concluída com sucesso',
         orders: orders,
         saveResult: saveResult,

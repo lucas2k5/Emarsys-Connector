@@ -85,7 +85,7 @@ class EmsOrdersService {
       return pending;
       
     } catch (error) {
-      console.error('❌ Erro ao buscar pedidos pendentes via data entities:', error.message);
+      console.error('❌ Erro ao buscar pedidos pendentes via data entities:', error?.data || error.message);
       return [];
     }
   }
@@ -174,7 +174,7 @@ class EmsOrdersService {
           console.error('🚨🚨🚨 ERRO CRÍTICO - Falha na requisição 🚨🚨🚨');
           console.error('📋 Detalhes da falha:');
           console.error(`   🔍 order: ${order}`);
-          console.error(`   ❌ message: ${error.message}`);
+          console.error(`   ❌ message: ${error?.data || error.message}`);
           resolve(null);
         });
 
@@ -184,7 +184,7 @@ class EmsOrdersService {
       } catch (error) {
         console.error('🚨🚨🚨 ERRO CRÍTICO - Falha na configuração 🚨🚨🚨');
         console.error(`📋 order: ${order}, item: ${item}, status: ${status}`);
-        console.error(`❌ message: ${error.message}`);
+        console.error(`❌ message: ${error?.data || error.message}`);
         resolve(null);
       }
     });

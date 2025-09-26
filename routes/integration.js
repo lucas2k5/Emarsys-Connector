@@ -489,6 +489,7 @@ router.get('/orders-sync-new-base', async (req, res) => {
     const dataInicial = req.query.dataInicial;
     const dataFinal = req.query.dataFinal;
     const pageSize = parseInt(req.query.pageSize) || 100;
+    const brazilianDate = req.query.brazilianDate;
 
     console.log('🚀 Iniciando sincronização com nova base de dados:', {
       dataInicial,
@@ -504,7 +505,8 @@ router.get('/orders-sync-new-base', async (req, res) => {
       const syncResult = await vtexOrdersService.syncOrders({
         dataInicial,
         dataFinal,
-        pageSize
+        pageSize,
+        brazilianDate
       });
 
       res.json({
@@ -618,6 +620,10 @@ router.get('/orders-extract-all', async (req, res) => {
       startDate = range.startUTC;
       toDate = range.endUTC;
       
+      // Define dataInicial e dataFinal para compatibilidade
+      dataInicial = startDate;
+      dataFinal = toDate;
+      
       console.log('🇧🇷 Usando data brasileira:', {
         brazilianDate,
         startTime: range.startTime,
@@ -666,13 +672,18 @@ router.get('/orders-extract-all', async (req, res) => {
       
       if (!ordersList || ordersList.length === 0) {
         console.log('⚠️ Nenhum pedido encontrado, retornando resposta vazia');
+        const { convertToBrazilianTime } = require('../utils/dateUtils');
+        const periodBrazil = {
+          startDate: convertToBrazilianTime(startDate),
+          toDate: convertToBrazilianTime(toDate)
+        };
         return res.json({
           success: true,
           message: 'Nenhum pedido encontrado no período especificado',
           data: {
             orders: [],
             totalOrders: 0,
-            period: { startDate, toDate },
+            period: periodBrazil,
             perPage,
             useBatching
           },
@@ -681,11 +692,16 @@ router.get('/orders-extract-all', async (req, res) => {
       }
 
       console.log(`✅ ETAPA 1 concluída: ${ordersList.length} pedidos encontrados`);
-      console.log(`🔍 Iniciando ETAPA 2: Buscar detalhes de TODOS os ${ordersList.length} pedidos...`);
+      console.log(`🔍 Iniciando ETAPA 2: Busca de detalhes com envio incremental para o hook (total=${ordersList.length})...`);
 
-      // ETAPA 2: Buscar detalhes completos de TODOS os pedidos individualmente
-      console.log('🔍 ETAPA 2: Buscando detalhes completos de cada pedido...');
+      // ETAPA 2 + 3: Busca detalhes e envia para hook de forma incremental (por pedido)
       const detailedOrders = [];
+      const hookResults = {
+        total: ordersList.length,
+        success: 0,
+        failed: 0,
+        errors: []
+      };
       
       for (let i = 0; i < ordersList.length; i++) {
         const order = ordersList[i];
@@ -701,7 +717,29 @@ router.get('/orders-extract-all', async (req, res) => {
           const orderDetail = await vtexOrdersService.getOrderById(orderId);
           if (orderDetail) {
             detailedOrders.push(orderDetail);
-            console.log(`✅ Pedido ${orderId} processado (${detailedOrders.length}/${ordersList.length})`);
+            console.log(`✅ Detalhes obtidos para ${orderId} (${detailedOrders.length}/${ordersList.length})`);
+
+            // ETAPA 3 (inline): Enviar imediatamente para o hook
+            const marketplaceValidator = require('../utils/marketplaceValidator');
+            if (marketplaceValidator.isMarketplaceOrder(orderId)) {
+              console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
+              hookResults.total--; // Ajusta total de envios
+            } else {
+              console.log(`📨 Enviando pedido ${orderId} para hook (${detailedOrders.length}/${ordersList.length})...`);
+              const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
+              if (sendResult.success) {
+                if (sendResult.skipped) {
+                  console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
+                  hookResults.success++;
+                } else {
+                  hookResults.success++;
+                }
+              } else {
+                hookResults.failed++;
+                hookResults.errors.push({ orderId, status: sendResult.status, error: sendResult.error, data: sendResult.data });
+              }
+            }
+
           } else {
             console.warn(`⚠️ Nenhum detalhe encontrado para pedido ${orderId}`);
           }
@@ -712,53 +750,12 @@ router.get('/orders-extract-all', async (req, res) => {
           }
 
         } catch (error) {
-          console.error(`❌ Erro ao buscar detalhes do pedido ${orderId}:`, error.message);
+          console.error(`❌ Erro ao buscar detalhes do pedido ${orderId}:`, error?.data || error.message);
           // Continua com os próximos pedidos mesmo se um falhar
         }
       }
 
-      console.log(`✅ ETAPA 2 concluída: ${detailedOrders.length} pedidos com detalhes completos`);
-      console.log(`📨 ETAPA 3: Enviando ${detailedOrders.length} pedidos para o hook /_v/order/hook...`);
-
-      const hookResults = {
-        total: detailedOrders.length,
-        success: 0,
-        failed: 0,
-        errors: []
-      };
-
-      for (let i = 0; i < detailedOrders.length; i++) {
-        const orderDetail = detailedOrders[i];
-        const orderId = orderDetail.orderId || orderDetail.id;
-        
-        // Filtra pedidos de marketplace antes do envio para o hook
-        const marketplaceValidator = require('../utils/marketplaceValidator');
-        
-        if (marketplaceValidator.isMarketplaceOrder(orderId)) {
-          console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
-          hookResults.total--; // Ajusta o total para refletir apenas pedidos processados
-          continue;
-        }
-        
-        console.log(`📨 Enviando pedido ${orderId} para hook (${i + 1}/${detailedOrders.length})...`);
-        const result = await vtexOrdersService.sendOrderToHook(orderId);
-        if (result.success) {
-          if (result.skipped) {
-            console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
-            hookResults.success++; // Conta como sucesso pois não é um erro
-          } else {
-            hookResults.success++;
-          }
-        } else {
-          hookResults.failed++;
-          hookResults.errors.push({ orderId, status: result.status, error: result.error, data: result.data });
-        }
-        if (i < detailedOrders.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 250));
-        }
-      }
-
-      console.log(`✅ ETAPA 3 concluída: ${hookResults.success}/${hookResults.total} enviados com sucesso (${hookResults.failed} falhas)`);
+      console.log(`✅ ETAPA 2/3 concluídas: ${detailedOrders.length} detalhes obtidos | ${hookResults.success}/${hookResults.total} enviados com sucesso (${hookResults.failed} falhas)`);
       console.log('🎉 Fluxo concluído, enviando resposta...');
 
       // ETAPA 4: Sincronização de orders usando nova base de dados
@@ -798,15 +795,17 @@ router.get('/orders-extract-all', async (req, res) => {
       }
  
       // Resposta final
+      const { convertToBrazilianTime } = require('../utils/dateUtils');
+      const periodBrazil = {
+        startDate: convertToBrazilianTime(startDate),
+        toDate: convertToBrazilianTime(toDate)
+      };
       res.json({
         success: true,
         message: 'Fluxo completo executado: Extração → Hook → Sincronização',
         data: {
           totalOrdersDetailed: detailedOrders.length,
-          period: {
-            startDate,
-            toDate
-          },
+          period: periodBrazil,
           perPage,
           useBatching,
           daysPerBatch,
@@ -867,6 +866,10 @@ router.get('/orders-extract-test', async (req, res) => {
       startDate = range.startUTC;
       toDate = range.endUTC;
       
+      // Define dataInicial e dataFinal para compatibilidade
+      dataInicial = startDate;
+      dataFinal = toDate;
+      
       console.log('🇧🇷 [TESTE] Usando data brasileira:', {
         brazilianDate,
         startTime: range.startTime,
@@ -923,12 +926,17 @@ router.get('/orders-extract-test', async (req, res) => {
       console.log('🧪 TESTE: Parando aqui para debug - ETAPA 1 funcionou!');
 
       // Resposta de teste - para após ETAPA 1
+      const { convertToBrazilianTime } = require('../utils/dateUtils');
+      const periodBrazil = {
+        startDate: convertToBrazilianTime(startDate),
+        toDate: convertToBrazilianTime(toDate)
+      };
       res.json({
         success: true,
         message: 'TESTE: ETAPA 1 concluída com sucesso',
         data: {
           ordersFound: ordersList.length,
-          period: { startDate, toDate },
+          period: periodBrazil,
           useBatching,
           daysPerBatch,
           sampleOrder: ordersList.length > 0 ? ordersList[0] : null,
@@ -979,6 +987,10 @@ router.get('/orders-extract-test-details', async (req, res) => {
       const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
       startDate = range.startUTC;
       toDate = range.endUTC;
+      
+      // Define dataInicial e dataFinal para compatibilidade
+      dataInicial = startDate;
+      dataFinal = toDate;
       
       console.log('🇧🇷 [TESTE DETALHES] Usando data brasileira:', {
         brazilianDate,
@@ -1063,7 +1075,7 @@ router.get('/orders-extract-test-details', async (req, res) => {
           }
 
         } catch (error) {
-          console.error(`❌ TESTE: Erro ao buscar detalhes do pedido ${orderId}:`, error.message);
+          console.error(`❌ TESTE: Erro ao buscar detalhes do pedido ${orderId}:`, error?.data || error.message);
           // Continua com os próximos pedidos mesmo se um falhar
         }
       }
@@ -1114,6 +1126,11 @@ router.get('/orders-extract-test-details', async (req, res) => {
       console.log(`✅ TESTE ETAPA 3 concluída: ${hookResults.success}/${hookResults.total} enviados com sucesso (${hookResults.failed} falhas)`);
 
       // Resposta de teste
+      const { convertToBrazilianTime } = require('../utils/dateUtils');
+      const periodBrazil = {
+        startDate: convertToBrazilianTime(startDate),
+        toDate: convertToBrazilianTime(toDate)
+      };
       res.json({
         success: true,
         message: 'TESTE: Todas as etapas concluídas com sucesso',
@@ -1122,7 +1139,7 @@ router.get('/orders-extract-test-details', async (req, res) => {
           ordersWithDetails: detailedOrders.length,
           hookSent: hookResults.success,
           hookFailed: hookResults.failed,
-          period: { startDate, toDate },
+          period: periodBrazil,
           useBatching,
           daysPerBatch,
           sampleDetailedOrder: detailedOrders.length > 0 ? detailedOrders[0] : null,

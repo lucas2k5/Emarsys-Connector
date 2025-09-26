@@ -417,7 +417,7 @@ router.post('/sync', async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Erro ao iniciar sincronização em background:`, error.message);
+    console.error(`❌ Erro ao iniciar sincronização em background:`, error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -551,7 +551,7 @@ router.get('/sync', async (req, res) => {
         console.log(`✅ [Background] Sincronização GET ${jobId} concluída com sucesso`);
       } catch (error) {
         console.error(`❌ [Background] Erro no sync GET de produtos ${jobId}:`, error);
-        console.error(`❌ [Background] Stack trace completo:`, error.stack);
+        console.error(`❌ [Background] Stack trace completo:`, error?.data || error.stack);
         
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
@@ -595,7 +595,7 @@ router.get('/sync', async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Erro ao iniciar sincronização GET em background:`, error.message);
+    console.error(`❌ Erro ao iniciar sincronização GET em background:`, error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
