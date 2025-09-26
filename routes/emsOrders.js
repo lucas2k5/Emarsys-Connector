@@ -25,7 +25,7 @@ router.get('/pending', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao listar pedidos pendentes:', error);
+    console.error('❌ [ROUTE] Erro ao listar pedidos pendentes:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -66,7 +66,7 @@ router.post('/fetch-and-store', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao buscar e armazenar pedidos:', error);
+    console.error('❌ [ROUTE] Erro ao buscar e armazenar pedidos:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -102,7 +102,7 @@ router.get('/stats', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao obter estatísticas:', error);
+    console.error('❌ [ROUTE] Erro ao obter estatísticas:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -131,7 +131,7 @@ router.get('/test-connection', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao testar conexão:', error);
+    console.error('❌ [ROUTE] Erro ao testar conexão:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -189,7 +189,7 @@ router.post('/test-order-validation', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao testar validação:', error);
+    console.error('❌ [ROUTE] Erro ao testar validação:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -237,7 +237,7 @@ router.post('/test-order-lookup', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro ao testar busca:', error);
+    console.error('❌ [ROUTE] Erro ao testar busca:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -378,7 +378,7 @@ router.post('/test-edit-single', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('❌ [ROUTE] Erro geral no teste de edição:', error);
+    console.error('❌ [ROUTE] Erro geral no teste de edição:', error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -427,7 +427,7 @@ router.get('/scroll', async (req, res) => {
 
     return res.status(200).json(json);
   } catch (err) {
-    console.error('❌ [ROUTE] Erro no scroll:', err);
+    console.error('❌ [ROUTE] Erro no scroll:', err?.data || err.message);
     return res.status(502).json({
       success: false,
       error: err.message.data || 'Erro ao consultar VTEX MD scroll',
