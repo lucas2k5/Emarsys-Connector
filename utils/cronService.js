@@ -2,6 +2,7 @@ const cron = require('cron');
 const axios = require('axios');
 const moment = require('moment-timezone');
 const crashProtection = require('./crashProtection');
+const { logHelpers } = require('./logger');
 
 class CronService {
   constructor() {
@@ -12,6 +13,10 @@ class CronService {
     this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON || '0 */8 * * *';
     this.ordersSyncCron = process.env.ORDERS_SYNC_CRON || '*/8 * * * *';
     this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
+    
+    // Configurações de timeout otimizadas
+    this.productsTimeout = parseInt(process.env.PRODUCTS_TIMEOUT_MS) || 600000; // 10 minutos
+    this.ordersTimeout = parseInt(process.env.ORDERS_TIMEOUT_MS) || 900000; // 15 minutos
   }
 
   /**
@@ -37,31 +42,35 @@ class CronService {
         return;
       }
       
-      console.log('🚀 [CRON] Iniciando sincronização de produtos...');
+      logHelpers.logProducts('info', '🚀 Iniciando sincronização de produtos via CRON', {
+        cronExpression: this.productsSyncCron,
+        timeout: this.productsTimeout
+      });
+      
       try {
-        // Adicionar timeout mais longo para operações de produtos
+        // Timeout otimizado para operações de produtos
         const response = await axios.get(`${this.baseUrl}/api/vtex/products/sync`, {
-          timeout: 300000 // 5 minutos
+          timeout: this.productsTimeout
         });
-        console.log('✅ [CRON] Sincronização de produtos concluída:', response.status);
+        
+        logHelpers.logProducts('info', '✅ Sincronização de produtos concluída com sucesso', {
+          status: response.status,
+          statusText: response.statusText
+        });
         
         // Resetar contador de crashes em caso de sucesso
         crashProtection.resetCrashCount(serviceName);
       } catch (error) {
-        console.error('❌ [CRON] Erro na sincronização de produtos:', error.message);
-        console.error('❌ [CRON] Stack trace:', error.stack);
+        // Log específico para produtos com contexto detalhado
+        logHelpers.logProductsError(error, {
+          serviceName,
+          endpoint: `${this.baseUrl}/api/vtex/products/sync`,
+          timeout: this.productsTimeout,
+          cronExpression: this.productsSyncCron
+        });
         
         // Registrar crash para proteção
         crashProtection.recordCrash(serviceName, error);
-        
-        // Log adicional para debug em produção
-        if (process.env.NODE_ENV === 'production') {
-          console.error(`❌ [PRODUCTION CRON ERROR] Product sync failed:`, {
-            error: error.message,
-            stack: error.stack,
-            timestamp: new Date().toISOString()
-          });
-        }
       }
     }, null, true, this.cronTimezone);
 
@@ -83,26 +92,32 @@ class CronService {
         return;
       }
       
-      console.log('🚀 [CRON] Iniciando sincronização de orders (orders-extract-all)...');
+      // Define período do dia anterior completo no fuso de São Paulo
+      const now = moment().tz('America/Sao_Paulo');
+      const yesterday = now.clone().subtract(1, 'day').format('YYYY-MM-DD');
+
+      const url = `${this.baseUrl}/api/integration/orders-extract-all`;
+      const params = { brazilianDate: yesterday, startTime: '00:00', endTime: '23:59', per_page: 100 };
+
+      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON', {
+        endpoint: url,
+        params,
+        cronExpression: this.ordersSyncCron,
+        timeout: this.ordersTimeout
+      });
+      
       try {
-        // Define período do dia anterior completo no fuso de São Paulo
-        const now = moment().tz('America/Sao_Paulo');
-        const yesterday = now.clone().subtract(1, 'day').format('YYYY-MM-DD');
-
-        const url = `${this.baseUrl}/api/integration/orders-extract-all`;
-        const params = { brazilianDate: yesterday, startTime: '00:00', endTime: '23:59', per_page: 100 };
-
-        console.log(`📡 [CRON] Endpoint: ${url}`);
-        console.log('🗓️ [CRON] Período (Brasil):', params);
-
-        const response = await axios.get(url, { params, timeout: 300000 });
+        const response = await axios.get(url, { params, timeout: this.ordersTimeout });
         
-        console.log('✅ [CRON] Sincronização de orders concluída:', response.status);
+        logHelpers.logOrders('info', '✅ Sincronização de orders concluída com sucesso', {
+          status: response.status,
+          statusText: response.statusText
+        });
         
         // Log detalhado da resposta
         if (response.data && response.data.data) {
           const data = response.data.data;
-          console.log(`📊 [CRON] Resumo:`, {
+          logHelpers.logOrders('info', '📊 Resumo da sincronização de orders', {
             totalOrdersDetailed: data.totalOrdersDetailed,
             period: data.period,
             perPage: data.perPage,
@@ -115,20 +130,17 @@ class CronService {
         crashProtection.resetCrashCount(serviceName);
         
       } catch (error) {
-        console.error('❌ [CRON] Erro na sincronização de orders:', error.message);
-        console.error('❌ [CRON] Stack trace:', error.stack);
+        // Log específico para orders com contexto detalhado
+        logHelpers.logOrdersError(error, {
+          serviceName,
+          endpoint: url,
+          params,
+          timeout: this.ordersTimeout,
+          cronExpression: this.ordersSyncCron
+        });
         
         // Registrar crash para proteção
         crashProtection.recordCrash(serviceName, error);
-        
-        // Log adicional para debug em produção
-        if (process.env.NODE_ENV === 'production') {
-          console.error(`❌ [PRODUCTION CRON ERROR] Orders sync failed:`, {
-            error: error.message,
-            stack: error.stack,
-            timestamp: new Date().toISOString()
-          });
-        }
       }
     }, null, true, this.cronTimezone);
 

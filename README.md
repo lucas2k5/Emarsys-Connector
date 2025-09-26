@@ -569,27 +569,49 @@ O sistema gera alertas automáticos para:
 - Uso de memória > 90%
 - 5 erros consecutivos
 
-### Logs Estruturados
+### Logs Estruturados e Isolados
 
-Logs organizados por tipo em `./logs/`:
+Sistema de logging aprimorado com logs isolados por módulo e melhor visualização:
 
-- `application-{date}.log`: Logs gerais
-- `error-{date}.log`: Apenas erros
-- `http-{date}.log`: Requisições HTTP
-- `metrics-{date}.log`: Métricas de performance
-- `audit-{date}.log`: Auditoria de ações
+#### Logs por Módulo (Isolados)
+- `orders-logs-{date}.log`: Logs específicos de sincronização de pedidos
+- `product-logs-{date}.log`: Logs específicos de sincronização de produtos  
+- `clients-logs-{date}.log`: Logs específicos de sincronização de clientes
 
-Visualizar logs em tempo real:
+#### Logs Gerais do Sistema
+- `piccadilly-emarsys-system-{date}.log`: Logs gerais do sistema
+- `piccadilly-emarsys-errors-{date}.log`: Apenas erros
+- `piccadilly-emarsys-http-{date}.log`: Requisições HTTP
+- `piccadilly-emarsys-metrics-{date}.log`: Métricas de performance
+- `piccadilly-emarsys-audit-{date}.log`: Auditoria de ações
+- `piccadilly-emarsys-sync-{date}.log`: Logs de sincronização
+- `piccadilly-emarsys-alerts-{date}.log`: Alertas do sistema
+
+#### Melhorias na Visualização
+- **Divisórias visuais**: Cada log é separado por linhas de igual (=) para melhor leitura
+- **Timezone São Paulo**: Todos os timestamps no fuso horário de Brasília
+- **Contexto detalhado**: Logs incluem informações específicas do módulo
+- **Estrutura JSON**: Logs estruturados para análise programática
+
+#### Comandos de Logs
 
 ```bash
-# Logs da aplicação
-npm run logs:view
+# Visualizar logs em tempo real
+npm run logs
 
-# Apenas erros
-npm run logs:error
+# Limpar todos os logs e dados
+npm run clear-logs
+
+# Logs específicos por módulo
+tail -f logs/orders-logs-$(date +%Y-%m-%d).log
+tail -f logs/product-logs-$(date +%Y-%m-%d).log
+tail -f logs/clients-logs-$(date +%Y-%m-%d).log
+
+# Logs de erro
+tail -f logs/piccadilly-emarsys-errors-$(date +%Y-%m-%d).log
 
 # Logs HTTP
-npm run logs:http
+tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
 ```
 
 ## 🔧 Manutenção e Troubleshooting
@@ -635,7 +657,10 @@ npm run logs:http
 ### Comandos Úteis de Manutenção
 
 ```bash
-# Limpar logs antigos
+# Limpar todos os logs e dados (NOVO)
+npm run clear-logs
+
+# Limpar logs antigos manualmente
 find ./logs -name "*.log" -mtime +30 -delete
 
 # Backup de dados
@@ -650,6 +675,23 @@ pm2 monit
 # Reiniciar com limpeza de memória
 npm run prod:restart:gc
 ```
+
+### Otimizações de Timeout
+
+O sistema foi otimizado para resolver problemas de timeout em produção:
+
+#### Configurações de Timeout Otimizadas
+```env
+# Timeouts configuráveis (em milissegundos)
+PRODUCTS_TIMEOUT_MS=600000    # 10 minutos para produtos
+ORDERS_TIMEOUT_MS=900000      # 15 minutos para pedidos
+```
+
+#### Melhorias Implementadas
+- **Timeouts aumentados**: De 5 minutos para 10-15 minutos conforme o módulo
+- **Logs específicos**: Cada módulo tem seus próprios logs para melhor debugging
+- **Contexto detalhado**: Logs incluem informações completas sobre timeouts
+- **Configuração flexível**: Timeouts configuráveis via variáveis de ambiente
 
 ### Performance e Otimização
 

@@ -11,7 +11,10 @@ const colors = {
   debug: 'white',
   sync: 'cyan',
   retry: 'blue',
-  alert: 'red'
+  alert: 'red',
+  orders: 'blue',
+  products: 'green',
+  clients: 'yellow'
 };
 
 winston.addColors(colors);
@@ -19,6 +22,21 @@ winston.addColors(colors);
 // Formato personalizado para timestamp brasileiro
 const brazilianTimestamp = winston.format.timestamp({
   format: () => getBrazilianTimestamp()
+});
+
+// Formato com divisórias para melhor visualização
+const dividerFormat = winston.format.printf(({ timestamp, level, message, module, ...meta }) => {
+  const divider = '='.repeat(80);
+  const moduleTag = module ? `[${module.toUpperCase()}]` : '';
+  let log = `${divider}\n`;
+  log += `${timestamp} ${moduleTag} [${level.toUpperCase()}]: ${message}\n`;
+  
+  if (Object.keys(meta).length > 0) {
+    log += `DETALHES:\n${JSON.stringify(meta, null, 2)}\n`;
+  }
+  
+  log += `${divider}\n`;
+  return log;
 });
 
 const logFormat = winston.format.combine(
@@ -31,10 +49,11 @@ const logFormat = winston.format.combine(
 const consoleFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
   brazilianTimestamp,
-  winston.format.printf(({ timestamp, level, message, ...meta }) => {
-    let log = `${timestamp} [${level}]: ${message}`;
+  winston.format.printf(({ timestamp, level, message, module, ...meta }) => {
+    const moduleTag = module ? `[${module.toUpperCase()}]` : '';
+    let log = `${timestamp} ${moduleTag} [${level}]: ${message}`;
     if (Object.keys(meta).length > 0) {
-      log += ` ${JSON.stringify(meta, null, 2)}`;
+      log += `\n${JSON.stringify(meta, null, 2)}`;
     }
     return log;
   })
@@ -146,6 +165,72 @@ const auditLogger = winston.createLogger({
       datePattern: 'YYYY-MM-DD',
       maxSize: '20m',
       maxFiles: '90d',
+    }),
+  ],
+});
+
+// Logger específico para ORDERS
+const ordersLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new winston.transports.Console({
+      level: 'info',
+      format: consoleFormat,
+    }),
+    new DailyRotateFile({
+      filename: path.join('logs', 'orders-logs-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para PRODUCTS
+const productsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new winston.transports.Console({
+      level: 'info',
+      format: consoleFormat,
+    }),
+    new DailyRotateFile({
+      filename: path.join('logs', 'product-logs-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para CLIENTS
+const clientsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new winston.transports.Console({
+      level: 'info',
+      format: consoleFormat,
+    }),
+    new DailyRotateFile({
+      filename: path.join('logs', 'clients-logs-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
     }),
   ],
 });
@@ -271,6 +356,78 @@ const logHelpers = {
       ...details,
     });
   },
+
+  // Log específico para ORDERS
+  logOrders: (level, message, details = {}) => {
+    ordersLogger.log(level, message, {
+      module: 'orders',
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log específico para PRODUCTS
+  logProducts: (level, message, details = {}) => {
+    productsLogger.log(level, message, {
+      module: 'products',
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log específico para CLIENTS
+  logClients: (level, message, details = {}) => {
+    clientsLogger.log(level, message, {
+      module: 'clients',
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de erro específico para ORDERS
+  logOrdersError: (error, context = {}) => {
+    ordersLogger.error('ORDERS ERROR', {
+      module: 'orders',
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de erro específico para PRODUCTS
+  logProductsError: (error, context = {}) => {
+    productsLogger.error('PRODUCTS ERROR', {
+      module: 'products',
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de erro específico para CLIENTS
+  logClientsError: (error, context = {}) => {
+    clientsLogger.error('CLIENTS ERROR', {
+      module: 'clients',
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
 };
 
 // Criar diretório de logs se não existir
@@ -284,5 +441,8 @@ module.exports = {
   logger,
   metricsLogger,
   auditLogger,
+  ordersLogger,
+  productsLogger,
+  clientsLogger,
   logHelpers,
 };
