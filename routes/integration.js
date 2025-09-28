@@ -764,9 +764,10 @@ router.get('/orders-extract-all', async (req, res) => {
         console.log('🔄 Executando sincronização de orders usando nova base de dados...');
         
         const axios = require('axios');
+        const baseUrl = process.env.INTERNAL_BASE_URL || `http://localhost:${process.env.PORT}`;
         const syncResponse = await axios({
           method: 'GET',
-          url: 'http://localhost:3000/api/integration/orders-sync-new-base',
+          url: `${baseUrl}/api/integration/orders-sync-new-base`,
           params: {
             dataInicial: startDate,
             dataFinal: toDate,

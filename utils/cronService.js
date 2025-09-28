@@ -10,8 +10,8 @@ class CronService {
     this.baseUrl = `http://localhost:${process.env.PORT || 3000}`;
     
     // Configurações de cron jobs via variáveis de ambiente
-    this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON || '0 */8 * * *';
-    this.ordersSyncCron = process.env.ORDERS_SYNC_CRON || '*/8 * * * *';
+    this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON;
+    this.ordersSyncCron = process.env.ORDERS_SYNC_CRON;
     this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
     
     // Configurações de timeout otimizadas
