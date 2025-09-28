@@ -898,10 +898,48 @@ router.get('/orders-extract-all', async (req, res) => {
 
       console.log(`✅ ETAPA 2/3 concluídas: ${detailedOrders.length} detalhes obtidos`);
       console.log(`📊 Estatísticas do Processamento: ${hookResults.success}/${hookResults.total} processados com sucesso (${hookResults.failed} falhas, ${hookResults.alreadySynced} já sincronizados, ${hookResults.skipped} pulados)`);
-      console.log('🎉 Fluxo concluído, enviando resposta...');
-
       
- 
+      // ETAPA 4: Gerar CSV usando syncOrders (se houver pedidos processados)
+      let csvResult = null;
+      if (detailedOrders.length > 0) {
+        console.log('📄 ETAPA 4: Iniciando geração de CSV via syncOrders...');
+        try {
+          const syncResult = await vtexOrdersService.syncOrders({
+            dataInicial: startDate,
+            dataFinal: toDate,
+            pageSize: 100
+          });
+          
+          csvResult = {
+            success: syncResult.success,
+            csvGenerated: syncResult.csvResult?.success || false,
+            emarsysSent: syncResult.emarsysSendResult?.success || false,
+            totalOrders: syncResult.totalOrders || 0,
+            transformedOrders: syncResult.transformedOrders || 0,
+            message: syncResult.message || 'CSV gerado com sucesso'
+          };
+          
+          console.log(`✅ ETAPA 4 concluída: CSV ${csvResult.csvGenerated ? 'gerado' : 'falhou'}, Emarsys ${csvResult.emarsysSent ? 'enviado' : 'falhou'}`);
+        } catch (syncError) {
+          console.error('❌ Erro na ETAPA 4 (syncOrders):', syncError);
+          csvResult = {
+            success: false,
+            error: syncError.message,
+            csvGenerated: false,
+            emarsysSent: false
+          };
+        }
+      } else {
+        console.log('⏭️ ETAPA 4 pulada: Nenhum pedido para gerar CSV');
+        csvResult = {
+          success: true,
+          skipped: true,
+          message: 'Nenhum pedido para gerar CSV'
+        };
+      }
+      
+      console.log('🎉 Fluxo completo concluído, enviando resposta...');
+
       // Resposta final
       const { convertToBrazilianTime } = require('../utils/dateUtils');
       const periodBrazil = {
@@ -910,7 +948,7 @@ router.get('/orders-extract-all', async (req, res) => {
       };
       res.json({
         success: true,
-        message: 'Fluxo completo executado: Extração → Hook → Sincronização',
+        message: 'Fluxo completo executado: Extração → Hook → CSV → Emarsys',
         data: {
           totalOrdersDetailed: detailedOrders.length,
           period: periodBrazil,
@@ -927,6 +965,7 @@ router.get('/orders-extract-all', async (req, res) => {
             hookSkipped: hookResults.skipped,
             hookAlreadySynced: hookResults.alreadySynced,
           },
+          csv: csvResult,
           hookErrorsSample: hookResults.errors.slice(0, 5),
         },
         timestamp: new Date().toISOString()
