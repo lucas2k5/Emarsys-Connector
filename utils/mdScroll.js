@@ -2,7 +2,7 @@ const axios = require('axios');
 const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
 const baseurlStable = 'https://piccadilly.vtexcommercestable.com.br';
 
-async function scrollOrders(headers) {
+async function scrollOrders(headers, customParams = {}) {
   const baseUrl = normalizeVtexBaseUrl(baseurlStable);
   const entity = process.env.EMS_ORDERS_ENTITY_ID || 'emsOrdersV2';
 
@@ -14,7 +14,7 @@ async function scrollOrders(headers) {
     _perPage: 100
   };
 
-  const params = { ...defaultParams};
+  const params = { ...defaultParams, ...customParams};
 
   try {
     // Usa /search com paginação em vez de /scroll

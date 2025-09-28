@@ -2545,27 +2545,23 @@ class VtexOrdersService {
       }
 
       if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, tentando usar dados formatados sem filtro...');
+        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, usando dados da VTEX OMS mapeados...');
         
-        // Se não encontrou correspondência, usa todos os dados formatados disponíveis
-        if (formattedData && formattedData.length > 0) {
-          console.log('📋 Usando todos os dados formatados disponíveis (sem filtro)');
-          formattedOrders = formattedData;
-        } else {
-          console.warn('⚠️ Nenhum dado formatado disponível, usando dados da VTEX OMS mapeados');
-          formattedOrders = orders.map(order => ({
-            order: order.orderId || order.id,
-            email: order.email,
-            item: order.items?.[0]?.id,
-            price: order.items?.[0]?.price,
-            quantity: order.items?.[0]?.quantity,
-            timestamp: order.creationDate,
-            s_channel_source: 'web',
-            s_store_id: 'piccadilly',
-            s_sales_channel: 'ecommerce',
-            s_discount: order.discount
-          }));
-        }
+        // SEMPRE usa os dados da VTEX OMS quando não há correspondência
+        // NUNCA usa dados formatados antigos para evitar discrepâncias
+        console.log('📋 Mapeando pedidos da VTEX OMS para formato Emarsys');
+        formattedOrders = orders.map(order => ({
+          order: order.orderId || order.id,
+          email: order.email,
+          item: order.items?.[0]?.id,
+          price: order.items?.[0]?.price,
+          quantity: order.items?.[0]?.quantity,
+          timestamp: order.creationDate,
+          s_channel_source: 'web',
+          s_store_id: 'piccadilly',
+          s_sales_channel: 'ecommerce',
+          s_discount: order.discount
+        }));
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
