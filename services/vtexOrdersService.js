@@ -2326,7 +2326,7 @@ class VtexOrdersService {
    */
   async sendOrderToHook(orderId) {
     try {
-      // URL completa do VTEX Store Framework para o hook
+      // URL do hook existente no VTEX Store Framework
       const hookUrl = 'https://ems--piccadilly.myvtex.com/_v/order/hook';
       const axios = require('axios');
       
@@ -2352,59 +2352,8 @@ class VtexOrdersService {
 
       console.log(`✅ Detalhes do pedido ${orderId} obtidos com sucesso`);
 
-      // ETAPA 2: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
-      const emsOrdersService = require('./emsOrdersService');
-      
-      const orderStatus = orderDetail.status;
-      
-      // Busca o item - sempre usa refId (não productId)
-      let item = null;
-      
-      // 1. Tenta orderDetail.item primeiro
-      if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
-        
-        const firstItem = orderDetail.items[0];
-        item = firstItem.refId || firstItem.sku || firstItem.itemId;
-      }
-      
-      if (!item) {
-        console.error(`❌ [${orderId}] Não foi possível extrair item (refId) do pedido:`, {
-          orderId: orderId,
-        });
-        return { 
-          success: false, 
-          error: 'Item (refId) não encontrado no pedido', 
-          orderDetail: orderDetail 
-        };
-      }
-      
-      const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
-      console.log('🔍 existingRecord | sendOrderToHook:', existingRecord);
-      if (existingRecord) {
-        console.log('🔍 existingRecord |IF| sendOrderToHook:', existingRecord);
-        if (existingRecord.isSync === true) {
-          console.log(`⏭️ [${orderId}] Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
-          return { 
-            success: true, 
-            skipped: true, 
-            message: 'Registro já sincronizado',
-            existingRecord: existingRecord
-          };
-        } else {
-          console.log(`⏭️ [${orderId}] Registro pendente já existe na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
-          return { 
-            success: true, 
-            skipped: true, 
-            message: 'Registro pendente já existe na base',
-            existingRecord: existingRecord
-          };
-        }
-      } else {
-        console.log(`🔍 [${orderId}] Registro NÃO encontrado na emsOrdersV2 - continuando para envio ao hook`);
-      }
-      
-      // ETAPA 3: Se não existe, envia para o hook
-      console.log(`📨 [${orderId}] ETAPA 3: Registro não existe na base - enviando para hook: order=${orderId} + item=${item}`);
+      // ETAPA 2: Envia diretamente para o hook (sem verificação prévia)
+      console.log(`📨 [${orderId}] ETAPA 2: Enviando pedido para hook`);
       
       // Cria o payload garantindo que orderId esteja no nível raiz
       const payload = {
