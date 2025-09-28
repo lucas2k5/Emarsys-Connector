@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
-const { scrollOrders } = require('../utils/mdScroll');
+const { searchOrders } = require('../utils/mdSearch');
 
 /**
  * Helper para operações de sincronização de pedidos
@@ -12,6 +12,52 @@ class OrderSyncHelper {
     this.getVtexHeaders = getVtexHeaders;
   }
 
+  /**
+   * Marca pedidos como sincronizados (isSync=true) - implementação centralizada
+   * @param {Array} records - Array de registros para marcar como sincronizados
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Object} Resultado da operação
+   */
+  async markAsSynced(records, headers) {
+    let updated = 0;
+    let errors = 0;
+    
+    console.log(`🔄 Marcando ${records.length} pedidos como sincronizados (isSync=true)...`);
+    
+    try {
+      console.log('🔎 Buscando todos os registros via scroll...');
+      
+      // Busca todos os registros de uma vez
+      const allRecords = await this.getAllRecordsWithDetails(headers);
+      console.log(`✅ ${allRecords.length} registros encontrados via scroll`);
+      
+      // Filtra apenas os que precisam ser atualizados (isSync=false)
+      const recordsToUpdate = allRecords.filter(record => 
+        record.isSync === false || record.isSync === null || record.isSync === undefined
+      );
+      
+      console.log(`📋 ${recordsToUpdate.length} registros precisam ser atualizados`);
+      
+      if (recordsToUpdate.length === 0) {
+        console.log('✅ Nenhum registro precisa ser atualizado');
+        return { success: true, updated: 0, errors: 0, total: records.length };
+      }
+      
+      // Atualiza em lote
+      const updateResults = await this.batchUpdateRecords(recordsToUpdate, headers);
+      updated = updateResults.updated;
+      errors = updateResults.errors;
+      
+    } catch (error) {
+      console.error('❌ Erro ao marcar pedidos como sincronizados:', error.message);
+      errors = records.length;
+    }
+    
+    console.log(`📊 Resultado da atualização: ${updated} atualizados, ${errors} erros de ${records.length} registros`);
+    
+    return { success: true, updated, errors, total: records.length };
+  }
+
 
   /**
    * Busca todos os registros com detalhes via scroll
@@ -20,9 +66,10 @@ class OrderSyncHelper {
    */
   async getAllRecordsWithDetails(headers) {
     try {
-      console.log('🔎 Buscando todos os registros via scroll...');
+      console.log('🔎 Buscando todos os registros via scroll...[28-09]====>>>');
       
-      const items = await scrollOrders(headers);
+      const { searchOrders } = require('../utils/mdSearch');
+      const items = await searchOrders(headers);
       console.log(`📋 ${Array.isArray(items) ? items.length : 0} registros encontrados via scroll`);
       
       if (!Array.isArray(items) || items.length === 0) {

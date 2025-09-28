@@ -1702,7 +1702,10 @@ class VtexOrdersService {
               
               
               if (ordersToMarkAsSynced.length > 0) {
-                await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
+                // Marca como sincronizado usando OrderSyncHelper
+                const OrderSyncHelper = require('../helpers/orderSyncHelper');
+                const orderSyncHelper = new OrderSyncHelper(emsOrdersService.vtexBaseUrl, emsOrdersService.entity, () => emsOrdersService.getVtexHeaders());
+                await orderSyncHelper.markAsSynced(ordersToMarkAsSynced, emsOrdersService.getVtexHeaders());
                 console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
 
                 // Chama a rota interna de scroll para buscar próximos pendentes
@@ -2066,7 +2069,10 @@ class VtexOrdersService {
           }
           
           if (ordersToMarkAsSynced.length > 0) {
-            await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
+            // Marca como sincronizado usando OrderSyncHelper
+            const OrderSyncHelper = require('../helpers/orderSyncHelper');
+            const orderSyncHelper = new OrderSyncHelper(emsOrdersService.vtexBaseUrl, emsOrdersService.entity, () => emsOrdersService.getVtexHeaders());
+            await orderSyncHelper.markAsSynced(ordersToMarkAsSynced, emsOrdersService.getVtexHeaders());
             console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
           }
         } catch (syncError) {

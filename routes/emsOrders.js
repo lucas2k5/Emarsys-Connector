@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const emsOrdersService = require('../services/emsOrdersService');
-const { scrollOrders } = require('../utils/mdScroll');
+const { searchOrders } = require('../utils/mdSearch');
 
 /**
  * @route GET /api/ems-orders/pending
@@ -423,7 +423,7 @@ router.get('/scroll', async (req, res) => {
       _perPage: req.query.perPage || '100'
     };
 
-    const json = await scrollOrders(headers, params);
+    const json = await searchOrders(headers, params);
 
     return res.status(200).json(json);
   } catch (err) {

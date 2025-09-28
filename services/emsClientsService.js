@@ -167,166 +167,6 @@ class EmsClientsService {
     return { success: true, filePath, filename, total: contacts.length };
   }
 
-  async markAsSynced(pendingRecords) {
-    const records = Array.isArray(pendingRecords) ? pendingRecords : [];
-    if (records.length === 0) return { success: true, updated: 0 };
-    
-    console.log(`🔄 Marcando ${records.length} registros como sincronizados (isSync=true)...`);
-    
-    try {
-      console.log('🔎 Buscando todos os registros via scroll...');
-      
-      // Busca todos os registros de uma vez
-      const allRecords = await this.getAllRecordsWithDetails();
-      console.log(`✅ ${allRecords.length} registros encontrados via scroll`);
-      
-      // Filtra apenas os que precisam ser atualizados (isSync=false)
-      const recordsToUpdate = allRecords.filter(record => 
-        record.isSync === false || record.isSync === null || record.isSync === undefined
-      );
-      
-      console.log(`📋 ${recordsToUpdate.length} registros precisam ser atualizados`);
-      
-      if (recordsToUpdate.length === 0) {
-        console.log('✅ Nenhum registro precisa ser atualizado');
-        return { success: true, updated: 0, errors: 0, total: records.length };
-      }
-      
-      // Atualiza em lote
-      const updateResults = await this.batchUpdateRecords(recordsToUpdate);
-      console.log(`📊 Resultado da atualização: ${updateResults.updated} atualizados, ${updateResults.errors} erros`);
-      
-      return { success: true, updated: updateResults.updated, errors: updateResults.errors, total: records.length };
-      
-    } catch (error) {
-      console.error('❌ Erro ao marcar registros como sincronizados:', error.message);
-      return { success: false, updated: 0, errors: records.length, total: records.length };
-    }
-  }
-
-  /**
-   * Busca todos os registros com detalhes via scroll
-   * @returns {Array} Array de registros com detalhes
-   */
-  async getAllRecordsWithDetails() {
-    try {
-      console.log('🔎 Buscando todos os registros via scroll...');
-      
-      const { scrollOrders } = require('../utils/mdScroll');
-      const items = await scrollOrders(this.getVtexHeaders());
-      console.log(`📋 ${Array.isArray(items) ? items.length : 0} registros encontrados via scroll`);
-      
-      if (!Array.isArray(items) || items.length === 0) {
-        return [];
-      }
-
-      // Busca detalhes de todos os registros em lotes
-      const allRecords = [];
-      const batchSize = 20; // Processa em lotes de 20
-      
-      for (let i = 0; i < items.length; i += batchSize) {
-        const batch = items.slice(i, i + batchSize);
-        const batchPromises = batch.map(async (item) => {
-          if (!item.id) return null;
-          
-          try {
-            const { data } = await axios.get(
-              `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents/${item.id}`,
-              {
-                params: { _fields: 'id,order,item,order_status,isSync' },
-                headers: this.getVtexHeaders(),
-                timeout: 30000
-              }
-            );
-            return data;
-          } catch (e) {
-            console.warn(`⚠️ Falha ao buscar documento ${item.id}:`, e.message);
-            return null;
-          }
-        });
-        
-        const batchResults = await Promise.all(batchPromises);
-        allRecords.push(...batchResults.filter(Boolean));
-        
-        // Pequena pausa entre lotes
-        if (i + batchSize < items.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
-      
-      console.log(`✅ ${allRecords.length} registros com detalhes obtidos`);
-      return allRecords;
-      
-    } catch (error) {
-      console.error('❌ Erro ao buscar registros via scroll:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Atualiza registros em lote
-   * @param {Array} records - Array de registros para atualizar
-   * @returns {Object} Resultado da atualização
-   */
-  async batchUpdateRecords(records) {
-    let updated = 0;
-    let errors = 0;
-    
-    console.log(`🔄 Atualizando ${records.length} registros em lote...`);
-    
-    const updateBody = { isSync: true };
-    const documentsUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents`;
-    
-    // Processa em lotes menores para evitar sobrecarga
-    const batchSize = 10;
-    
-    for (let i = 0; i < records.length; i += batchSize) {
-      const batch = records.slice(i, i + batchSize);
-      
-      const batchPromises = batch.map(async (record) => {
-        try {
-          const response = await axios.patch(`${documentsUrl}/${record.id}`, updateBody, {
-            headers: {
-              ...this.getVtexHeaders(),
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            timeout: 30000
-          });
-          
-          if (response.status >= 200 && response.status < 300) {
-            console.log(`✅ Registro ${record.id} (order=${record.order}) marcado como sincronizado`);
-            return { success: true, id: record.id };
-          } else {
-            console.warn(`⚠️ Status inesperado para registro ${record.id}: ${response.status}`);
-            return { success: false, id: record.id, error: `Status ${response.status}` };
-          }
-        } catch (error) {
-          console.error(`❌ Erro ao atualizar registro ${record.id}:`, error.message);
-          return { success: false, id: record.id, error: error.message };
-        }
-      });
-      
-      const batchResults = await Promise.all(batchPromises);
-      
-      // Conta resultados
-      batchResults.forEach(result => {
-        if (result.success) {
-          updated++;
-        } else {
-          errors++;
-        }
-      });
-      
-      // Pausa entre lotes
-      if (i + batchSize < records.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
-    
-    console.log(`📊 Lote concluído: ${updated} atualizados, ${errors} erros`);
-    return { updated, errors };
-  }
 
   async syncAndSendBatch({ hours = this.lookbackHours } = {}) {
     // 1) Fetch changes in CL
@@ -346,7 +186,10 @@ class EmsClientsService {
     const upload = await this.emarsysWebdav.uploadCatalogFile(csvResult.filePath, remotePath);
     if (upload && upload.success) {
       // 7) Marcar como sincronizado
-      await this.markAsSynced(pending);
+      // Marca como sincronizado usando OrderSyncHelper
+      const OrderSyncHelper = require('../helpers/orderSyncHelper');
+      const orderSyncHelper = new OrderSyncHelper(this.vtexBaseUrl, this.entity, () => this.getVtexHeaders());
+      await orderSyncHelper.markAsSynced(pending, this.getVtexHeaders());
       return { success: true, sent: contacts.length, failed: 0, csv: csvResult, upload };
     }
     return { success: false, error: upload?.error || 'Falha no upload para Emarsys', csv: csvResult };
