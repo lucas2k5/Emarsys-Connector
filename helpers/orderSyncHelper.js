@@ -6,6 +6,18 @@ const { searchOrders } = require('../utils/mdSearch');
  * Helper para operações de sincronização de pedidos
  */
 class OrderSyncHelper {
+  
+  /**
+   * Codifica caracteres especiais na query _where para funcionar corretamente com a API
+   * @param {string} whereClause - A cláusula where sem codificação
+   * @returns {string} A cláusula where codificada
+   */
+  encodeWhereClause(whereClause) {
+    return whereClause
+      .replace(/=/g, '%3D')  // Codifica o caractere '=' para '%3D'
+      .replace(/\(/g, '%28') // Codifica o caractere '(' para '%28'  
+      .replace(/\)/g, '%29'); // Codifica o caractere ')' para '%29'
+  }
   constructor(vtexBaseUrl, entity, getVtexHeaders) {
     this.vtexBaseUrl = normalizeVtexBaseUrl(vtexBaseUrl);
     this.entity = entity;
@@ -13,7 +25,7 @@ class OrderSyncHelper {
   }
 
   /**
-   * Marca pedidos como sincronizados (isSync=true) - implementação centralizada
+   * Marca pedidos específicos como sincronizados (isSync=true) usando IDs fornecidos
    * @param {Array} records - Array de registros para marcar como sincronizados
    * @param {Object} headers - Headers para autenticação
    * @returns {Object} Resultado da operação
@@ -22,54 +34,32 @@ class OrderSyncHelper {
     let updated = 0;
     let errors = 0;
     
-    console.log(`🔄 Marcando pedidos como sincronizados (isSync=true)...`);
+    console.log(`🔄 Marcando ${records.length} pedidos específicos como sincronizados (isSync=true)...`);
     
+    if (!records || records.length === 0) {
+      console.log('✅ Nenhum registro fornecido para sincronizar');
+      return { success: true, updated: 0, errors: 0, total: 0 };
+    }
+
     try {
-      // 1. Primeiro busca TODOS os registros com isSync=false
-      console.log('🔎 Buscando todos os registros com isSync=false...');
-      const listUrl = `${this.vtexBaseUrl}/_v/orders/list`;
-      const listParams = {
-        _where: '(isSync=false)',
-        page: 1,
-        pageSize: 1000
-      };
-
-      const listResponse = await axios.get(listUrl, {
-        params: listParams,
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        timeout: 30000
-      });
-
-      const ordersToSync = listResponse.data || [];
-      console.log(`📋 ${ordersToSync.length} registros encontrados com isSync=false`);
-
-      if (ordersToSync.length === 0) {
-        console.log('✅ Nenhum registro precisa ser sincronizado');
-        return { success: true, updated: 0, errors: 0, total: 0 };
-      }
-
-      // 2. Agora atualiza cada registro sequencialmente (um por vez)
-      console.log(`🔄 Atualizando ${ordersToSync.length} registros sequencialmente...`);
+      // Processa cada registro individualmente usando o ID fornecido
+      console.log(`🔄 Atualizando ${records.length} registros sequencialmente...`);
       
-      for (let i = 0; i < ordersToSync.length; i++) {
-        const order = ordersToSync[i];
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
         
         try {
-          const recordId = order.id; // ID do registro retornado pela API
+          const recordId = record.id; // ID do registro fornecido
           if (!recordId) {
-            console.warn('⚠️ Registro sem ID válido:', order);
+            console.warn('⚠️ Registro sem ID válido:', record);
             errors++;
             continue;
           }
           
-          console.log(`🔄 Processando registro ${i + 1}/${ordersToSync.length}: ${recordId}`);
-          console.log(`📄 Dados do registro:`, JSON.stringify(order, null, 2));
+          console.log(`🔄 Processando registro ${i + 1}/${records.length}: ${recordId}`);
+          console.log(`📄 Dados do registro:`, JSON.stringify(record, null, 2));
           
-          // Atualiza o registro para isSync=true usando o ID do registro (exatamente como o curl)
+          // Atualiza o registro para isSync=true usando o ID do registro
           const updateUrl = `${this.vtexBaseUrl}/_v/orders/${recordId}/sync`;
           const updateResponse = await axios.patch(updateUrl, 
             { isSync: true },
@@ -92,12 +82,12 @@ class OrderSyncHelper {
           }
           
         } catch (error) {
-          console.error(`❌ Erro ao atualizar registro ${recordId}:`, error.message);
+          console.error(`❌ Erro ao atualizar registro ${record.id}:`, error.message);
           errors++;
         }
         
         // Pausa entre registros para não sobrecarregar a API
-        if (i < ordersToSync.length - 1) {
+        if (i < records.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
@@ -107,9 +97,9 @@ class OrderSyncHelper {
       errors = records.length;
     }
     
-    console.log(`📊 Resultado da atualização: ${updated} atualizados, ${errors} erros de ${updated + errors} registros`);
+    console.log(`📊 Resultado da atualização: ${updated} atualizados, ${errors} erros de ${records.length} registros`);
     
-    return { success: true, updated, errors, total: updated + errors };
+    return { success: true, updated, errors, total: records.length };
   }
 
 
@@ -264,7 +254,7 @@ class OrderSyncHelper {
       
       const listUrl = `${this.vtexBaseUrl}/_v/orders/list`;
       const params = {
-        _where: '(isSync=false)',
+        _where: this.encodeWhereClause('(isSync=false)'), // Codifica caracteres especiais para funcionar corretamente
         page: 1,
         pageSize: 1000
       };
@@ -278,7 +268,7 @@ class OrderSyncHelper {
         },
         timeout: 30000
       });
-
+      console.log('📥 Resposta da busca:', response.data);
       const orders = response.data || [];
       console.log(`📋 ${orders.length} pedidos encontrados com isSync=false`);
       
@@ -353,13 +343,13 @@ class OrderSyncHelper {
         const batch = ordersToSync.slice(i, i + batchSize);
         
         const batchPromises = batch.map(async (order) => {
-          const orderId = order.id || order.orderId;
-          if (!orderId) {
+          const registerId = order.id;
+          if (!registerId) {
             console.warn('⚠️ Pedido sem ID válido:', order);
-            return { success: false, id: orderId, error: 'ID inválido' };
+            return { success: false, id: registerId, error: 'ID inválido' };
           }
           
-          return await this.syncOrder(orderId, headers);
+          return await this.syncOrder(registerId, headers);
         });
         
         const batchResults = await Promise.all(batchPromises);

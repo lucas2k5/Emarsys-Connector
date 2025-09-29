@@ -119,6 +119,90 @@ async function fetchEmsOrderByFilter(orderId, isSync = false) {
 }
 
 /**
+ * Busca um registro específico na EMS por order (independente do isSync)
+ * @param {string} orderId - ID do pedido
+ * @returns {Promise<Object|null>} Registro encontrado ou null
+ */
+async function fetchEmsOrderByOrderId(orderId) {
+  try {
+    console.log(`🔍 Buscando registro na EMS por order: ${orderId}`);
+    
+    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
+    const params = {
+      'order': orderId
+      // Não especifica isSync para buscar independente do status
+    };
+    
+    const headers = {
+      'Accept': 'application/json'
+    };
+    
+    const response = await axios.get(url, {
+      params,
+      headers,
+      timeout: 30000 // 30 segundos de timeout
+    });
+    
+    const data = response.data;
+    if (data && data.success && data.data && data.data.length > 0) {
+      console.log(`✅ Registro encontrado na EMS para ${orderId} (isSync: ${data.data[0].isSync})`);
+      return data.data[0]; // Retorna o primeiro registro encontrado
+    } else {
+      console.log(`ℹ️ Nenhum registro encontrado na EMS para ${orderId}`);
+      return null;
+    }
+    
+  } catch (error) {
+    console.error(`❌ Erro ao buscar registro na EMS para ${orderId}:`, error?.response?.data || error.message);
+    return null;
+  }
+}
+
+/**
+ * Busca registros na EMS por múltiplos filtros (order, item, order_status)
+ * @param {string} orderId - ID do pedido
+ * @param {string} item - Item do pedido
+ * @param {string} orderStatus - Status do pedido
+ * @returns {Promise<Object|null>} Registro encontrado ou null
+ */
+async function fetchEmsOrderByFilters(orderId, item, orderStatus) {
+  try {
+    console.log(`🔍 Buscando registro na EMS por filtros: order=${orderId}, item=${item}, order_status=${orderStatus}`);
+    
+    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
+    const params = {
+      'order': orderId,
+      'item': item,
+      'order_status': orderStatus
+      // Não especifica isSync para buscar independente do status
+    };
+    
+    const headers = {
+      'Accept': 'application/json'
+    };
+    
+    const response = await axios.get(url, {
+      params,
+      headers,
+      timeout: 30000 // 30 segundos de timeout
+    });
+    
+    const data = response.data;
+    if (data && data.success && data.data && data.data.length > 0) {
+      console.log(`✅ Registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus} (isSync: ${data.data[0].isSync})`);
+      return data.data[0]; // Retorna o primeiro registro encontrado
+    } else {
+      console.log(`ℹ️ Nenhum registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus}`);
+      return null;
+    }
+    
+  } catch (error) {
+    console.error(`❌ Erro ao buscar registro na EMS por filtros:`, error?.response?.data || error.message);
+    return null;
+  }
+}
+
+/**
  * Sincroniza um pedido específico na EMS usando PATCH
  * @param {string} orderId - ID do pedido a ser sincronizado
  * @returns {Promise<Object>} Resultado da sincronização
@@ -850,13 +934,25 @@ router.get('/orders-extract-all', async (req, res) => {
               console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
               hookResults.skipped++;
             } else {
-              // Buscar registro na EMS com isSync=false
-              const emsRecord = await fetchEmsOrderByFilter(orderId, false);
+              // Extrai dados do pedido para verificação mais precisa
+              const item = orderDetail?.items?.[0]?.refId || orderDetail?.items?.[0]?.id;
+              const orderStatus = orderDetail?.status;
+              
+              // Buscar registro na EMS com filtros específicos (order, item, order_status)
+              const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
               
               if (emsRecord) {
-                console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
-                hookResults.alreadySynced++;
+                if (emsRecord.isSync === false) {
+                  console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
+                  hookResults.alreadySynced++;
+                } else {
+                  console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=true - pulando processamento (já sincronizado)`);
+                  hookResults.alreadySynced++;
+                }
               } else {
+                // Registro não existe na EMS, pode processar
+                console.log(`🆕 Pedido ${orderId} não existe na EMS - processando...`);
+                
                 // Após sincronização na EMS, enviar para o hook
                 const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
                 if (sendResult.success) {
@@ -877,7 +973,6 @@ router.get('/orders-extract-all', async (req, res) => {
                     data: sendResult.data 
                   });
                 }
-                
               }
             }
 
@@ -939,7 +1034,63 @@ router.get('/orders-extract-all', async (req, res) => {
       }
       
       console.log('🎉 Fluxo completo concluído, enviando resposta...');
-
+      // Chama a rota interna de scroll para buscar próximos pendentes e marcá-los como sincronizados
+      try {
+        const axios = require('axios');
+        
+        // Primeira requisição: Busca pedidos não sincronizados no piccadilly.myvtex.com
+        const listUrl = 'https://piccadilly.myvtex.com/_v/orders/list?_where=(isSync%3Dfalse)&page=1&pageSize=1000';
+        console.log('🔎 Buscando pedidos não sincronizados...', { url: listUrl });
+        
+        const listResp = await axios.get(listUrl, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Cookie': 'VtexWorkspace=master%3A-'
+          },
+          timeout: 20000
+        });
+        
+        // Se retornou dados, marca cada pedido individualmente como sincronizado
+        if (listResp.data && listResp.data.data && listResp.data.data.length > 0) {
+          console.log(`📋 Encontrados ${listResp.data.data.length} pedidos para marcar como sincronizados`);
+          
+          let successCount = 0;
+          let errorCount = 0;
+          
+          // Processa cada pedido individualmente
+          for (const order of listResp.data.data) {
+            try {
+              // Segunda requisição: PATCH para ems--piccadilly.myvtex.com com o ID específico
+              const patchUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${order.id}/sync`;
+              const patchResp = await axios.patch(patchUrl, {
+                isSync: true
+              }, {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                  'Cookie': 'VtexWorkspace=master%3A-'
+                },
+                timeout: 10000
+              });
+              
+              if (patchResp.status === 200) {
+                successCount++;
+                console.log(`✅ Pedido ${order.id} marcado como sincronizado`);
+              }
+            } catch (patchErr) {
+              errorCount++;
+              console.error(`❌ Falha ao marcar pedido ${order.id} como sincronizado:`, patchErr.message);
+            }
+          }
+          
+          console.log(`📊 Resultado final: ${successCount} pedidos marcados com sucesso, ${errorCount} falharam`);
+        } else {
+          console.log('ℹ️ Nenhum pedido não sincronizado encontrado');
+        }
+      } catch (scrollErr) {
+        console.error('❌ Falha ao buscar pedidos não sincronizados:', scrollErr.message);
+      }
       // Resposta final
       const { convertToBrazilianTime } = require('../utils/dateUtils');
       const periodBrazil = {

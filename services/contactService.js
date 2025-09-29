@@ -76,7 +76,6 @@ class ContactService {
       console.log('🚀 Iniciando busca de todos os registros da CL usando API de scroll da VTEX...');
       console.log('✅ API de scroll confirmada funcionando: retorna 1000 registros com token!');
       
-      // Usa a API de scroll específica da VTEX (/scroll endpoint) - confirmada funcionando!
       return await this.fetchAllCLRecordsWithVTEXScroll(options);
       
     } catch (error) {

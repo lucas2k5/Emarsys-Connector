@@ -388,54 +388,6 @@ router.post('/test-edit-single', async (req, res) => {
   }
 });
 
-// module.exports moved to bottom to ensure routes below are registered
-
-/**
- * @route GET /api/ems-orders/scroll
- * @desc Proxy do VTEX MD Scroll enviando body x-www-form-urlencoded via GET
- *       Headers (AppKey/AppToken) vêm via query params para este teste.
- *       Ex.: /api/ems-orders/scroll?appKey=XXX&appToken=YYY
- * @access Public (não enviar chaves reais em produção)
- */
-router.get('/scroll', async (req, res) => {
-  try {
-    console.log('🔎 [ROUTE] /api/ems-orders/scroll called');
-    const appKey = req.query.appKey || req.get('X-VTEX-API-AppKey') || process.env.VTEX_APP_KEY;
-    const appToken = req.query.appToken || req.get('X-VTEX-API-AppToken') || process.env.VTEX_APP_TOKEN;
-
-    if (!appKey || !appToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Parâmetros appKey e appToken são obrigatórios',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const headers = {
-      'X-VTEX-API-AppKey': appKey,
-      'X-VTEX-API-AppToken': appToken
-    };
-
-    const params = {
-    _where: req.query.where,
-      _fields: req.query.fields,
-      _sort: req.query.sort,
-      _page: req.query.page || '1',
-      _perPage: req.query.perPage || '100'
-    };
-
-    const json = await searchOrders(headers, params);
-
-    return res.status(200).json(json);
-  } catch (err) {
-    console.error('❌ [ROUTE] Erro no scroll:', err?.data || err.message);
-    return res.status(502).json({
-      success: false,
-      error: err.message.data || 'Erro ao consultar VTEX MD scroll',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
 
 /**
  * @route POST /api/ems-orders/test-sync/:orderId

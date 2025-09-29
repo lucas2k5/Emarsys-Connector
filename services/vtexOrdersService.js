@@ -1673,67 +1673,6 @@ class VtexOrdersService {
               console.log('✅ CSV enviado com sucesso para Emarsys, marcando pedidos como sincronizados...');
             }
             
-            // Marca pedidos como sincronizados na emsOrdersV2
-            // Usa apenas os pedidos que foram efetivamente processados no CSV
-            try {
-              const emsOrdersService = require('./emsOrdersService');
-              
-              // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
-              const marketplaceValidator = require('../utils/marketplaceValidator');
-
-              const filteredForSync = orders.filter(o => {
-                const oid = o.order;
-                return !marketplaceValidator.isMarketplaceOrder(oid);
-              });
-
-              // Cria array com os pedidos que foram processados no CSV e não são marketplace
-              const ordersToMarkAsSynced = filteredForSync.map(order => ({
-                id: order.id,
-                order: order.order,
-                item: order.item,
-                order_status: order.order_status,
-                isSync: true
-              }));
-
-              const skippedMarketplace = orders.length - filteredForSync.length;
-              if (skippedMarketplace > 0) {
-                console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
-              }
-              
-              
-              if (ordersToMarkAsSynced.length > 0) {
-                // Marca como sincronizado usando OrderSyncHelper
-                const OrderSyncHelper = require('../helpers/orderSyncHelper');
-                const orderSyncHelper = new OrderSyncHelper(emsOrdersService.vtexBaseUrl, emsOrdersService.entity, () => emsOrdersService.getVtexHeaders());
-                await orderSyncHelper.markAsSynced(ordersToMarkAsSynced, emsOrdersService.getVtexHeaders());
-                console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
-
-                // Chama a rota interna de scroll para buscar próximos pendentes
-                try {
-                  const axios = require('axios');
-                  const baseUrl = process.env.INTERNAL_BASE_URL || `http://localhost:${process.env.PORT}`;
-                  const appKey = process.env.VTEX_APP_KEY;
-                  const appToken = process.env.VTEX_APP_TOKEN;
-
-                  if (appKey && appToken) {
-                    const url = `${baseUrl}/api/ems-orders/scroll`;
-                    console.log('🔎 Disparando scroll de emsOrdersV2 via rota interna...', { url });
-                    const scrollResp = await axios.get(url, {
-                      params: { appKey, appToken },
-                      timeout: 20000
-                    });
-                    console.log('📥 Scroll executado. Status:', scrollResp.status);
-                  } else {
-                    console.warn('⚠️ VTEX_APP_KEY/VTEX_APP_TOKEN não definidos. Pulando chamada ao scroll.');
-                  }
-                } catch (scrollErr) {
-                  console.error('❌ Falha ao chamar rota interna de scroll:', scrollErr.message);
-                }
-              }
-            } catch (syncError) {
-              console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
-            }
-            
             // Deleta o arquivo orders.json após envio bem-sucedido
             try {
               if (fs.existsSync(this.ordersFile)) {
@@ -2043,7 +1982,6 @@ class VtexOrdersService {
         // Marca pedidos enviados como sincronizados na emsOrdersV2
         // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
-          const emsOrdersService = require('./emsOrdersService');
           
           // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
           const marketplaceValidator = require('../utils/marketplaceValidator');
@@ -2052,29 +1990,15 @@ class VtexOrdersService {
             return !marketplaceValidator.isMarketplaceOrder(oid);
           });
 
-          // Cria array com os pedidos que foram enviados para Emarsys e não são marketplace
-          const ordersToMarkAsSynced = filteredForSync.map(order => ({
-            id: order.id,
-            order: order.order || order.orderId,
-            email: order.email,
-            item: order.item,
-            quantity: order.quantity,
-            price: order.price,
-            timestamp: order.timestamp
-          }));
+          
+         
 
           const skippedMarketplace = orders.length - filteredForSync.length;
           if (skippedMarketplace > 0) {
             console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
           }
           
-          if (ordersToMarkAsSynced.length > 0) {
-            // Marca como sincronizado usando OrderSyncHelper
-            const OrderSyncHelper = require('../helpers/orderSyncHelper');
-            const orderSyncHelper = new OrderSyncHelper(emsOrdersService.vtexBaseUrl, emsOrdersService.entity, () => emsOrdersService.getVtexHeaders());
-            await orderSyncHelper.markAsSynced(ordersToMarkAsSynced, emsOrdersService.getVtexHeaders());
-            console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
-          }
+          
         } catch (syncError) {
           console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
         }
