@@ -94,19 +94,23 @@ class CronService {
       
       // Calcula o período com base em ORDERS_SYNC_CRON (ex.: a cada 2h)
       // e envia explicitamente startDate/toDate para a rota.
-      const { calculatePeriodFromCron } = require('./cronPeriodCalculator');
+      const { calculatePeriodFromCron, calculateNextExecution } = require('./cronPeriodCalculator');
       const period = calculatePeriodFromCron();
+      const nextExecution = calculateNextExecution();
 
       const url = `${this.baseUrl}/api/integration/orders-extract-all`;
       const params = period
-        ? { startDate: period.startDate, toDate: period.toDate, per_page: 100 }
-        : { per_page: 100 };
+        ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 }
+        : { per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 };
 
-      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON', {
+      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON com batching ativo', {
         endpoint: url,
         params,
         cronExpression: this.ordersSyncCron,
-        timeout: this.ordersTimeout
+        timeout: this.ordersTimeout,
+        batchingEnabled: true,
+        daysPerBatch: 1,
+        maxOrders: 100
       });
       
       try {
@@ -126,6 +130,21 @@ class CronService {
             perPage: data.perPage,
             useBatching: data.useBatching,
             syncSuccess: data.summary?.syncSuccess
+          });
+        }
+        
+        // Exibir previsão da próxima execução
+        if (nextExecution) {
+          logHelpers.logOrders('info', '⏰ Previsão da próxima extração', {
+            nextExecution: nextExecution.nextExecution,
+            description: nextExecution.description,
+            timeUntilNext: `${Math.floor(nextExecution.timeUntilNext / 60)}h ${nextExecution.timeUntilNext % 60}min`,
+            interval: nextExecution.interval,
+            cronExpression: this.ordersSyncCron
+          });
+        } else {
+          logHelpers.logOrders('warn', '⚠️ Não foi possível calcular a previsão da próxima execução', {
+            cronExpression: this.ordersSyncCron
           });
         }
         

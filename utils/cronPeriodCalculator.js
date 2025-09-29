@@ -238,7 +238,182 @@ function calculateDefaultPeriod(now) {
   };
 }
 
+/**
+ * Calcula a próxima execução do cron baseado na expressão ORDERS_SYNC_CRON
+ * @returns {Object|null} Objeto com nextExecution (ISO string) e description, ou null se não conseguir calcular
+ */
+function calculateNextExecution() {
+  const cronExpression = process.env.ORDERS_SYNC_CRON;
+  const timezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
+  
+  if (!cronExpression) {
+    console.warn('⚠️ ORDERS_SYNC_CRON não configurado');
+    return null;
+  }
+  
+  try {
+    const now = moment().tz(timezone);
+    const nextExecution = calculateNextExecutionFromCron(cronExpression, now);
+    
+    if (nextExecution) {
+      console.log(`⏰ Próxima execução calculada: ${nextExecution.nextExecution} (${nextExecution.description})`);
+      return nextExecution;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Erro ao calcular próxima execução do cron:', error);
+    return null;
+  }
+}
+
+/**
+ * Calcula a próxima execução baseado na expressão do cron
+ * @param {string} cronExpression - Expressão do cron
+ * @param {moment} now - Momento atual no timezone correto
+ * @returns {Object|null} Próxima execução calculada
+ */
+function calculateNextExecutionFromCron(cronExpression, now) {
+  const parts = cronExpression.trim().split(/\s+/);
+  
+  if (parts.length !== 5) {
+    console.warn('⚠️ Expressão de cron inválida:', cronExpression);
+    return null;
+  }
+  
+  const [minute, hour, day, month, dayOfWeek] = parts;
+  
+  // Caso 1: Execução a cada X minutos (ex: */30 * * * *)
+  if (minute.startsWith('*/') && hour === '*' && day === '*' && month === '*' && dayOfWeek === '*') {
+    const intervalMinutes = parseInt(minute.substring(2));
+    return calculateNextMinutesInterval(now, intervalMinutes);
+  }
+  
+  // Caso 2: Execução a cada X horas (ex: 0 */2 * * *)
+  if (minute === '0' && hour.startsWith('*/') && day === '*' && month === '*' && dayOfWeek === '*') {
+    const intervalHours = parseInt(hour.substring(2));
+    return calculateNextHoursInterval(now, intervalHours);
+  }
+  
+  // Caso 3: Execução diária (ex: 0 0 * * *)
+  if (minute === '0' && hour === '0' && day === '*' && month === '*' && dayOfWeek === '*') {
+    return calculateNextDailyInterval(now);
+  }
+  
+  // Caso 4: Execução em horário específico (ex: 0 8 * * *)
+  if (minute === '0' && !hour.startsWith('*/') && hour !== '*' && day === '*' && month === '*' && dayOfWeek === '*') {
+    return calculateNextSpecificTimeInterval(now, parseInt(hour));
+  }
+  
+  // Caso 5: Execução semanal (ex: 0 0 * * 1)
+  if (minute === '0' && hour === '0' && day === '*' && month === '*' && dayOfWeek !== '*') {
+    return calculateNextWeeklyInterval(now, parseInt(dayOfWeek));
+  }
+  
+  // Caso padrão: não consegue calcular
+  console.log('⚠️ Expressão de cron não reconhecida para cálculo de próxima execução');
+  return null;
+}
+
+/**
+ * Calcula próxima execução para intervalo de minutos
+ */
+function calculateNextMinutesInterval(now, intervalMinutes) {
+  const nextExecution = now.clone().add(intervalMinutes, 'minutes').startOf('minute');
+  const timeUntilNext = nextExecution.diff(now, 'minutes');
+  
+  return {
+    nextExecution: nextExecution.toISOString(),
+    description: `Próxima execução em ${timeUntilNext} minutos (a cada ${intervalMinutes} minutos)`,
+    timeUntilNext: timeUntilNext,
+    interval: `${intervalMinutes} minutos`
+  };
+}
+
+/**
+ * Calcula próxima execução para intervalo de horas
+ */
+function calculateNextHoursInterval(now, intervalHours) {
+  const nextExecution = now.clone().add(intervalHours, 'hours').startOf('hour');
+  const timeUntilNext = nextExecution.diff(now, 'minutes');
+  
+  return {
+    nextExecution: nextExecution.toISOString(),
+    description: `Próxima execução em ${Math.floor(timeUntilNext / 60)}h ${timeUntilNext % 60}min (a cada ${intervalHours} horas)`,
+    timeUntilNext: timeUntilNext,
+    interval: `${intervalHours} horas`
+  };
+}
+
+/**
+ * Calcula próxima execução para execução diária
+ */
+function calculateNextDailyInterval(now) {
+  const nextExecution = now.clone().add(1, 'day').startOf('day');
+  const timeUntilNext = nextExecution.diff(now, 'minutes');
+  
+  return {
+    nextExecution: nextExecution.toISOString(),
+    description: `Próxima execução em ${Math.floor(timeUntilNext / 60)}h ${timeUntilNext % 60}min (diariamente à meia-noite)`,
+    timeUntilNext: timeUntilNext,
+    interval: 'diário'
+  };
+}
+
+/**
+ * Calcula próxima execução para horário específico
+ */
+function calculateNextSpecificTimeInterval(now, targetHour) {
+  const todayAtTargetHour = now.clone().startOf('day').hour(targetHour);
+  
+  let nextExecution;
+  if (now.isBefore(todayAtTargetHour)) {
+    // Ainda não chegou no horário de hoje
+    nextExecution = todayAtTargetHour;
+  } else {
+    // Já passou o horário de hoje, próxima execução é amanhã
+    nextExecution = now.clone().add(1, 'day').startOf('day').hour(targetHour);
+  }
+  
+  const timeUntilNext = nextExecution.diff(now, 'minutes');
+  
+  return {
+    nextExecution: nextExecution.toISOString(),
+    description: `Próxima execução em ${Math.floor(timeUntilNext / 60)}h ${timeUntilNext % 60}min (diariamente às ${targetHour}h)`,
+    timeUntilNext: timeUntilNext,
+    interval: `diário às ${targetHour}h`
+  };
+}
+
+/**
+ * Calcula próxima execução para execução semanal
+ */
+function calculateNextWeeklyInterval(now, targetDayOfWeek) {
+  const currentDayOfWeek = now.day();
+  const daysUntilTarget = (targetDayOfWeek - currentDayOfWeek + 7) % 7;
+  
+  let nextExecution;
+  if (daysUntilTarget === 0 && now.hour() >= 0) {
+    // Se é hoje mas já passou da meia-noite, próxima execução é na próxima semana
+    nextExecution = now.clone().add(1, 'week').startOf('day');
+  } else {
+    // Próxima execução é no dia da semana alvo
+    nextExecution = now.clone().add(daysUntilTarget, 'days').startOf('day');
+  }
+  
+  const timeUntilNext = nextExecution.diff(now, 'minutes');
+  const dayNames = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  
+  return {
+    nextExecution: nextExecution.toISOString(),
+    description: `Próxima execução em ${Math.floor(timeUntilNext / 1440)} dias (toda ${dayNames[targetDayOfWeek]})`,
+    timeUntilNext: timeUntilNext,
+    interval: `semanal às ${dayNames[targetDayOfWeek]}s`
+  };
+}
+
 module.exports = {
   calculatePeriodFromCron,
-  analyzeCronExpression
+  analyzeCronExpression,
+  calculateNextExecution
 };

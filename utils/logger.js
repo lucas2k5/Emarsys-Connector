@@ -68,8 +68,8 @@ const transports = [
 
   // Arquivo de logs gerais do sistema
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-system-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'system-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
     level: 'info',
@@ -78,8 +78,8 @@ const transports = [
 
   // Arquivo de logs de erros e falhas
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-errors-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'errors-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '30d',
     level: 'error',
@@ -88,8 +88,8 @@ const transports = [
 
   // Arquivo de logs de requisições HTTP
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-http-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'http-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '7d',
     level: 'http',
@@ -98,8 +98,8 @@ const transports = [
 
   // Arquivo de logs de sincronização
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-sync-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'sync-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
     level: 'sync',
@@ -108,8 +108,8 @@ const transports = [
 
   // Arquivo de logs de reprocessamento
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-retry-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'retry-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
     level: 'retry',
@@ -118,8 +118,8 @@ const transports = [
 
   // Arquivo de logs de alertas
   new DailyRotateFile({
-    filename: path.join('logs', 'piccadilly-emarsys-alerts-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
+    filename: path.join('logs', 'alerts-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '30d',
     level: 'alert',
@@ -133,6 +133,14 @@ const logger = winston.createLogger({
   format: logFormat,
   transports,
   exitOnError: false,
+  levels: winston.config.npm.levels,
+});
+
+// Adicionar níveis customizados
+logger.addColors({
+  sync: 'cyan',
+  retry: 'yellow',
+  alert: 'magenta'
 });
 
 // Logger específico para métricas
@@ -144,8 +152,8 @@ const metricsLogger = winston.createLogger({
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'piccadilly-emarsys-metrics-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
+      filename: path.join('logs', 'metrics-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
       maxSize: '20m',
       maxFiles: '30d',
     }),
@@ -161,8 +169,8 @@ const auditLogger = winston.createLogger({
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'piccadilly-emarsys-audit-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
+      filename: path.join('logs', 'audit-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
       maxSize: '20m',
       maxFiles: '90d',
     }),
@@ -182,8 +190,8 @@ const ordersLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'orders-logs-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
+      filename: path.join('logs', 'cro-orders-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
@@ -204,8 +212,8 @@ const productsLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'product-logs-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
+      filename: path.join('logs', 'cro-products-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
@@ -226,8 +234,8 @@ const clientsLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'clients-logs-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
+      filename: path.join('logs', 'cro-clients-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
