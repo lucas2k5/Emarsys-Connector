@@ -1072,63 +1072,6 @@ router.get('/orders-extract-all', async (req, res) => {
       }
       
       console.log('🎉 Fluxo completo concluído, enviando resposta...');
-      // Chama a rota interna de scroll para buscar próximos pendentes e marcá-los como sincronizados
-      try {
-        const axios = require('axios');
-        
-        // Primeira requisição: Busca pedidos não sincronizados no piccadilly.myvtex.com
-        const listUrl = 'https://piccadilly.myvtex.com/_v/orders/list?_where=(isSync%3Dfalse)&page=1&pageSize=1000';
-        console.log('🔎 Buscando pedidos não sincronizados...', { url: listUrl });
-        
-        const listResp = await axios.get(listUrl, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Cookie': 'VtexWorkspace=master%3A-'
-          },
-          timeout: 20000
-        });
-        
-        // Se retornou dados, marca cada pedido individualmente como sincronizado
-        if (listResp.data && listResp.data.data && listResp.data.data.length > 0) {
-          console.log(`📋 Encontrados ${listResp.data.data.length} pedidos para marcar como sincronizados`);
-          
-          let successCount = 0;
-          let errorCount = 0;
-          
-          // Processa cada pedido individualmente
-          for (const order of listResp.data.data) {
-            try {
-              // Segunda requisição: PATCH para ems--piccadilly.myvtex.com com o ID específico
-              const patchUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${order.id}/sync`;
-              const patchResp = await axios.patch(patchUrl, {
-                isSync: true
-              }, {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Accept': 'application/json',
-                  'Cookie': 'VtexWorkspace=master%3A-'
-                },
-                timeout: 10000
-              });
-              
-              if (patchResp.status === 200) {
-                successCount++;
-                console.log(`✅ Pedido ${order.id} marcado como sincronizado`);
-              }
-            } catch (patchErr) {
-              errorCount++;
-              console.error(`❌ Falha ao marcar pedido ${order.id} como sincronizado:`, patchErr.message);
-            }
-          }
-          
-          console.log(`📊 Resultado final: ${successCount} pedidos marcados com sucesso, ${errorCount} falharam`);
-        } else {
-          console.log('ℹ️ Nenhum pedido não sincronizado encontrado');
-        }
-      } catch (scrollErr) {
-        console.error('❌ Falha ao buscar pedidos não sincronizados:', scrollErr.message);
-      }
       // Resposta final
       const { convertToBrazilianTime } = require('../utils/dateUtils');
       const periodBrazil = {
