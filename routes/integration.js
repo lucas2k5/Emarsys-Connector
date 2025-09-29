@@ -108,7 +108,7 @@ async function fetchEmsOrderByFilter(orderId, isSync = false) {
       console.log(`✅ Registro encontrado na EMS para ${orderId}`);
       return data.data[0]; // Retorna o primeiro registro encontrado
     } else {
-      console.log(`ℹ️ Nenhum registro encontrado na EMS para ${orderId} com isSync=${isSync}`);
+      console.log(`\x1b[41m\x1b[30mℹ️ Nenhum registro encontrado na EMS para ${orderId} com isSync=${isSync}\x1b[0m`);
       return null;
     }
     

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const emsOrdersService = require('../services/emsOrdersService');
 const { searchOrders } = require('../utils/mdSearch');
+const OrderSyncHelper = require('../helpers/orderSyncHelper');
 
 /**
  * @route GET /api/ems-orders/pending
@@ -431,6 +432,121 @@ router.get('/scroll', async (req, res) => {
     return res.status(502).json({
       success: false,
       error: err.message.data || 'Erro ao consultar VTEX MD scroll',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/ems-orders/test-sync/:orderId
+ * @desc Testa sincronização com um registro específico
+ * @access Public
+ */
+router.post('/test-sync/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    console.log(`🧪 [ROUTE] Testando sincronização para ID: ${orderId}`);
+    
+    const appKey = req.query.appKey || req.get('X-VTEX-API-AppKey') || process.env.VTEX_APP_KEY;
+    const appToken = req.query.appToken || req.get('X-VTEX-API-AppToken') || process.env.VTEX_APP_TOKEN;
+
+    if (!appKey || !appToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Parâmetros appKey e appToken são obrigatórios',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const headers = {
+      'X-VTEX-API-AppKey': appKey,
+      'X-VTEX-API-AppToken': appToken,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+
+    // Inicializa o OrderSyncHelper
+    const orderSyncHelper = new OrderSyncHelper(
+      emsOrdersService.vtexBaseUrl, 
+      emsOrdersService.entity, 
+      () => headers
+    );
+
+    // Executa o teste
+    const result = await orderSyncHelper.testSyncSpecificOrder(orderId, headers);
+
+    console.log(`📊 [ROUTE] Resultado do teste:`, result);
+
+    res.json({
+      success: result.success,
+      message: result.success ? 
+        `Registro ${orderId} sincronizado com sucesso` : 
+        `Erro ao sincronizar registro ${orderId}: ${result.error}`,
+      result,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [ROUTE] Erro no teste de sincronização:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/ems-orders/sync-flow
+ * @desc Executa o fluxo completo de sincronização: busca pedidos com isSync=false e os marca como sincronizados
+ * @access Public
+ */
+router.post('/sync-flow', async (req, res) => {
+  try {
+    console.log('🚀 [ROUTE] Iniciando fluxo de sincronização...');
+    
+    const appKey = req.query.appKey || req.get('X-VTEX-API-AppKey') || process.env.VTEX_APP_KEY;
+    const appToken = req.query.appToken || req.get('X-VTEX-API-AppToken') || process.env.VTEX_APP_TOKEN;
+
+    if (!appKey || !appToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Parâmetros appKey e appToken são obrigatórios',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const headers = {
+      'X-VTEX-API-AppKey': appKey,
+      'X-VTEX-API-AppToken': appToken,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+
+    // Inicializa o OrderSyncHelper
+    const orderSyncHelper = new OrderSyncHelper(
+      emsOrdersService.vtexBaseUrl, 
+      emsOrdersService.entity, 
+      () => headers
+    );
+
+    // Executa o fluxo de sincronização
+    const result = await orderSyncHelper.processSyncFlow(headers);
+
+    console.log(`📊 [ROUTE] Fluxo de sincronização concluído:`, result);
+
+    res.json({
+      success: result.success,
+      message: `Sincronização concluída: ${result.updated} pedidos atualizados, ${result.errors} erros de ${result.total} processados`,
+      result,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [ROUTE] Erro no fluxo de sincronização:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
       timestamp: new Date().toISOString()
     });
   }
