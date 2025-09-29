@@ -416,6 +416,40 @@ Testa edição de um registro específico.
 
 ### Integração Principal
 
+#### `GET /api/integration/orders-extract-all`
+Extrai TODOS os pedidos do período com processamento completo (Hook → CSV → Emarsys)
+
+**Parâmetros (opcionais)**:
+- `brazilianDate` (string): Data brasileira (YYYY-MM-DD)
+- `startDate` (string): Data inicial UTC (ISO)
+- `toDate` (string): Data final UTC (ISO)
+- `startTime` (string): Horário inicial brasileiro (HH:MM, padrão: 00:00)
+- `endTime` (string): Horário final brasileiro (HH:MM, padrão: 23:59)
+- `per_page` (number): Pedidos por página (padrão: 100)
+- `batching` (boolean): Usar processamento em lotes
+- `daysPerBatch` (number): Dias por lote (padrão: 7)
+
+**🆕 Funcionalidade Automática**: Se nenhum parâmetro for fornecido, usa período baseado em `ORDERS_SYNC_CRON`
+
+**Exemplos**:
+```bash
+# Sem parâmetros (usa período do cron automaticamente)
+GET /api/integration/orders-extract-all
+
+# Com data brasileira
+GET /api/integration/orders-extract-all?brazilianDate=2025-09-28&startTime=08:00&endTime=18:00
+
+# Com datas UTC
+GET /api/integration/orders-extract-all?startDate=2025-09-28T00:00:00.000Z&toDate=2025-09-28T23:59:59.999Z
+```
+
+**Configurações de Cron Suportadas**:
+- `*/30 * * * *`: A cada 30 minutos (último intervalo até agora)
+- `0 */2 * * *`: A cada 2 horas (último intervalo até agora)
+- `0 0 * * *`: Diariamente à meia-noite (dia anterior se antes das 6h)
+- `0 8 * * *`: Diariamente às 8h (dia anterior se antes das 8h)
+- `0 0 * * 1`: Segunda-feira à meia-noite (semana anterior se não for segunda)
+
 #### `POST /api/integration/sales-feed`
 Processa feed de vendas completo (VTEX → Emarsys)
 
