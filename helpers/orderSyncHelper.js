@@ -1,11 +1,23 @@
 const axios = require('axios');
 const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
-const { scrollOrders } = require('../utils/mdScroll');
+const { searchOrders } = require('../utils/mdSearch');
 
 /**
  * Helper para operações de sincronização de pedidos
  */
 class OrderSyncHelper {
+  
+  /**
+   * Codifica caracteres especiais na query _where para funcionar corretamente com a API
+   * @param {string} whereClause - A cláusula where sem codificação
+   * @returns {string} A cláusula where codificada
+   */
+  encodeWhereClause(whereClause) {
+    return whereClause
+      .replace(/=/g, '%3D')  // Codifica o caractere '=' para '%3D'
+      .replace(/\(/g, '%28') // Codifica o caractere '(' para '%28'  
+      .replace(/\)/g, '%29'); // Codifica o caractere ')' para '%29'
+  }
   constructor(vtexBaseUrl, entity, getVtexHeaders) {
     this.vtexBaseUrl = normalizeVtexBaseUrl(vtexBaseUrl);
     this.entity = entity;
@@ -13,203 +25,434 @@ class OrderSyncHelper {
   }
 
   /**
-   * Marca pedidos como sincronizados (isSync=true)
+   * Marca pedidos específicos como sincronizados (isSync=true) usando IDs fornecidos
    * @param {Array} records - Array de registros para marcar como sincronizados
+   * @param {Object} headers - Headers para autenticação
    * @returns {Object} Resultado da operação
    */
   async markAsSynced(records, headers) {
     let updated = 0;
     let errors = 0;
     
-    console.log(`🔄 Marcando ${records.length} pedidos como sincronizados (isSync=true)...`);
-    const pendingByKey = new Map();
-    try {
-      console.log('🔎 Buscando registros via util mdScrollAll (Master Data /search)...');
-      
-      const items = await scrollOrders(headers);
-
-      // scrollOrders costuma retornar apenas { id, _self }. Precisamos enriquecer para obter order/item
-      let fetchedCount = Array.isArray(items) ? items.length : 0;
-      if (Array.isArray(items) && items.length > 0) {
-        const ids = items
-          .map(it => (it && it.id ? it.id : null))
-          .filter(Boolean);
-
-        const chunks = 10; // limite simples de concorrência
-        const results = [];
-        for (let i = 0; i < ids.length; i += chunks) {
-          const slice = ids.slice(i, i + chunks);
-          const batch = await Promise.all(
-            slice.map(async (docId) => {
-              try {
-                const { data } = await axios.get(
-                  `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents/${docId}`,
-                  {
-                    params: { _fields: 'id,order,item,order_status,isSync' },
-                    headers: this.getVtexHeaders(),
-                    timeout: 30000
-                  }
-                );
-                return data;
-              } catch (e) {
-                console.warn(`⚠️ Falha ao buscar documento ${docId}:`, e.message);
-                return null;
-              }
-            })
-          );
-          results.push(...batch);
-        }
-
-        for (const it of results) {
-          if (it && it.id && it.order && it.item) {
-            const key = `${it.order}::${it.item}`;
-            if (!pendingByKey.has(key)) pendingByKey.set(key, it);
-          }
-        }
-      }
-      console.log('🔎 items...------------------------', Array.isArray(items) ? items : []);
-      console.log(`✅ Índice montado via util: ${pendingByKey.size} registros (fetched=${fetchedCount})`);
-    } catch (idxErr) {
-      console.warn('⚠️ Falha ao montar índice via util /scroll. Continuando com fallback por registro...', idxErr.message);
-    }
+    console.log(`🔄 Marcando ${records.length} pedidos específicos como sincronizados (isSync=true)...`);
     
-    for (let i = 0; i < records.length; i++) {
-      const rec = records[i];
-      
-      if (!rec.order) {
-        console.warn(`⚠️ Registro sem order, pulando:`, rec);
-        continue;
-      }
-      
-      if (i > 0) {
-        const delay = 500; // 500ms entre cada item (reduzido para melhor performance)
-        console.log(`⏳ Aguardando ${delay}ms antes de processar próximo item...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-      
-      try {
-        const documentsUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents`;
-        const updateBody = { isSync: true };
+    if (!records || records.length === 0) {
+      console.log('✅ Nenhum registro fornecido para sincronizar');
+      return { success: true, updated: 0, errors: 0, total: 0 };
+    }
 
-        let documentId = rec.id;
-        console.log(`🔎 documentId:`, documentId);
-        if (!documentId) {
-          if (!rec.order || !rec.item) {
-            console.warn(`⚠️ Registro sem id e sem chaves suficientes (order/item) para buscar:`, { order: rec.order, item: rec.item });
-            errors += 1;
+    try {
+      // Processa cada registro individualmente usando o ID fornecido
+      console.log(`🔄 Atualizando ${records.length} registros sequencialmente...`);
+      
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        
+        try {
+          const recordId = record.id; // ID do registro fornecido
+          if (!recordId) {
+            console.warn('⚠️ Registro sem ID válido:', record);
+            errors++;
             continue;
           }
-
-          // Passo 2: Tentar obter id a partir do índice pré-carregado
-          const key = `${rec.order}::${rec.item}`;
-          const indexed = pendingByKey.get(key);
-          if (indexed && indexed.id) {
-            documentId = indexed.id;
-            const statusInfo = typeof indexed.order_status !== 'undefined' ? ` (order_status=${indexed.order_status})` : '';
-            console.log(`✅ id encontrado via índice: ${documentId} para order=${rec.order} + item=${rec.item}${statusInfo}`);
-          } else {
-            // Fallback pontual por registro
-            try {
-              const searchUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
-              const q = `order="${rec.order}" AND item="${rec.item}" AND (isSync=false OR isSync="false")`;
-              const { data: found } = await axios.get(searchUrl, {
-                params: {
-                  _where: q,
-                  _fields: 'id,order,item,order_status,isSync',
-                  _schema: this.entity,
-                  _page: 1,
-                  _perPage: 1
-                },
-                headers: this.getVtexHeaders(),
-                timeout: 30000
-              });
-              if (Array.isArray(found) && found[0]?.id) {
-                documentId = found[0].id;
-                console.log(`🔁 id encontrado via fallback: ${documentId} para order=${rec.order} + item=${rec.item}`);
-              }
-            } catch (e) {
-              console.warn('⚠️ Fallback de busca por id falhou:', e.message);
-            }
-          }
-
-          if (!documentId) {
-            console.warn(`⚠️ Não foi possível obter o id para order=${rec.order} + item=${rec.item}. Pulando atualização de isSync.`);
-            errors += 1;
-            continue;
-          }
-        }
-
-        // Atualiza documento específico via PATCH /documents/{id} (com retry)
-        console.log(`🔄 Atualizando isSync do documento ${documentId} (order=${rec.order})...`);
-        
-        const maxPatchRetries = 3;
-        let patchRetryCount = 0;
-        let patchSuccess = false;
-        
-        while (!patchSuccess && patchRetryCount < maxPatchRetries) {
-          try {
-            const response = await axios.patch(`${documentsUrl}/${documentId}`, updateBody, {
+          
+          console.log(`🔄 Processando registro ${i + 1}/${records.length}: ${recordId}`);
+          console.log(`📄 Dados do registro:`, JSON.stringify(record, null, 2));
+          
+          // Atualiza o registro para isSync=true usando o ID do registro
+          const updateUrl = `${this.vtexBaseUrl}/_v/orders/${recordId}/sync`;
+          const updateResponse = await axios.patch(updateUrl, 
+            { isSync: true },
+            {
               headers: {
-                ...this.getVtexHeaders(),
+                ...headers,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
               },
-              timeout: 60000,
-              validateStatus: s => s < 500 || s === 502 || s === 503 || s === 504 || s === 429
-            });
-
-            if (response.status >= 200 && response.status < 300) {
-              updated += 1;
-              patchSuccess = true;
-              console.log(`✅ Pedido ${rec.order} (doc ${documentId}) marcado como sincronizado (status: ${response.status})`);
-            } else if (response.status === 429) {
-              const delay = Math.pow(2, patchRetryCount) * 400;
-              console.log(`⏳ 429 rate limit — aguardando ${delay}ms...`);
-              await new Promise(r => setTimeout(r, delay));
-              patchRetryCount++;
-            } else if (response.status === 502 || response.status === 503 || response.status === 504) {
-              console.warn(`⚠️ Erro transitório ${response.status} ao marcar pedido ${rec.order}. Retentando...`);
-              patchRetryCount++;
-            } else {
-              console.warn(`⚠️ Status inesperado ao marcar pedido ${rec.order} (doc ${documentId}): ${response.status}`);
-              patchRetryCount++;
+              timeout: 30000
             }
-          } catch (patchError) {
-            console.warn(`⚠️ Erro na tentativa ${patchRetryCount + 1} ao atualizar documento ${documentId}:`, {
-              error: patchError.message,
-              status: patchError.response?.status,
-              data: patchError.response?.data
-            });
-            patchRetryCount++;
+          );
+          
+          if (updateResponse.status >= 200 && updateResponse.status < 300) {
+            console.log(`✅ Registro ${recordId} marcado como sincronizado`);
+            updated++;
+          } else {
+            console.warn(`⚠️ Status inesperado para registro ${recordId}: ${updateResponse.status}`);
+            errors++;
           }
           
-          if (!patchSuccess && patchRetryCount < maxPatchRetries) {
-            // Backoff exponencial: 200ms, 400ms, 800ms (reduzido para melhor performance)
-            const delay = Math.pow(2, patchRetryCount - 1) * 200;
-            console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa de PATCH...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
+        } catch (error) {
+          console.error(`❌ Erro ao atualizar registro ${record.id}:`, error.message);
+          errors++;
         }
         
-        if (!patchSuccess) {
-          console.error(`❌ Falha ao atualizar documento ${documentId} após ${maxPatchRetries} tentativas`);
-          errors += 1;
+        // Pausa entre registros para não sobrecarregar a API
+        if (i < records.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
-      } catch (err) {
-        console.error(`❌ Erro ao marcar pedido ${rec.order || rec.id} como sincronizado:`, {
-          error: err.message,
-          status: err.response?.status,
-          data: err.response?.data,
-          order: rec.order,
-          id: rec.id
-        });
-        errors += 1;
       }
+      
+    } catch (error) {
+      console.error('❌ Erro ao marcar pedidos como sincronizados:', error.message);
+      errors = records.length;
     }
     
     console.log(`📊 Resultado da atualização: ${updated} atualizados, ${errors} erros de ${records.length} registros`);
     
     return { success: true, updated, errors, total: records.length };
+  }
+
+
+  /**
+   * Testa sincronização com um registro específico
+   * @param {string} orderId - ID do registro para testar
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Object} Resultado do teste
+   */
+  async testSyncSpecificOrder(orderId, headers) {
+    try {
+      console.log(`🧪 Testando sincronização para registro específico: ${orderId}`);
+      
+      // 1. Busca o registro específico diretamente pelo ID
+      console.log('🔎 Buscando registro específico...');
+      const getUrl = `${this.vtexBaseUrl}/_v/orders/${orderId}`;
+
+      const getResponse = await axios.get(getUrl, {
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 30000
+      });
+
+      const order = getResponse.data;
+      console.log(`📋 Registro encontrado para ID ${orderId}`);
+      console.log('📄 Dados do registro:', JSON.stringify(order, null, 2));
+
+      // 2. Tenta atualizar o registro
+      console.log(`🔄 Tentando atualizar registro ${orderId}...`);
+      const updateUrl = `${this.vtexBaseUrl}/_v/orders/${orderId}/sync`;
+      
+      console.log('🔗 URL de atualização:', updateUrl);
+      console.log('📤 Headers:', JSON.stringify({
+        ...headers,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }, null, 2));
+      
+      const updateResponse = await axios.patch(updateUrl, 
+        { isSync: true },
+        {
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+      
+      console.log('📥 Resposta da atualização:', {
+        status: updateResponse.status,
+        statusText: updateResponse.statusText,
+        data: updateResponse.data
+      });
+
+      if (updateResponse.status >= 200 && updateResponse.status < 300) {
+        console.log(`✅ Registro ${orderId} marcado como sincronizado com sucesso!`);
+        return { success: true, id: orderId, response: updateResponse.data };
+      } else {
+        console.warn(`⚠️ Status inesperado: ${updateResponse.status}`);
+        return { success: false, id: orderId, error: `Status ${updateResponse.status}` };
+      }
+      
+    } catch (error) {
+      console.error(`❌ Erro no teste para registro ${orderId}:`, {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers
+        }
+      });
+      return { success: false, id: orderId, error: error.message };
+    }
+  }
+
+  /**
+   * Busca todos os registros com detalhes via scroll
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Array} Array de registros com detalhes
+   */
+  async getAllRecordsWithDetails(headers) {
+    try {
+      console.log('🔎 Buscando todos os registros via scroll...[28-09]====>>>');
+      
+      const { searchOrders } = require('../utils/mdSearch');
+      const items = await searchOrders(headers);
+      console.log(`📋 ${Array.isArray(items) ? items.length : 0} registros encontrados via scroll`);
+      
+      if (!Array.isArray(items) || items.length === 0) {
+        return [];
+      }
+
+      // Busca detalhes de todos os registros em lotes
+      const allRecords = [];
+      const batchSize = 20; // Processa em lotes de 20
+      
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (item) => {
+          if (!item.id) return null;
+          
+          try {
+            const { data } = await axios.get(
+              `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents/${item.id}`,
+              {
+                params: { _fields: 'id,order,item,order_status,isSync' },
+                headers: this.getVtexHeaders(),
+                timeout: 30000
+              }
+            );
+            return data;
+          } catch (e) {
+            console.warn(`⚠️ Falha ao buscar documento ${item.id}:`, e.message);
+            return null;
+          }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        allRecords.push(...batchResults.filter(Boolean));
+        
+        // Pequena pausa entre lotes
+        if (i + batchSize < items.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      console.log(`✅ ${allRecords.length} registros com detalhes obtidos`);
+      return allRecords;
+      
+    } catch (error) {
+      console.error('❌ Erro ao buscar registros via scroll:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Busca pedidos com isSync=false usando a API de listagem
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Array} Array de pedidos que precisam ser sincronizados
+   */
+  async getOrdersWithIsSyncFalse(headers) {
+    try {
+      console.log('🔎 Buscando pedidos com isSync=false...');
+      
+      const listUrl = `${this.vtexBaseUrl}/_v/orders/list`;
+      const params = {
+        _where: this.encodeWhereClause('(isSync=false)'), // Codifica caracteres especiais para funcionar corretamente
+        page: 1,
+        pageSize: 1000
+      };
+
+      const response = await axios.get(listUrl, {
+        params,
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 30000
+      });
+      console.log('📥 Resposta da busca:', response.data);
+      const orders = response.data || [];
+      console.log(`📋 ${orders.length} pedidos encontrados com isSync=false`);
+      
+      return orders;
+    } catch (error) {
+      console.error('❌ Erro ao buscar pedidos com isSync=false:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Marca um pedido específico como sincronizado usando o endpoint de sync
+   * @param {string} orderId - ID do pedido
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Object} Resultado da operação
+   */
+  async syncOrder(orderId, headers) {
+    try {
+      const syncUrl = `${this.vtexBaseUrl}/_v/orders/${orderId}/sync`;
+      
+      const response = await axios.patch(syncUrl, 
+        { isSync: true },
+        {
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      if (response.status >= 200 && response.status < 300) {
+        console.log(`✅ Pedido ${orderId} marcado como sincronizado`);
+        return { success: true, id: orderId };
+      } else {
+        console.warn(`⚠️ Status inesperado para pedido ${orderId}: ${response.status}`);
+        return { success: false, id: orderId, error: `Status ${response.status}` };
+      }
+    } catch (error) {
+      console.error(`❌ Erro ao sincronizar pedido ${orderId}:`, error.message);
+      return { success: false, id: orderId, error: error.message };
+    }
+  }
+
+  /**
+   * Processa sincronização completa: busca pedidos com isSync=false e os marca como sincronizados
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Object} Resultado da operação
+   */
+  async processSyncFlow(headers) {
+    let updated = 0;
+    let errors = 0;
+    
+    try {
+      console.log('🚀 Iniciando fluxo de sincronização...');
+      
+      // 1. Busca pedidos com isSync=false
+      const ordersToSync = await this.getOrdersWithIsSyncFalse(headers);
+      
+      if (ordersToSync.length === 0) {
+        console.log('✅ Nenhum pedido precisa ser sincronizado');
+        return { success: true, updated: 0, errors: 0, total: 0 };
+      }
+      
+      console.log(`📋 ${ordersToSync.length} pedidos serão processados`);
+      
+      // 2. Processa cada pedido individualmente
+      const batchSize = 5; // Processa em lotes menores para evitar sobrecarga
+      
+      for (let i = 0; i < ordersToSync.length; i += batchSize) {
+        const batch = ordersToSync.slice(i, i + batchSize);
+        
+        const batchPromises = batch.map(async (order) => {
+          const registerId = order.id;
+          if (!registerId) {
+            console.warn('⚠️ Pedido sem ID válido:', order);
+            return { success: false, id: registerId, error: 'ID inválido' };
+          }
+          
+          return await this.syncOrder(registerId, headers);
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Conta resultados
+        batchResults.forEach(result => {
+          if (result.success) {
+            updated++;
+          } else {
+            errors++;
+          }
+        });
+        
+        // Pausa entre lotes
+        if (i + batchSize < ordersToSync.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      console.log(`📊 Sincronização concluída: ${updated} atualizados, ${errors} erros de ${ordersToSync.length} pedidos`);
+      
+      return { 
+        success: true, 
+        updated, 
+        errors, 
+        total: ordersToSync.length 
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro no fluxo de sincronização:', error.message);
+      return { 
+        success: false, 
+        updated, 
+        errors: errors + 1, 
+        total: updated + errors + 1 
+      };
+    }
+  }
+
+  /**
+   * Atualiza registros em lote
+   * @param {Array} records - Array de registros para atualizar
+   * @param {Object} headers - Headers para autenticação
+   * @returns {Object} Resultado da atualização
+   */
+  async batchUpdateRecords(records, headers) {
+    let updated = 0;
+    let errors = 0;
+    
+    console.log(`🔄 Atualizando ${records.length} registros em lote...`);
+    
+    const updateBody = { isSync: true };
+    const documentsUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents`;
+    
+    // Processa em lotes menores para evitar sobrecarga
+    const batchSize = 10;
+    
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      
+      const batchPromises = batch.map(async (record) => {
+        try {
+          const response = await axios.patch(`${documentsUrl}/${record.id}`, updateBody, {
+            headers: {
+              ...this.getVtexHeaders(),
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            timeout: 30000
+          });
+          
+          if (response.status >= 200 && response.status < 300) {
+            console.log(`✅ Registro ${record.id} (order=${record.order}) marcado como sincronizado`);
+            return { success: true, id: record.id };
+          } else {
+            console.warn(`⚠️ Status inesperado para registro ${record.id}: ${response.status}`);
+            return { success: false, id: record.id, error: `Status ${response.status}` };
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao atualizar registro ${record.id}:`, error.message);
+          return { success: false, id: record.id, error: error.message };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Conta resultados
+      batchResults.forEach(result => {
+        if (result.success) {
+          updated++;
+        } else {
+          errors++;
+        }
+      });
+      
+      // Pausa entre lotes
+      if (i + batchSize < records.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+    
+    console.log(`📊 Lote concluído: ${updated} atualizados, ${errors} erros`);
+    return { updated, errors };
   }
 }
 

@@ -17,6 +17,18 @@ class EmsClientsService {
     this.emarsysWebdav = new EmarsysWebdavService();
   }
 
+  /**
+   * Codifica caracteres especiais na query _where para funcionar corretamente com a API
+   * @param {string} whereClause - A cláusula where sem codificação
+   * @returns {string} A cláusula where codificada
+   */
+  encodeWhereClause(whereClause) {
+    return whereClause
+      .replace(/=/g, '%3D')  // Codifica o caractere '=' para '%3D'
+      .replace(/\(/g, '%28') // Codifica o caractere '(' para '%28'  
+      .replace(/\)/g, '%29'); // Codifica o caractere ')' para '%29'
+  }
+
   getVtexHeaders() {
     return {
       'Accept': 'application/vnd.vtex.ds.v10+json',
@@ -111,7 +123,7 @@ class EmsClientsService {
   async listEmsClientsV2PendingSync() {
     const url = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
     const params = {
-      _where: 'isSync=false OR isSync=null',
+      _where: this.encodeWhereClause('isSync=false OR isSync=null'), // Codifica caracteres especiais para funcionar corretamente
       _fields: 'id,email,firstName,lastName,document,homePhone,city,state,optin,isSync',
       _size: 1000,
       _sort: 'email ASC'
@@ -167,22 +179,6 @@ class EmsClientsService {
     return { success: true, filePath, filename, total: contacts.length };
   }
 
-  async markAsSynced(pendingRecords) {
-    const records = Array.isArray(pendingRecords) ? pendingRecords : [];
-    if (records.length === 0) return { success: true, updated: 0 };
-    const baseDocsUrl = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/documents`;
-    let updated = 0;
-    for (const rec of records) {
-      if (!rec.id) continue;
-      try {
-        await axios.patch(`${baseDocsUrl}/${rec.id}`, { isSync: true }, { headers: this.getVtexHeaders(), timeout: 20000 });
-        updated += 1;
-      } catch (err) {
-        // ignore
-      }
-    }
-    return { success: true, updated };
-  }
 
   async syncAndSendBatch({ hours = this.lookbackHours } = {}) {
     // 1) Fetch changes in CL
@@ -202,7 +198,10 @@ class EmsClientsService {
     const upload = await this.emarsysWebdav.uploadCatalogFile(csvResult.filePath, remotePath);
     if (upload && upload.success) {
       // 7) Marcar como sincronizado
-      await this.markAsSynced(pending);
+      // Marca como sincronizado usando OrderSyncHelper
+      const OrderSyncHelper = require('../helpers/orderSyncHelper');
+      const orderSyncHelper = new OrderSyncHelper(this.vtexBaseUrl, this.entity, () => this.getVtexHeaders());
+      await orderSyncHelper.markAsSynced(pending, this.getVtexHeaders());
       return { success: true, sent: contacts.length, failed: 0, csv: csvResult, upload };
     }
     return { success: false, error: upload?.error || 'Falha no upload para Emarsys', csv: csvResult };

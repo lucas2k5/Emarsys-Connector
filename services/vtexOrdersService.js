@@ -1673,64 +1673,6 @@ class VtexOrdersService {
               console.log('✅ CSV enviado com sucesso para Emarsys, marcando pedidos como sincronizados...');
             }
             
-            // Marca pedidos como sincronizados na emsOrdersV2
-            // Usa apenas os pedidos que foram efetivamente processados no CSV
-            try {
-              const emsOrdersService = require('./emsOrdersService');
-              
-              // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
-              const marketplaceValidator = require('../utils/marketplaceValidator');
-
-              const filteredForSync = orders.filter(o => {
-                const oid = o.order;
-                return !marketplaceValidator.isMarketplaceOrder(oid);
-              });
-
-              // Cria array com os pedidos que foram processados no CSV e não são marketplace
-              const ordersToMarkAsSynced = filteredForSync.map(order => ({
-                id: order.id,
-                order: order.order,
-                item: order.item,
-                order_status: order.order_status,
-                isSync: true
-              }));
-
-              const skippedMarketplace = orders.length - filteredForSync.length;
-              if (skippedMarketplace > 0) {
-                console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
-              }
-              
-              
-              if (ordersToMarkAsSynced.length > 0) {
-                await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
-                console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
-
-                // Chama a rota interna de scroll para buscar próximos pendentes
-                try {
-                  const axios = require('axios');
-                  const baseUrl = process.env.INTERNAL_BASE_URL || `http://localhost:${process.env.PORT}`;
-                  const appKey = process.env.VTEX_APP_KEY;
-                  const appToken = process.env.VTEX_APP_TOKEN;
-
-                  if (appKey && appToken) {
-                    const url = `${baseUrl}/api/ems-orders/scroll`;
-                    console.log('🔎 Disparando scroll de emsOrdersV2 via rota interna...', { url });
-                    const scrollResp = await axios.get(url, {
-                      params: { appKey, appToken },
-                      timeout: 20000
-                    });
-                    console.log('📥 Scroll executado. Status:', scrollResp.status);
-                  } else {
-                    console.warn('⚠️ VTEX_APP_KEY/VTEX_APP_TOKEN não definidos. Pulando chamada ao scroll.');
-                  }
-                } catch (scrollErr) {
-                  console.error('❌ Falha ao chamar rota interna de scroll:', scrollErr.message);
-                }
-              }
-            } catch (syncError) {
-              console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
-            }
-            
             // Deleta o arquivo orders.json após envio bem-sucedido
             try {
               if (fs.existsSync(this.ordersFile)) {
@@ -2040,7 +1982,6 @@ class VtexOrdersService {
         // Marca pedidos enviados como sincronizados na emsOrdersV2
         // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
-          const emsOrdersService = require('./emsOrdersService');
           
           // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
           const marketplaceValidator = require('../utils/marketplaceValidator');
@@ -2049,26 +1990,15 @@ class VtexOrdersService {
             return !marketplaceValidator.isMarketplaceOrder(oid);
           });
 
-          // Cria array com os pedidos que foram enviados para Emarsys e não são marketplace
-          const ordersToMarkAsSynced = filteredForSync.map(order => ({
-            id: order.id,
-            order: order.order || order.orderId,
-            email: order.email,
-            item: order.item,
-            quantity: order.quantity,
-            price: order.price,
-            timestamp: order.timestamp
-          }));
+          
+         
 
           const skippedMarketplace = orders.length - filteredForSync.length;
           if (skippedMarketplace > 0) {
             console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
           }
           
-          if (ordersToMarkAsSynced.length > 0) {
-            await emsOrdersService.markAsSynced(ordersToMarkAsSynced);
-            console.log(`✅ ${ordersToMarkAsSynced.length} pedidos marcados como sincronizados na emsOrdersV2`);
-          }
+          
         } catch (syncError) {
           console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
         }
@@ -2326,7 +2256,7 @@ class VtexOrdersService {
    */
   async sendOrderToHook(orderId) {
     try {
-      // URL completa do VTEX Store Framework para o hook
+      // URL do hook existente no VTEX Store Framework
       const hookUrl = 'https://ems--piccadilly.myvtex.com/_v/order/hook';
       const axios = require('axios');
       
@@ -2352,59 +2282,8 @@ class VtexOrdersService {
 
       console.log(`✅ Detalhes do pedido ${orderId} obtidos com sucesso`);
 
-      // ETAPA 2: Verifica se o registro já existe na emsOrdersV2 ANTES de enviar para o hook
-      const emsOrdersService = require('./emsOrdersService');
-      
-      const orderStatus = orderDetail.status;
-      
-      // Busca o item - sempre usa refId (não productId)
-      let item = null;
-      
-      // 1. Tenta orderDetail.item primeiro
-      if (orderDetail.items && Array.isArray(orderDetail.items) && orderDetail.items.length > 0) {
-        
-        const firstItem = orderDetail.items[0];
-        item = firstItem.refId || firstItem.sku || firstItem.itemId;
-      }
-      
-      if (!item) {
-        console.error(`❌ [${orderId}] Não foi possível extrair item (refId) do pedido:`, {
-          orderId: orderId,
-        });
-        return { 
-          success: false, 
-          error: 'Item (refId) não encontrado no pedido', 
-          orderDetail: orderDetail 
-        };
-      }
-      
-      const existingRecord = await emsOrdersService.checkExistingRecord(orderId, item, orderStatus);
-      console.log('🔍 existingRecord | sendOrderToHook:', existingRecord);
-      if (existingRecord) {
-        console.log('🔍 existingRecord |IF| sendOrderToHook:', existingRecord);
-        if (existingRecord.isSync === true) {
-          console.log(`⏭️ [${orderId}] Registro já sincronizado na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
-          return { 
-            success: true, 
-            skipped: true, 
-            message: 'Registro já sincronizado',
-            existingRecord: existingRecord
-          };
-        } else {
-          console.log(`⏭️ [${orderId}] Registro pendente já existe na emsOrdersV2: ${existingRecord.id} (isSync: ${existingRecord.isSync}) - Pulando envio para hook`);
-          return { 
-            success: true, 
-            skipped: true, 
-            message: 'Registro pendente já existe na base',
-            existingRecord: existingRecord
-          };
-        }
-      } else {
-        console.log(`🔍 [${orderId}] Registro NÃO encontrado na emsOrdersV2 - continuando para envio ao hook`);
-      }
-      
-      // ETAPA 3: Se não existe, envia para o hook
-      console.log(`📨 [${orderId}] ETAPA 3: Registro não existe na base - enviando para hook: order=${orderId} + item=${item}`);
+      // ETAPA 2: Envia diretamente para o hook (sem verificação prévia)
+      console.log(`📨 [${orderId}] ETAPA 2: Enviando pedido para hook`);
       
       // Cria o payload garantindo que orderId esteja no nível raiz
       const payload = {
@@ -2545,60 +2424,57 @@ class VtexOrdersService {
       }
 
       if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, usando dados da VTEX OMS mapeados...');
+        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, tentando usar dados formatados sem filtro...');
         
-        // SEMPRE usa os dados da VTEX OMS quando não há correspondência
-        // NUNCA usa dados formatados antigos para evitar discrepâncias
-        console.log('📋 Mapeando pedidos da VTEX OMS para formato Emarsys');
-        formattedOrders = orders.map(order => ({
-          order: order.orderId || order.id,
-          email: order.email,
-          item: order.items?.[0]?.id,
-          price: order.items?.[0]?.price,
-          quantity: order.items?.[0]?.quantity,
-          timestamp: order.creationDate,
-          s_channel_source: 'web',
-          s_store_id: 'piccadilly',
-          s_sales_channel: 'ecommerce',
-          s_discount: order.discount
-        }));
+        // Se não encontrou correspondência, usa todos os dados formatados disponíveis
+        if (formattedData && formattedData.length > 0) {
+          console.log('📋 Usando todos os dados formatados disponíveis (sem filtro)');
+          formattedOrders = formattedData;
+        } else {
+          console.warn('⚠️ Nenhum dado formatado disponível, usando dados da VTEX OMS mapeados');
+          formattedOrders = orders.map(order => ({
+            order: order.orderId || order.id,
+            email: order.email,
+            item: order.items?.[0]?.id,
+            price: order.items?.[0]?.price,
+            quantity: order.items?.[0]?.quantity,
+            timestamp: order.creationDate,
+            s_channel_source: 'web',
+            s_store_id: 'piccadilly',
+            s_sales_channel: 'ecommerce',
+            s_discount: order.discount
+          }));
+        }
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
 
       // 3.1 Opcional: Filtra apenas registros pendentes em emsOrdersV2 (isSync=false) antes de transformar/gerar CSV
-      // APENAS quando NÃO há filtro de período específico (para cron jobs automáticos)
-      const hasPeriodFilter = options.dataInicial && options.dataFinal;
-      
-      if (!hasPeriodFilter) {
-        try {
-          const emsOrdersService = require('./emsOrdersService');
-          const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
-          if (Array.isArray(pending) && pending.length > 0) {
-            const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
-            const before = formattedOrders.length;
-            formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
-            console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
-            if (formattedOrders.length === 0) {
-              console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
-              return {
-                success: true,
-                totalOrders: orders.length,
-                transformedOrders: 0,
-                csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
-                emarsysSendResult: { success: false, message: 'Sem pendentes' },
-                duration: Date.now() - startTime,
-                timestamp: getBrazilianTimestamp()
-              };
-            }
-          } else {
-            console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
+      try {
+        const emsOrdersService = require('./emsOrdersService');
+        const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
+        if (Array.isArray(pending) && pending.length > 0) {
+          const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
+          const before = formattedOrders.length;
+          formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
+          console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
+          if (formattedOrders.length === 0) {
+            console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
+            return {
+              success: true,
+              totalOrders: orders.length,
+              transformedOrders: 0,
+              csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
+              emarsysSendResult: { success: false, message: 'Sem pendentes' },
+              duration: Date.now() - startTime,
+              timestamp: getBrazilianTimestamp()
+            };
           }
-        } catch (pendErr) {
-          console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
+        } else {
+          console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
         }
-      } else {
-        console.log('📅 Busca por período específico detectada - ignorando filtro de pendentes para retornar todos os pedidos do período');
+      } catch (pendErr) {
+        console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
       }
 
       // 4. Transformar dados formatados para Emarsys

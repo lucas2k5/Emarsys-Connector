@@ -1,6 +1,5 @@
 const axios = require('axios');
 const path = require('path');
-const OrderSyncHelper = require('../helpers/orderSyncHelper');
 const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
 
 class EmsOrdersService {
@@ -8,7 +7,6 @@ class EmsOrdersService {
     this.vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
     this.entity = 'emsOrdersV2';
     this.exportsDir = path.join(__dirname, '..', 'exports');
-    this.orderSyncHelper = new OrderSyncHelper(this.vtexBaseUrl, this.entity, () => this.getVtexHeaders());
   }
 
   getVtexHeaders() {
@@ -49,43 +47,21 @@ class EmsOrdersService {
    */
   async listEmsOrdersV2PendingSync() {
     try {
-      const url = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
-      const perPage = 100;
-      let page = 1;
-      let fetched = 0;
-      let pages = 0;
-      const pending = [];
+      console.log('🔍 Buscando pedidos pendentes usando nova abordagem...');
       
-      console.log('🔍 Buscando pedidos pendentes via data entities com paginação (_page/_perPage)...');
+      // Busca todos os pedidos primeiro
+      const allOrders = await this.listAllEmsOrdersV2();
       
-      while (true) {
-        const params = {
-          _where: 'isSync=false OR isSync=null',
-          _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
-          _schema: this.entity,
-          _page: page,
-          _perPage: perPage,
-          _sort: 'timestamp ASC'
-        };
-        
-        const response = await axios.get(url, {
-          params,
-          headers: this.getVtexHeaders(),
-          timeout: 60000
-        });
-        const items = Array.isArray(response.data) ? response.data : [];
-        if (items.length > 0) pending.push(...items);
-        fetched += items.length;
-        pages += 1;
-        if (items.length < perPage) break;
-        page += 1;
-      }
+      // Filtra apenas os pendentes
+      const pending = allOrders.filter(order => 
+        order.isSync === false || order.isSync === null || order.isSync === undefined
+      );
       
-      console.log(`✅ ${pending.length} pendentes (pages=${pages}, fetched=${fetched})`);
+      console.log(`✅ ${pending.length} pendentes de ${allOrders.length} total`);
       return pending;
       
     } catch (error) {
-      console.error('❌ Erro ao buscar pedidos pendentes via data entities:', error?.data || error.message);
+      console.error('❌ Erro ao buscar pedidos pendentes:', error?.data || error.message);
       return [];
     }
   }
@@ -104,26 +80,25 @@ class EmsOrdersService {
     return new Promise((resolve, reject) => {
       try {
         // Prepara options para enviar body urlencoded em requisição GET
-        const whereParts = [
-          'isSync=false',
-          `order="${order}"`
-        ];
-        if (item) {
-          whereParts.push(`item="${item}"`);
-        }
-        if (status) {
-          whereParts.push(`order_status="${status}"`);
-        }
+        // const whereParts = [
+        //   'isSync=false',
+        //   `order="${order}"`
+        // ];
+        // if (item) {
+        //   whereParts.push(`item="${item}"`);
+        // }
+        // if (status) {
+        //   whereParts.push(`order_status="${status}"`);
+        // }
         const formBody = querystring.stringify({
           '_schema': 'emsOrdersV2',
-          '_where': whereParts.join(' AND '),
           '_fields': 'id,order,item,isSync,order_status',
           '_sort': 'timestamp ASC',
           '_page': '1',
-          '_perPage': '1'
+          '_perPage': '100'
         });
 
-        const url = new URL('https://piccadilly.vtexcommercestable.com.br/api/dataentities/emsOrdersV2/search');
+        const url = new URL('https://piccadilly.vtexcommercestable.com.br/api/dataentities/emsOrdersV2/search?isSync=false');
         const headers = this.getVtexHeaders();
 
         const options = {
@@ -190,18 +165,9 @@ class EmsOrdersService {
     });
   }
 
-  /**
-   * Marca pedidos como sincronizados (isSync=true)
-   * @param {Array} records - Array de registros para marcar como sincronizados
-   * @returns {Object} Resultado da operação
-   */
-  async markAsSynced(records) {
-    console.log('▶️ markAsSynced | Iniciando marcação de pedidos como sincronizados...');
-    return await this.orderSyncHelper.markAsSynced(records, this.getVtexHeaders());
-  }
   
   /**
-   * Busca pedidos por período (registros já existem na base)
+   * Busca todos os pedidos e filtra pelos que precisam ser processados (isSync=false)
    * @param {string} startDate - Data inicial
    * @param {string} endDate - Data final
    * @returns {Object} Resultado da operação
@@ -209,19 +175,25 @@ class EmsOrdersService {
   async fetchAndStoreOrders(startDate, endDate) {
     try {
       console.log(`📅 Buscando pedidos de ${startDate} até ${endDate}...`);
-      console.log('ℹ️ [INFO] Registros já existem na base - apenas listando pedidos pendentes');
+      console.log('ℹ️ [INFO] Buscando todos os pedidos e filtrando por isSync');
       
-      // Busca pedidos pendentes diretamente da base existente
-      const pendingOrders = await this.listEmsOrdersV2PendingSync();
+      // Busca todos os pedidos da base
+      const allOrders = await this.listAllEmsOrdersV2();
       
-      console.log(`✅ ${pendingOrders.length} pedidos pendentes encontrados na base existente`);
+      // Filtra apenas os que precisam ser processados (isSync=false)
+      const pendingOrders = allOrders.filter(order => 
+        order.isSync === false || order.isSync === null || order.isSync === undefined
+      );
+      
+      console.log(`✅ ${allOrders.length} pedidos encontrados, ${pendingOrders.length} pendentes de sincronização`);
       
       return {
         success: true,
         stored: pendingOrders.length,
-        totalFound: pendingOrders.length,
-        message: 'Pedidos já existem na base - listando pendentes',
-        pendingOrders: pendingOrders.slice(0, 2) // Mostra apenas os primeiros 2 como exemplo
+        totalFound: allOrders.length,
+        message: `Encontrados ${allOrders.length} pedidos, ${pendingOrders.length} pendentes`,
+        pendingOrders: pendingOrders.slice(0, 5), // Mostra os primeiros 5 como exemplo
+        allOrders: allOrders.length
       };
       
     } catch (error) {
@@ -231,6 +203,52 @@ class EmsOrdersService {
         error: error.message,
         stored: 0
       };
+    }
+  }
+
+  /**
+   * Lista todos os pedidos da emsOrdersV2 (sem filtro de isSync)
+   * @returns {Array} Array de todos os pedidos
+   */
+  async listAllEmsOrdersV2() {
+    try {
+      const url = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
+      const perPage = 100;
+      let page = 1;
+      let fetched = 0;
+      let pages = 0;
+      const allOrders = [];
+      
+      console.log('🔍 Buscando todos os pedidos via data entities com paginação...');
+      
+      while (true) {
+        const params = {
+          _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
+          _schema: this.entity,
+          _page: page,
+          _perPage: perPage,
+          _sort: 'timestamp ASC'
+        };
+        
+        const response = await axios.get(url, {
+          params,
+          headers: this.getVtexHeaders(),
+          timeout: 60000
+        });
+        const items = Array.isArray(response.data) ? response.data : [];
+        if (items.length > 0) allOrders.push(...items);
+        fetched += items.length;
+        pages += 1;
+        if (items.length < perPage) break;
+        page += 1;
+      }
+      
+      console.log(`✅ ${allOrders.length} pedidos encontrados (pages=${pages}, fetched=${fetched})`);
+      return allOrders;
+      
+    } catch (error) {
+      console.error('❌ Erro ao buscar todos os pedidos via data entities:', error?.data || error.message);
+      return [];
     }
   }
 }
