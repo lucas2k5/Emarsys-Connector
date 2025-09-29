@@ -799,12 +799,17 @@ router.get('/test-new-base', async (req, res) => {
  * @route GET /api/integration/orders-extract-all
  * @desc Extrai TODOS os pedidos do período (com paginação automática)
  * @param {string} brazilianDate - Data brasileira (YYYY-MM-DD) OU
- * @param {string} startDate - Data inicial UTC (ISO)
- * @param {string} toDate - Data final UTC (ISO)
+ * @param {string} startDate - Data inicial UTC (ISO) OU
+ * @param {string} toDate - Data final UTC (ISO) OU
  * @param {string} startTime - Horário inicial brasileiro (HH:MM, opcional, padrão: 00:00)
  * @param {string} endTime - Horário final brasileiro (HH:MM, opcional, padrão: 23:59)
+ * @param {number} per_page - Número de pedidos por página (opcional, padrão: 100)
+ * @param {boolean} batching - Usar processamento em lotes (opcional)
+ * @param {number} daysPerBatch - Dias por lote quando batching=true (opcional, padrão: 7)
+ * @desc Se nenhum parâmetro for fornecido, usa período baseado em ORDERS_SYNC_CRON
  * @example /orders-extract-all?brazilianDate=2025-09-03
  * @example /orders-extract-all?brazilianDate=2025-09-03&startTime=08:00&endTime=18:00
+ * @example /orders-extract-all (usa período do cron automaticamente)
  * @access Public
  */
 router.get('/orders-extract-all', async (req, res) => {
@@ -837,10 +842,30 @@ router.get('/orders-extract-all', async (req, res) => {
         convertedEndUTC: toDate
       });
     } else if (!startDate || !toDate) {
-      return res.status(400).json({
-        success: false,
-        error: 'Forneça startDate+toDate (UTC) OU brazilianDate (ex: brazilianDate=2025-09-03&startTime=08:00&endTime=18:00)'
-      });
+      // Se não há parâmetros, usar período baseado no cron ORDERS_SYNC_CRON
+      console.log('🕐 Nenhum parâmetro fornecido, calculando período baseado no cron...');
+      
+      const { calculatePeriodFromCron } = require('../utils/cronPeriodCalculator');
+      const period = calculatePeriodFromCron();
+      
+      if (period) {
+        startDate = period.startDate;
+        toDate = period.toDate;
+        dataInicial = startDate;
+        dataFinal = toDate;
+        
+        console.log('🕐 Período calculado baseado no cron:', {
+          cronExpression: process.env.ORDERS_SYNC_CRON,
+          startDate,
+          toDate,
+          periodType: period.type
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: 'Forneça startDate+toDate (UTC) OU brazilianDate (ex: brazilianDate=2025-09-03&startTime=08:00&endTime=18:00) OU configure ORDERS_SYNC_CRON'
+        });
+      }
     }
 
     console.log('🚀 Iniciando extração completa de pedidos (GET):', {
