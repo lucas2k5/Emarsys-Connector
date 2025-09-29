@@ -148,8 +148,8 @@ class ResourceMonitor {
       const memoryUsage = process.memoryUsage();
       const heapUsagePercent = (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100;
       
-      // Se heap estiver muito alta, pode indicar vazamento de memória
-      if (heapUsagePercent > 90) {
+      // Se heap estiver muito alta, pode indicar vazamento de memória (reduzido de 90% para 80%)
+      if (heapUsagePercent > 80) {
         logHelpers.logAlert('heap-critical', 'critical', 
           `Heap crítica detectada: ${heapUsagePercent.toFixed(1)}%`, {
             heapUsed: memoryUsage.heapUsed,
@@ -161,8 +161,8 @@ class ResourceMonitor {
           });
       }
 
-      // Se RSS estiver muito alto, pode indicar problema de memória
-      if (memoryUsage.rss > 1024 * 1024 * 1024) { // Mais de 1GB
+      // Se RSS estiver muito alto, pode indicar problema de memória (reduzido de 1GB para 800MB)
+      if (memoryUsage.rss > 800 * 1024 * 1024) { // Mais de 800MB
         logHelpers.logAlert('rss-high', 'warning', 
           `RSS alto: ${(memoryUsage.rss / 1024 / 1024).toFixed(1)}MB`, {
             rss: memoryUsage.rss,

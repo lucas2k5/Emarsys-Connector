@@ -819,9 +819,10 @@ router.get('/orders-extract-all', async (req, res) => {
     const brazilianDate = req.query.brazilianDate;
     const startTime = req.query.startTime;
     const endTime = req.query.endTime;
-    const perPage = parseInt(req.query.per_page);
+    const perPage = parseInt(req.query.per_page) || 50; // Reduzido de 100 para 50
     const useBatching = req.query.batching === 'true';
-    const daysPerBatch = parseInt(req.query.daysPerBatch) || 7;
+    const daysPerBatch = parseInt(req.query.daysPerBatch) || 3; // Reduzido de 7 para 3 dias
+    const maxOrders = parseInt(req.query.maxOrders) || 200; // Limite máximo de pedidos por execução
 
     // Novo: Suporte para data brasileira
     if (brazilianDate) {
@@ -887,8 +888,8 @@ router.get('/orders-extract-all', async (req, res) => {
       const toDateObj = new Date(toDate);
       const diffInDays = Math.ceil((toDateObj - startDateObj) / (1000 * 60 * 60 * 24));
       
-      // Decide automaticamente: períodos > 30 dias usam lotes
-      const shouldUseBatching = diffInDays > 30 || useBatching; // Mantém compatibilidade temporária
+      // Decide automaticamente: períodos > 7 dias usam lotes (reduzido para economizar memória)
+      const shouldUseBatching = diffInDays > 7 || useBatching; // Reduzido de 30 para 7 dias
       
       let ordersList;
       if (shouldUseBatching) {
@@ -921,6 +922,12 @@ router.get('/orders-extract-all', async (req, res) => {
       }
 
       console.log(`✅ ETAPA 1 concluída: ${ordersList.length} pedidos encontrados`);
+      
+      // Aplica limite de pedidos para evitar sobrecarga de memória
+      if (ordersList.length > maxOrders) {
+        console.log(`⚠️ Limite de ${maxOrders} pedidos aplicado (encontrados: ${ordersList.length})`);
+        ordersList = ordersList.slice(0, maxOrders);
+      }
       
       console.log(`🔍 Iniciando processamento individual de pedidos (total=${ordersList.length})...`);
       
@@ -1005,9 +1012,15 @@ router.get('/orders-extract-all', async (req, res) => {
             console.warn(`⚠️ Nenhum detalhe encontrado para pedido ${orderId}`);
           }
 
-          // Pausa entre requisições para não sobrecarregar
+          // Pausa entre requisições para não sobrecarregar (aumentada para reduzir pressão na memória)
           if (i < ordersList.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Aumentado de 500ms para 1000ms
+          }
+          
+          // Força garbage collection a cada 10 pedidos para liberar memória
+          if (i % 10 === 0 && global.gc) {
+            global.gc();
+            console.log(`🧹 Garbage collection executado após ${i + 1} pedidos`);
           }
 
         } catch (error) {
@@ -1059,63 +1072,6 @@ router.get('/orders-extract-all', async (req, res) => {
       }
       
       console.log('🎉 Fluxo completo concluído, enviando resposta...');
-      // Chama a rota interna de scroll para buscar próximos pendentes e marcá-los como sincronizados
-      try {
-        const axios = require('axios');
-        
-        // Primeira requisição: Busca pedidos não sincronizados no piccadilly.myvtex.com
-        const listUrl = 'https://piccadilly.myvtex.com/_v/orders/list?_where=(isSync%3Dfalse)&page=1&pageSize=1000';
-        console.log('🔎 Buscando pedidos não sincronizados...', { url: listUrl });
-        
-        const listResp = await axios.get(listUrl, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Cookie': 'VtexWorkspace=master%3A-'
-          },
-          timeout: 20000
-        });
-        
-        // Se retornou dados, marca cada pedido individualmente como sincronizado
-        if (listResp.data && listResp.data.data && listResp.data.data.length > 0) {
-          console.log(`📋 Encontrados ${listResp.data.data.length} pedidos para marcar como sincronizados`);
-          
-          let successCount = 0;
-          let errorCount = 0;
-          
-          // Processa cada pedido individualmente
-          for (const order of listResp.data.data) {
-            try {
-              // Segunda requisição: PATCH para ems--piccadilly.myvtex.com com o ID específico
-              const patchUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${order.id}/sync`;
-              const patchResp = await axios.patch(patchUrl, {
-                isSync: true
-              }, {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Accept': 'application/json',
-                  'Cookie': 'VtexWorkspace=master%3A-'
-                },
-                timeout: 10000
-              });
-              
-              if (patchResp.status === 200) {
-                successCount++;
-                console.log(`✅ Pedido ${order.id} marcado como sincronizado`);
-              }
-            } catch (patchErr) {
-              errorCount++;
-              console.error(`❌ Falha ao marcar pedido ${order.id} como sincronizado:`, patchErr.message);
-            }
-          }
-          
-          console.log(`📊 Resultado final: ${successCount} pedidos marcados com sucesso, ${errorCount} falharam`);
-        } else {
-          console.log('ℹ️ Nenhum pedido não sincronizado encontrado');
-        }
-      } catch (scrollErr) {
-        console.error('❌ Falha ao buscar pedidos não sincronizados:', scrollErr.message);
-      }
       // Resposta final
       const { convertToBrazilianTime } = require('../utils/dateUtils');
       const periodBrazil = {
