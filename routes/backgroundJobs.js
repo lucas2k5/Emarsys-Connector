@@ -155,6 +155,178 @@ router.post('/sync-orders', async (req, res) => {
   }
 });
 
+// POST /api/background/orders-extract-all
+// Inicia extração completa de pedidos em background (evita timeout)
+router.post('/orders-extract-all', async (req, res) => {
+  try {
+    const { 
+      brazilianDate, 
+      startDate, 
+      toDate, 
+      startTime, 
+      endTime, 
+      per_page = 50, 
+      batching = true, 
+      daysPerBatch = 1, 
+      maxOrders = 100 
+    } = req.body;
+    
+    console.log(`🚀 [Background] Iniciando extração de pedidos: brazilianDate=${brazilianDate}, batching=${batching}`);
+    
+    // Gerar ID único para o job
+    const jobId = `orders-extract-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Inicializar status do job
+    jobStatus.set(jobId, {
+      id: jobId,
+      type: 'orders-extract-all',
+      status: 'starting',
+      progress: 0,
+      startTime: new Date().toISOString(),
+      config: { 
+        brazilianDate, 
+        startDate, 
+        toDate, 
+        startTime, 
+        endTime, 
+        per_page, 
+        batching, 
+        daysPerBatch, 
+        maxOrders 
+      }
+    });
+    
+    // Executar extração diretamente em background
+    setImmediate(async () => {
+      try {
+        const VtexOrdersService = require('../services/vtexOrdersService');
+        const vtexOrdersService = new VtexOrdersService();
+        
+        // Atualizar status para running
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'running',
+          progress: 10
+        });
+        
+        let finalStartDate = startDate;
+        let finalToDate = toDate;
+        
+        // Processar data brasileira se fornecida
+        if (brazilianDate) {
+          const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+          const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
+          finalStartDate = range.startUTC;
+          finalToDate = range.endUTC;
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 20
+        });
+        
+        let ordersList;
+        if (batching) {
+          console.log(`🔄 Usando processamento em lotes de ${daysPerBatch} dias...`);
+          ordersList = await vtexOrdersService.getAllOrdersInPeriodBatched(finalStartDate, finalToDate, daysPerBatch);
+        } else {
+          console.log(`🔄 Usando busca normal...`);
+          ordersList = await vtexOrdersService.getAllOrdersInPeriod(finalStartDate, finalToDate, false);
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 60
+        });
+        
+        // Aplicar limite de pedidos se especificado
+        if (maxOrders && ordersList.length > maxOrders) {
+          console.log(`⚠️ Aplicando limite de ${maxOrders} pedidos (encontrados: ${ordersList.length})`);
+          ordersList = ordersList.slice(0, maxOrders);
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 80
+        });
+        
+        // Processar pedidos (gerar CSV, enviar para Emarsys, etc.)
+        let processingResult = null;
+        if (ordersList.length > 0) {
+          const emsOrdersService = require('../services/emsOrdersService');
+          processingResult = await emsOrdersService.processOrdersForEmarsys(ordersList);
+        }
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result: {
+            totalOrders: ordersList.length,
+            ordersProcessed: processingResult?.processed || 0,
+            csvGenerated: processingResult?.csvGenerated || false,
+            emarsysSent: processingResult?.emarsysSent || false,
+            period: {
+              startDate: finalStartDate,
+              toDate: finalToDate,
+              brazilianDate,
+              startTime,
+              endTime
+            }
+          }
+        });
+        
+        console.log(`✅ [Background] Extração de pedidos ${jobId} concluída: ${ordersList.length} pedidos`);
+        
+      } catch (error) {
+        console.error(`❌ Erro na extração de pedidos ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      jobId,
+      message: 'Extração de pedidos iniciada em background - evita timeout de 1 minuto',
+      checkStatus: `/api/background/status/${jobId}`,
+      config: { 
+        brazilianDate, 
+        startDate, 
+        toDate, 
+        startTime, 
+        endTime, 
+        per_page, 
+        batching, 
+        daysPerBatch, 
+        maxOrders 
+      },
+      instructions: {
+        pt: 'Use o endpoint checkStatus para acompanhar o progresso',
+        en: 'Use the checkStatus endpoint to track progress'
+      },
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`❌ [Background] Erro ao iniciar extração de pedidos: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // POST /api/background/sync-complete
 // Inicia sincronização completa (produtos + pedidos) em background
 router.post('/sync-complete', async (req, res) => {
