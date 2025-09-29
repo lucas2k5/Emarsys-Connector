@@ -819,9 +819,10 @@ router.get('/orders-extract-all', async (req, res) => {
     const brazilianDate = req.query.brazilianDate;
     const startTime = req.query.startTime;
     const endTime = req.query.endTime;
-    const perPage = parseInt(req.query.per_page);
+    const perPage = parseInt(req.query.per_page) || 50; // Reduzido de 100 para 50
     const useBatching = req.query.batching === 'true';
-    const daysPerBatch = parseInt(req.query.daysPerBatch) || 7;
+    const daysPerBatch = parseInt(req.query.daysPerBatch) || 3; // Reduzido de 7 para 3 dias
+    const maxOrders = parseInt(req.query.maxOrders) || 200; // Limite máximo de pedidos por execução
 
     // Novo: Suporte para data brasileira
     if (brazilianDate) {
@@ -887,8 +888,8 @@ router.get('/orders-extract-all', async (req, res) => {
       const toDateObj = new Date(toDate);
       const diffInDays = Math.ceil((toDateObj - startDateObj) / (1000 * 60 * 60 * 24));
       
-      // Decide automaticamente: períodos > 30 dias usam lotes
-      const shouldUseBatching = diffInDays > 30 || useBatching; // Mantém compatibilidade temporária
+      // Decide automaticamente: períodos > 7 dias usam lotes (reduzido para economizar memória)
+      const shouldUseBatching = diffInDays > 7 || useBatching; // Reduzido de 30 para 7 dias
       
       let ordersList;
       if (shouldUseBatching) {
@@ -921,6 +922,12 @@ router.get('/orders-extract-all', async (req, res) => {
       }
 
       console.log(`✅ ETAPA 1 concluída: ${ordersList.length} pedidos encontrados`);
+      
+      // Aplica limite de pedidos para evitar sobrecarga de memória
+      if (ordersList.length > maxOrders) {
+        console.log(`⚠️ Limite de ${maxOrders} pedidos aplicado (encontrados: ${ordersList.length})`);
+        ordersList = ordersList.slice(0, maxOrders);
+      }
       
       console.log(`🔍 Iniciando processamento individual de pedidos (total=${ordersList.length})...`);
       
@@ -1005,9 +1012,15 @@ router.get('/orders-extract-all', async (req, res) => {
             console.warn(`⚠️ Nenhum detalhe encontrado para pedido ${orderId}`);
           }
 
-          // Pausa entre requisições para não sobrecarregar
+          // Pausa entre requisições para não sobrecarregar (aumentada para reduzir pressão na memória)
           if (i < ordersList.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Aumentado de 500ms para 1000ms
+          }
+          
+          // Força garbage collection a cada 10 pedidos para liberar memória
+          if (i % 10 === 0 && global.gc) {
+            global.gc();
+            console.log(`🧹 Garbage collection executado após ${i + 1} pedidos`);
           }
 
         } catch (error) {
