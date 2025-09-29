@@ -92,12 +92,15 @@ class CronService {
         return;
       }
       
-      // Define período do dia anterior completo no fuso de São Paulo
-      const now = moment().tz('America/Sao_Paulo');
-      const yesterday = now.clone().subtract(1, 'day').format('YYYY-MM-DD');
+      // Calcula o período com base em ORDERS_SYNC_CRON (ex.: a cada 2h)
+      // e envia explicitamente startDate/toDate para a rota.
+      const { calculatePeriodFromCron } = require('./cronPeriodCalculator');
+      const period = calculatePeriodFromCron();
 
       const url = `${this.baseUrl}/api/integration/orders-extract-all`;
-      const params = { brazilianDate: yesterday, startTime: '00:00', endTime: '23:59', per_page: 100 };
+      const params = period
+        ? { startDate: period.startDate, toDate: period.toDate, per_page: 100 }
+        : { per_page: 100 };
 
       logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON', {
         endpoint: url,
