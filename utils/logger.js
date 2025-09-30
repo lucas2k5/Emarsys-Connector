@@ -136,8 +136,8 @@ const logger = winston.createLogger({
   levels: winston.config.npm.levels,
 });
 
-// Adicionar níveis customizados
-logger.addColors({
+// Adicionar cores para níveis customizados
+winston.addColors({
   sync: 'cyan',
   retry: 'yellow',
   alert: 'magenta'
