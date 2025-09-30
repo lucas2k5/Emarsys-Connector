@@ -209,32 +209,6 @@ class VtexOrdersService {
   }
 
   /**
-   * Busca pedidos da nova base de dados
-   * @param {Object} options - Opções de busca (page, pageSize, dataInicial, dataFinal)
-   * @returns {Object} Dados dos pedidos
-   */
-  async fetchOrdersFromNewBase(options = {}) {
-    try {
-      const { page = 1, pageSize = 100, dataInicial, dataFinal } = options;
-      
-      console.log(`🔄 Buscando pedidos da nova base - Página ${page}`);
-      
-      // Se há datas especificadas, usa searchOrdersByPeriod
-      if (dataInicial && dataFinal) {
-        console.log(`📅 Buscando por período: ${dataInicial} até ${dataFinal}`);
-        return await this.searchOrdersByPeriod(dataInicial, dataFinal, page, { per_page: pageSize });
-      }
-      
-      // Caso contrário, usa o método padrão
-      return await this.fetchOrders(page, pageSize);
-      
-    } catch (error) {
-      console.error('❌ Erro ao buscar pedidos da nova base:', error?.data || error.message);
-      throw new Error(`Erro ao buscar pedidos da nova base: ${error.message}`);
-    }
-  }
-
-  /**
    * Busca todos os pedidos da nova base
    * @param {Object} options - Opções de busca
    * @returns {Array} Array com todos os pedidos
@@ -1140,12 +1114,7 @@ class VtexOrdersService {
     const errorOrders = [];
     
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
-    
-    console.log('🔍 transformOrdersForEmarsys debug:', {
-      ordersLength: orders.length,
-      checkDuplicates,
-      ordersSample: orders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
-    });
+    console.log(`🔄 Iniciando transformação de ${orders[0]} pedidos para Emarsys...`);
     
     // Verifica duplicatas se solicitado
     let processedItemIds = new Set();

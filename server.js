@@ -223,7 +223,7 @@ app.use((err, req, res, next) => {
 });
 
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Openflow - Emarsys - Route not found' });
+  res.status(404).json({ error: 'Opn - Ems - Route not found' });
 });
 
 module.exports = app;

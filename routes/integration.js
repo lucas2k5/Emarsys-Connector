@@ -681,119 +681,6 @@ router.post('/orders-extract', async (req, res) => {
   }
 });
 
-/**
- * @route GET /api/integration/orders-sync-new-base
- * @desc Sincroniza pedidos usando a nova base de dados
- * @param {string} dataInicial - Data inicial (formato: YYYY-MM-DD)
- * @param {string} dataFinal - Data final (formato: YYYY-MM-DD)
- * @param {number} pageSize - Tamanho da página (padrão: 100)
- * @access Public
- */
-router.get('/orders-sync-new-base', async (req, res) => {
-  try {
-    // Parâmetros da query
-    const dataInicial = req.query.dataInicial;
-    const dataFinal = req.query.dataFinal;
-    const pageSize = parseInt(req.query.pageSize) || 100;
-    const brazilianDate = req.query.brazilianDate;
-
-    console.log('🚀 Iniciando sincronização com nova base de dados:', {
-      dataInicial,
-      dataFinal,
-      pageSize
-    });
-
-    // Instancia o serviço de pedidos
-    const vtexOrdersService = new (require('../services/vtexOrdersService'))();
-    
-    try {
-      // Executa sincronização completa usando nova base
-      const syncResult = await vtexOrdersService.syncOrders({
-        dataInicial,
-        dataFinal,
-        pageSize,
-        brazilianDate
-      });
-
-      res.json({
-        success: syncResult.success,
-        data: syncResult,
-        timestamp: new Date().toISOString()
-      });
-
-    } catch (syncError) {
-      console.error('❌ Erro na sincronização:', syncError);
-      res.status(500).json({
-        success: false,
-        error: `Erro na sincronização: ${syncError.message}`,
-        details: syncError.response?.data || null,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Erro na sincronização com nova base:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * @route GET /api/integration/test-new-base
- * @desc Testa a conexão com a nova base de dados
- * @param {number} pageSize - Tamanho da página (padrão: 10)
- * @access Public
- */
-router.get('/test-new-base', async (req, res) => {
-  try {
-    const pageSize = parseInt(req.query.pageSize) || 10;
-
-    console.log('🧪 Testando conexão com nova base de dados...');
-
-    // Instancia o serviço de pedidos
-    const vtexOrdersService = new (require('../services/vtexOrdersService'))();
-    
-    try {
-      // Testa apenas uma página para verificar conectividade
-      const testResult = await vtexOrdersService.fetchOrdersFromNewBase({
-        page: 1,
-        pageSize: pageSize
-      });
-
-      console.log('✅ Teste da nova base concluído com sucesso');
-
-      res.json({
-        success: true,
-        message: 'Teste da nova base concluído com sucesso',
-        data: {
-          testResult,
-          pageSize,
-          timestamp: new Date().toISOString()
-        }
-      });
-
-    } catch (testError) {
-      console.error('❌ Erro no teste da nova base:', testError);
-      res.status(500).json({
-        success: false,
-        error: `Erro no teste da nova base: ${testError.message}`,
-        details: testError.response?.data || null,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Erro no teste da nova base:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
 
 /**
  * @route GET /api/integration/orders-extract-all
@@ -882,6 +769,7 @@ router.get('/orders-extract-all', async (req, res) => {
     
     try {
       console.log('📦 ETAPA 1: Buscando pedidos por período...');
+      console.log('📦 -------------OPN-EMS-SALES-SYNC[1]----------------------------');
       
       // Calcula a diferença em dias para decidir automaticamente a estratégia
       const startDateObj = new Date(startDate);
@@ -929,10 +817,8 @@ router.get('/orders-extract-all', async (req, res) => {
         ordersList = ordersList.slice(0, maxOrders);
       }
       
-      console.log(`🔍 Iniciando processamento individual de pedidos (total=${ordersList.length})...`);
-      
       console.log(`🔍 Iniciando ETAPA 2: Busca de detalhes com envio incremental para o hook (total=${ordersList.length})...`);
-      
+      console.log('📦 -------------OPN-EMS-SALES-SYNC[2]----------------------------');
       // ETAPA 2 + 3: Busca detalhes e envia para hook de forma incremental (por pedido)
       const detailedOrders = [];
       const hookResults = {
@@ -954,34 +840,35 @@ router.get('/orders-extract-all', async (req, res) => {
         }
 
         try {
+          const marketplaceValidator = require('../utils/marketplaceValidator');
           console.log(`🔍 Buscando detalhes do pedido ${orderId} (${i + 1}/${ordersList.length})`);
+
+          if (marketplaceValidator.isMarketplaceOrder(orderId)) {
+            console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
+            hookResults.skipped++;
+          }
+
           const orderDetail = await vtexOrdersService.getOrderById(orderId);
           if (orderDetail) {
             detailedOrders.push(orderDetail);
             console.log(`✅ Detalhes obtidos para ${orderId} (${detailedOrders.length}/${ordersList.length})`);
 
-            // ETAPA 3 (inline): Verificar se precisa enviar para o hook baseado nas validações
-            const marketplaceValidator = require('../utils/marketplaceValidator');
-            if (marketplaceValidator.isMarketplaceOrder(orderId)) {
-              console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
-              hookResults.skipped++;
-            } else {
               // Extrai dados do pedido para verificação mais precisa
-              const item = orderDetail?.items?.[0]?.refId || orderDetail?.items?.[0]?.id;
-              const orderStatus = orderDetail?.status;
+            const item = orderDetail?.items?.[0]?.refId || orderDetail?.items?.[0]?.id;
+            const orderStatus = orderDetail?.status;
               
               // Buscar registro na EMS com filtros específicos (order, item, order_status)
-              const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
+            const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
               
-              if (emsRecord) {
-                if (emsRecord.isSync === false) {
+            if (emsRecord) {
+              if (emsRecord.isSync === false) {
                   console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
                   hookResults.alreadySynced++;
-                } else {
+              } else {
                   console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=true - pulando processamento (já sincronizado)`);
                   hookResults.alreadySynced++;
-                }
-              } else {
+              }
+            } else {
                 // Registro não existe na EMS, pode processar
                 console.log(`🆕 Pedido ${orderId} não existe na EMS - processando...`);
                 
@@ -1005,11 +892,9 @@ router.get('/orders-extract-all', async (req, res) => {
                     data: sendResult.data 
                   });
                 }
-              }
             }
+            
 
-          } else {
-            console.warn(`⚠️ Nenhum detalhe encontrado para pedido ${orderId}`);
           }
 
           // Pausa entre requisições para não sobrecarregar (aumentada para reduzir pressão na memória)
@@ -1031,16 +916,20 @@ router.get('/orders-extract-all', async (req, res) => {
 
       console.log(`✅ ETAPA 2/3 concluídas: ${detailedOrders.length} detalhes obtidos`);
       console.log(`📊 Estatísticas do Processamento: ${hookResults.success}/${hookResults.total} processados com sucesso (${hookResults.failed} falhas, ${hookResults.alreadySynced} já sincronizados, ${hookResults.skipped} pulados)`);
+      console.log(`📊 ETAPA 3: GERAR CSV`);
+      console.log('📦 -------------OPN-EMS-SALES-SYNC[3]----------------------------');
       
-      // ETAPA 4: Gerar CSV usando syncOrders (se houver pedidos processados)
       let csvResult = null;
       if (detailedOrders.length > 0) {
         console.log('📄 ETAPA 4: Iniciando geração de CSV via syncOrders...');
+        console.log('📦 -------------OPN-EMS-SALES-SYNC[4]----------------------------');
         try {
           const syncResult = await vtexOrdersService.syncOrders({
+            orders: detailedOrders,
             dataInicial: startDate,
             dataFinal: toDate,
             pageSize: 100
+            
           });
           
           csvResult = {
@@ -1086,12 +975,10 @@ router.get('/orders-extract-all', async (req, res) => {
           period: periodBrazil,
           perPage,
           useBatching,
-          daysPerBatch,
           summary: {
             ordersFound: ordersList.length,
             ordersWithDetails: detailedOrders.length,
             ordersFailed: ordersList.length - detailedOrders.length,
-            hookTotal: hookResults.total,
             hookSent: hookResults.success,
             hookFailed: hookResults.failed,
             hookSkipped: hookResults.skipped,
