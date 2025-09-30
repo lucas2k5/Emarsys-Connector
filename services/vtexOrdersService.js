@@ -1114,12 +1114,7 @@ class VtexOrdersService {
     const errorOrders = [];
     
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
-    
-    console.log('🔍 transformOrdersForEmarsys debug:', {
-      ordersLength: orders.length,
-      checkDuplicates,
-      ordersSample: orders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
-    });
+    console.log(`🔄 Iniciando transformação de ${orders[0]} pedidos para Emarsys...`);
     
     // Verifica duplicatas se solicitado
     let processedItemIds = new Set();
