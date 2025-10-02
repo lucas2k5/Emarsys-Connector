@@ -142,8 +142,6 @@ class VtexOrdersService {
     }
   }
 
-  // searchOrdersOMS removida: use apenas searchOrdersByPeriod
-
   /**
    * Busca pedidos da VTEX (método antigo)
    * @param {number} page - Página atual
@@ -1114,7 +1112,6 @@ class VtexOrdersService {
     const errorOrders = [];
     
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
-    console.log(`🔄 Iniciando transformação de ${orders[0]} pedidos para Emarsys...`);
     
     // Verifica duplicatas se solicitado
     let processedItemIds = new Set();
@@ -1642,20 +1639,27 @@ class VtexOrdersService {
               console.log('✅ CSV enviado com sucesso para Emarsys, marcando pedidos como sincronizados...');
             }
             
-            // Deleta o arquivo orders.json após envio bem-sucedido
-            try {
-              if (fs.existsSync(this.ordersFile)) {
-                await fs.unlink(this.ordersFile);
-                console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
-                result.ordersFileDeleted = true;
-              } else {
-                console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
-                result.ordersFileDeleted = false;
-              }
-            } catch (deleteError) {
-              console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
+            // Em modo DEBUG, não deleta o arquivo orders.json para facilitar análise
+            if (debugMode) {
+              console.log('🐛 [DEBUG MODE] Mantendo arquivo orders.json para análise');
               result.ordersFileDeleted = false;
-              result.deleteError = deleteError.message;
+              result.ordersFileKept = true;
+            } else {
+              // Deleta o arquivo orders.json após envio bem-sucedido (apenas em produção)
+              try {
+                if (fs.existsSync(this.ordersFile)) {
+                  await fs.unlink(this.ordersFile);
+                  console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
+                  result.ordersFileDeleted = true;
+                } else {
+                  console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
+                  result.ordersFileDeleted = false;
+                }
+              } catch (deleteError) {
+                console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
+                result.ordersFileDeleted = false;
+                result.deleteError = deleteError.message;
+              }
             }
             
             result.emarsysSent = true;
@@ -1972,16 +1976,22 @@ class VtexOrdersService {
           console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
         }
         
-        // Deleta o arquivo orders.json após envio bem-sucedido
-        try {
-          if (fs.existsSync(this.ordersFile)) {
-            await fs.unlink(this.ordersFile);
-            console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
-          } else {
-            console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
+        // Em modo DEBUG, não deleta o arquivo orders.json para facilitar análise
+        const debugMode = process.env.DEBUG === 'true';
+        if (debugMode) {
+          console.log('🐛 [DEBUG MODE] Mantendo arquivo orders.json para análise');
+        } else {
+          // Deleta o arquivo orders.json após envio bem-sucedido (apenas em produção)
+          try {
+            if (fs.existsSync(this.ordersFile)) {
+              await fs.unlink(this.ordersFile);
+              console.log(`🗑️ Arquivo orders.json deletado após envio bem-sucedido: ${this.ordersFile}`);
+            } else {
+              console.log('ℹ️ Arquivo orders.json não encontrado para deletar');
+            }
+          } catch (deleteError) {
+            console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
           }
-        } catch (deleteError) {
-          console.error('❌ Erro ao deletar arquivo orders.json:', deleteError.message);
         }
         
         // Verifica se a limpeza está habilitada via variável de ambiente
@@ -2308,8 +2318,9 @@ class VtexOrdersService {
         console.log(`📅 Buscando pedidos por período: ${options.dataInicial} até ${options.dataFinal}`);
         orders = await this.getAllOrdersInPeriod(options.dataInicial, options.dataFinal, false);
       } else {
-        console.log('📦 Buscando todos os pedidos (sem filtro de data)');
-        orders = await this.fetchAllOrders();
+        console.log('📦 sem horário definido na consulta');
+        orders = [];
+        //orders = await this.fetchAllOrders();
       }
       
       if (!orders || orders.length === 0) {
@@ -2422,6 +2433,7 @@ class VtexOrdersService {
       try {
         const emsOrdersService = require('./emsOrdersService');
         const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
+
         if (Array.isArray(pending) && pending.length > 0) {
           const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
           const before = formattedOrders.length;

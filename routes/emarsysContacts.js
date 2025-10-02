@@ -712,7 +712,7 @@ router.post('/create-single-from-ad', async (req, res) => {
     const contact = {
       '3': forwardBody.email,
       '1': firstName,
-      '2': lastName || ''
+      '2': lastName
     };
     if (forwardBody.city) contact['11'] = forwardBody.city;
     if (forwardBody.state) contact['12'] = forwardBody.state;
@@ -726,6 +726,16 @@ router.post('/create-single-from-ad', async (req, res) => {
       const message = action === 'updated'
         ? 'Contato atualizado com sucesso via userId + endereço'
         : 'Contato criado com sucesso via userId + endereço';
+
+      // Log de produção para resposta de sucesso
+      const { logger } = require('../utils/logger');
+      logger.info('Contato processado com sucesso via userId + endereço', {
+        action,
+        userId: forwardBody.userId,
+        email: forwardBody.email,
+        emarsysResponse: result.data,
+        timestamp: new Date().toISOString()
+      });
 
       return res.status(201).json({
         success: true,
@@ -776,6 +786,7 @@ router.post('/create-single', async (req, res) => {
       const mask = (obj) => {
         if (!obj || typeof obj !== 'object') return obj;
         const clone = { ...obj };
+        console.log('/api/emarsys/contacts/create-single => clone values', clone);
         if (clone.email) {
           const [user, domain] = String(clone.email).split('@');
           clone.email = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
