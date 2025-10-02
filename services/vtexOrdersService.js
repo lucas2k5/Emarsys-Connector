@@ -2314,7 +2314,11 @@ class VtexOrdersService {
       console.log('📦 Buscando pedidos da VTEX...');
       let orders;
       
-      if (options.dataInicial && options.dataFinal) {
+      // Se pedidos já foram fornecidos, usa eles em vez de buscar novamente
+      if (options.orders && Array.isArray(options.orders)) {
+        console.log(`📦 Usando ${options.orders.length} pedidos já fornecidos`);
+        orders = options.orders;
+      } else if (options.dataInicial && options.dataFinal) {
         console.log(`📅 Buscando pedidos por período: ${options.dataInicial} até ${options.dataFinal}`);
         orders = await this.getAllOrdersInPeriod(options.dataInicial, options.dataFinal, false);
       } else {
@@ -2390,6 +2394,20 @@ class VtexOrdersService {
           // Filtra os dados formatados que correspondem aos pedidos da VTEX OMS
           formattedOrders = formattedData.filter(o => orderIds.includes(o.order || o.orderId));
           
+          // Filtro adicional: verifica se o pedido está no período especificado
+          if (options.dataInicial && options.dataFinal) {
+            const startDate = new Date(options.dataInicial);
+            const endDate = new Date(options.dataFinal);
+            
+            const beforeFilter = formattedOrders.length;
+            formattedOrders = formattedOrders.filter(o => {
+              const orderDate = new Date(o.timestamp || o.creationDate || o.date);
+              return orderDate >= startDate && orderDate <= endDate;
+            });
+            
+            console.log(`🔍 Filtro por período: ${beforeFilter} -> ${formattedOrders.length} pedidos`);
+          }
+          
         } else {
           console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response?.data?.data?.length || 'sem data');
           console.log('📋 Resposta completa para debug:', {
@@ -2398,9 +2416,9 @@ class VtexOrdersService {
             data: response?.data
           });
         }
-      } catch (error) {
-        console.warn('⚠️ Erro ao buscar dados formatados:', error.message);
-        console.log('ℹ️ Continuando com dados da VTEX OMS...');
+      } catch (formattedError) {
+        console.error('❌ Erro ao buscar dados formatados:', formattedError?.response?.data || formattedError.message);
+        console.log('🔄 Continuando com dados da VTEX OMS...');
       }
 
       if (formattedOrders.length === 0) {
