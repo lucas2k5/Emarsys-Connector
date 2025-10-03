@@ -1492,7 +1492,7 @@ class VtexOrdersService {
       const csvContent = this.generateEmarsysCsvContent(ordersToProcess);
       console.log(`🔍 CSV gerado com ${csvContent.length} caracteres`);
       
-
+      
       // Comparação com o último CSV: se o conteúdo for idêntico (ignorando ordem), não gerar novo
       try {
         console.log(`🔍 Verificando último CSV...`);
@@ -1601,6 +1601,32 @@ class VtexOrdersService {
       try {
         await fs.writeFile(filePath, csvWithBom, 'utf8');
         console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
+        
+        // Log nos logs de orders indicando o arquivo gerado
+        const { ordersLogger } = require('../utils/logger');
+        ordersLogger.info('📄 CSV de pedidos gerado', {
+          type: 'csv_generated',
+          filename: filename,
+          filePath: filePath,
+          totalOrders: ordersToProcess.length,
+          csvLines: lines.length,
+          timestamp: getBrazilianTimestamp()
+        });
+        
+        // Envia dados para API externa de logs
+        try {
+          const externalLogResult = await this.sendToExternalLogApi({
+            period: filename,
+            data: new Date().toISOString().split('T')[0], // Data atual no formato YYYY-MM-DD
+            status: 'pending',
+            qtdy_items: lines.length,
+            qtdy_orders: ordersToProcess.length
+          });
+          console.log('📤 Resultado do envio para API externa:', externalLogResult);
+        } catch (externalLogError) {
+          console.error('❌ Erro ao enviar para API externa:', externalLogError.message);
+        }
+        
       } catch (writeError) {
         console.error('❌ Erro ao escrever arquivo CSV:', writeError);
         console.error('📁 Caminho do arquivo:', filePath);
@@ -2314,7 +2340,11 @@ class VtexOrdersService {
       console.log('📦 Buscando pedidos da VTEX...');
       let orders;
       
-      if (options.dataInicial && options.dataFinal) {
+      // Se pedidos já foram fornecidos, usa eles em vez de buscar novamente
+      if (options.orders && Array.isArray(options.orders)) {
+        console.log(`📦 Usando ${options.orders.length} pedidos já fornecidos`);
+        orders = options.orders;
+      } else if (options.dataInicial && options.dataFinal) {
         console.log(`📅 Buscando pedidos por período: ${options.dataInicial} até ${options.dataFinal}`);
         orders = await this.getAllOrdersInPeriod(options.dataInicial, options.dataFinal, false);
       } else {
@@ -2390,6 +2420,20 @@ class VtexOrdersService {
           // Filtra os dados formatados que correspondem aos pedidos da VTEX OMS
           formattedOrders = formattedData.filter(o => orderIds.includes(o.order || o.orderId));
           
+          // Filtro adicional: verifica se o pedido está no período especificado
+          if (options.dataInicial && options.dataFinal) {
+            const startDate = new Date(options.dataInicial);
+            const endDate = new Date(options.dataFinal);
+            
+            const beforeFilter = formattedOrders.length;
+            formattedOrders = formattedOrders.filter(o => {
+              const orderDate = new Date(o.timestamp || o.creationDate || o.date);
+              return orderDate >= startDate && orderDate <= endDate;
+            });
+            
+            console.log(`🔍 Filtro por período: ${beforeFilter} -> ${formattedOrders.length} pedidos`);
+          }
+          
         } else {
           console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response?.data?.data?.length || 'sem data');
           console.log('📋 Resposta completa para debug:', {
@@ -2398,33 +2442,25 @@ class VtexOrdersService {
             data: response?.data
           });
         }
-      } catch (error) {
-        console.warn('⚠️ Erro ao buscar dados formatados:', error.message);
-        console.log('ℹ️ Continuando com dados da VTEX OMS...');
+      } catch (formattedError) {
+        console.error('❌ Erro ao buscar dados formatados:', formattedError?.response?.data || formattedError.message);
+        console.log('🔄 Continuando com dados da VTEX OMS...');
       }
 
       if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado encontrado após filtro, tentando usar dados formatados sem filtro...');
-        
-        // Se não encontrou correspondência, usa todos os dados formatados disponíveis
-        if (formattedData && formattedData.length > 0) {
-          console.log('📋 Usando todos os dados formatados disponíveis (sem filtro)');
-          formattedOrders = formattedData;
-        } else {
-          console.warn('⚠️ Nenhum dado formatado disponível, usando dados da VTEX OMS mapeados');
-          formattedOrders = orders.map(order => ({
-            order: order.orderId || order.id,
-            email: order.email,
-            item: order.items?.[0]?.id,
-            price: order.items?.[0]?.price,
-            quantity: order.items?.[0]?.quantity,
-            timestamp: order.creationDate,
-            s_channel_source: 'web',
-            s_store_id: 'piccadilly',
-            s_sales_channel: 'ecommerce',
-            s_discount: order.discount
-          }));
-        }
+        console.warn('⚠️ Nenhum pedido formatado correspondente encontrado. Usando dados da VTEX OMS mapeados (restritos ao período).');
+        formattedOrders = orders.map(order => ({
+          order: order.orderId || order.id,
+          email: order.email,
+          item: order.items?.[0]?.id,
+          price: order.items?.[0]?.price,
+          quantity: order.items?.[0]?.quantity,
+          timestamp: order.creationDate,
+          s_channel_source: 'web',
+          s_store_id: 'piccadilly',
+          s_sales_channel: 'ecommerce',
+          s_discount: order.discount
+        }));
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
@@ -2538,6 +2574,64 @@ class VtexOrdersService {
         error: error.message,
         totalOrders: 0,
         timestamp: getBrazilianTimestamp()
+      };
+    }
+  }
+
+  /**
+   * Envia dados para API externa de logs
+   * @param {Object} data - Dados para enviar
+   * @returns {Promise<Object>} Resultado do envio
+   */
+  async sendToExternalLogApi(data) {
+    try {
+      const axios = require('axios');
+      const url = 'https://ems--piccadilly.myvtex.com/_v/order-batches/create';
+      
+      console.log('📤 Enviando dados para API externa de logs:', data);
+      console.log('📤 URL da API:', url);
+      
+      const response = await axios.post(url, data, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000 // 10 segundos de timeout
+      });
+      
+      console.log('✅ Dados enviados com sucesso para API externa:', response.status);
+      console.log('✅ Resposta da API:', response.data);
+      
+      // Log local após salvar na entidade externa
+      const { ordersLogger } = require('../utils/logger');
+      ordersLogger.info('✅ Log externo salvo com sucesso', {
+        type: 'external_log_saved',
+        apiUrl: url,
+        data: data,
+        responseStatus: response.status,
+        timestamp: getBrazilianTimestamp()
+      });
+      
+      return {
+        success: true,
+        status: response.status,
+        data: response.data
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao enviar dados para API externa:', error.message);
+      
+      // Log do erro
+      const { ordersLogger } = require('../utils/logger');
+      ordersLogger.error('❌ Erro ao salvar log externo', {
+        type: 'external_log_error',
+        error: error.message,
+        data: data,
+        timestamp: getBrazilianTimestamp()
+      });
+      
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
