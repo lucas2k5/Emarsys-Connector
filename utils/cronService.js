@@ -7,7 +7,11 @@ const { logHelpers } = require('./logger');
 class CronService {
   constructor() {
     this.jobs = new Map();
-    this.baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+    // Em produção, usar a URL correta ao invés de localhost
+    const isProduction = process.env.NODE_ENV === 'production';
+    this.baseUrl = isProduction && process.env.BASE_URL 
+      ? process.env.BASE_URL 
+      : `http://localhost:${process.env.PORT || 3000}`;
     
     // Configurações de cron jobs via variáveis de ambiente
     this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON;

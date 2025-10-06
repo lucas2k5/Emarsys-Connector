@@ -243,6 +243,28 @@ const clientsLogger = winston.createLogger({
   ],
 });
 
+// Logger específico para ACESSOS e REQUESTS
+const accessLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console({
+      level: 'warn',
+      format: consoleFormat,
+    }),
+    new DailyRotateFile({
+      filename: path.join('logs', 'access-requests-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '20m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
 // Funções auxiliares para logging estruturado
 const logHelpers = {
   // Log de requisição HTTP
@@ -436,6 +458,28 @@ const logHelpers = {
       timestamp: getBrazilianTimestamp()
     });
   },
+
+  // Log de tentativas de acesso a rotas inválidas
+  logAccessAttempt: (req, statusCode, blocked = false, attemptCount = 0) => {
+    const level = statusCode === 429 ? 'warn' : 'info';
+    const message = blocked ? '🚫 ACESSO BLOQUEADO' : '⚠️ ROTA INVÁLIDA';
+    
+    accessLogger.log(level, message, {
+      module: 'access',
+      status: statusCode,
+      blocked,
+      attemptCount,
+      request: {
+        method: req.method,
+        path: req.path || req.originalUrl || '',
+        ip: req.ip || req.headers['x-forwarded-for'] || (req.connection && req.connection.remoteAddress) || 'unknown',
+        userAgent: req.get('User-Agent') || 'unknown',
+        referer: req.get('Referer') || 'none',
+        origin: req.get('Origin') || 'none',
+      },
+      timestamp: getBrazilianTimestamp()
+    });
+  },
 };
 
 // Criar diretório de logs se não existir
@@ -452,5 +496,6 @@ module.exports = {
   ordersLogger,
   productsLogger,
   clientsLogger,
+  accessLogger,
   logHelpers,
 };
