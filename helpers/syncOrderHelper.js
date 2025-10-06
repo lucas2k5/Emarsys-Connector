@@ -5,7 +5,7 @@ const axios = require('axios');
  * @param {Object} listResp - Resposta da API com lista de pedidos
  * @returns {Object} - Resultado da sincronização com contadores
  */
-async function syncOrders(listResp) {
+async function syncOrdersStatus(listResp) {
   if (listResp.data && listResp.data.data && listResp.data.data.length > 0) {
     console.log(`📋 Encontrados ${listResp.data.data.length} pedidos para marcar como sincronizados`);
     
@@ -57,5 +57,5 @@ async function syncOrders(listResp) {
 }
 
 module.exports = {
-  syncOrders
+  syncOrdersStatus
 };

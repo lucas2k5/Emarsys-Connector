@@ -90,14 +90,22 @@ class VtexOrdersService {
       f_creationDate: `creationDate:[${startDateISO} TO ${endDateISO}]`,
       per_page: options.per_page || 100,
       page: page,
-      orderBy: options.orderBy || 'creationDate,asc',
-      f_status: options.f_status || undefined
+      orderBy: options.orderBy || 'creationDate,asc'
     };
     
-    // Log detalhado para debug de datas
+    // Apenas adiciona f_status se ele for fornecido
+    if (options.f_status) {
+      params.f_status = options.f_status;
+    }
+    
+    // Log detalhado para debug de datas (com conversão para horário de São Paulo)
+    const moment = require('moment-timezone');
+    const startSP = moment(startDateISO).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+    const endSP = moment(endDateISO).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+    
     console.log('🔍 DEBUG FILTRO DE DATAS:');
-    console.log(`   📅 Data inicial recebida: ${startDateISO}`);
-    console.log(`   📅 Data final recebida: ${endDateISO}`);
+    console.log(`   📅 Data inicial UTC: ${startDateISO} → 🇧🇷 São Paulo: ${startSP}`);
+    console.log(`   📅 Data final UTC: ${endDateISO} → 🇧🇷 São Paulo: ${endSP}`);
     console.log(`   🔍 Filtro aplicado: ${params.f_creationDate}`);
     
     console.log('🔍 searchOrdersByPeriod debug:', {
@@ -2222,7 +2230,7 @@ class VtexOrdersService {
       
       const result = await emarsysHapi.uploadSalesDataFile(filePath);
       
-      if (result.success) {
+      if (result.success && result.data) {
         console.log('✅ Upload de dados de vendas concluído com sucesso');
         console.log('🎯 RESPOSTA EMARSYS HAPI:');
         console.log('   📊 Status: Sucesso');
@@ -2230,18 +2238,16 @@ class VtexOrdersService {
         console.log('   📏 Tamanho: ' + result.fileSize + ' MB');
         console.log('   🌐 URL: ' + result.url);
         console.log('   📝 Mensagem: ' + result.message);
-        if (result.data) {
-          console.log('   📄 Dados da resposta: ' + JSON.stringify(result.data));
-        }
-      } else {
-        console.error('❌ Erro no upload de dados de vendas:');
-        console.error('   📁 Arquivo: ' + absolutePath);
-        console.error('   🚨 Erro: ' + result.error);
+        console.log('   📄 Dados da resposta: ' + JSON.stringify(result.data));
       }
       
       return result;
     } catch (error) {
-      console.error('❌ Erro ao enviar dados de vendas:', error);
+
+      console.error('❌ Erro ao enviar dados de vendas:', error.message);
+      console.error('   📁 Arquivo: ' + absolutePath);
+      console.error('   🚨 Erro: ' + result.error);
+
       return {
         success: false,
         error: error.message,
@@ -2269,8 +2275,6 @@ class VtexOrdersService {
         };
       }
 
-      // ETAPA 1: Busca os detalhes completos do pedido
-      console.log(`🔍 ETAPA 1: Buscando detalhes do pedido ${orderId}...`);
       const orderDetail = await this.getOrderById(orderId);
       
       if (!orderDetail) {
@@ -2281,10 +2285,6 @@ class VtexOrdersService {
         };
       }
 
-      console.log(`✅ Detalhes do pedido ${orderId} obtidos com sucesso`);
-
-      // ETAPA 2: Envia diretamente para o hook (sem verificação prévia)
-      console.log(`📨 [${orderId}] ETAPA 2: Enviando pedido para hook`);
       
       // Cria o payload garantindo que orderId esteja no nível raiz
       const payload = {
@@ -2325,15 +2325,6 @@ class VtexOrdersService {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
       const startTime = Date.now();
       
-      console.log('🔍 syncOrders debug:', {
-        options,
-        dataInicial: options.dataInicial,
-        dataFinal: options.dataFinal,
-        pageSize: options.pageSize
-      });
-      
-      // 1. Buscar pedidos (com ou sem filtro de data)
-      console.log('📦 Buscando pedidos da VTEX...');
       let orders;
       
       // Se pedidos já foram fornecidos, usa eles em vez de buscar novamente
@@ -2346,7 +2337,6 @@ class VtexOrdersService {
       } else {
         console.log('📦 sem horário definido na consulta');
         orders = [];
-        //orders = await this.fetchAllOrders();
       }
       
       if (!orders || orders.length === 0) {
@@ -2362,8 +2352,6 @@ class VtexOrdersService {
       
       console.log(`✅ ${orders.length} pedidos encontrados`);
       
-      // 2. Salvar pedidos localmente
-      console.log('💾 Salvando pedidos...');
       const saveResult = await this.saveOrdersToFile(orders);
       
       if (!saveResult.success) {
@@ -2390,11 +2378,7 @@ class VtexOrdersService {
         
         console.log('📋 DEBUG - Estrutura da resposta:', {
           status: response?.status,
-          hasData: !!response?.data,
-          dataType: typeof response?.data,
-          isArray: Array.isArray(response?.data),
-          dataLength: response?.data?.length,
-          dataKeys: response?.data ? Object.keys(response?.data) : 'sem keys'
+          hasData: !!response?.data
         });
         
         // O endpoint retorna {success: true, data: [...], pagination: {...}}
@@ -2461,34 +2445,6 @@ class VtexOrdersService {
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
 
-      // // 3.1 Opcional: Filtra apenas registros pendentes em emsOrdersV2 (isSync=false) antes de transformar/gerar CSV
-      // try {
-      //   const emsOrdersService = require('./emsOrdersService');
-      //   const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
-
-      //   if (Array.isArray(pending) && pending.length > 0) {
-      //     const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
-      //     const before = formattedOrders.length;
-      //     formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
-      //     console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
-      //     if (formattedOrders.length === 0) {
-      //       console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
-      //       return {
-      //         success: true,
-      //         totalOrders: orders.length,
-      //         transformedOrders: 0,
-      //         csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
-      //         emarsysSendResult: { success: false, message: 'Sem pendentes' },
-      //         duration: Date.now() - startTime,
-      //         timestamp: getBrazilianTimestamp()
-      //       };
-      //     }
-      //   } else {
-      //     console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
-      //   }
-      // } catch (pendErr) {
-      //   console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
-      // }
      
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
@@ -2499,7 +2455,7 @@ class VtexOrdersService {
       
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
         ...options,
-        autoSend: true,  // Habilita envio automático e marca isSync=true após sucesso
+        autoSend: true, 
         startDate: options.dataInicial,
         endDate: options.dataFinal
       });
@@ -2531,7 +2487,6 @@ class VtexOrdersService {
 
       await this.saveSyncStats(finalStats);
       
-      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms`);
       console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.emarsysData?.length || 0} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
@@ -2539,7 +2494,6 @@ class VtexOrdersService {
         totalOrders: orders.length,
         transformedOrders: transformedOrders.emarsysData?.length || 0,
         message: 'Sincronização de pedidos concluída com sucesso',
-        orders: orders,
         saveResult: saveResult,
         csvResult: csvResult,
         emarsysSendResult: emarsysSendResult,
