@@ -7,12 +7,14 @@ Sistema de integração completo entre VTEX e Emarsys para sincronização de pr
 > **⚠️ IMPORTANTE:** Antes de executar qualquer sincronização, configure `DEBUG=true` no arquivo `.env` para testar a lógica de marcação `isSync=true` sem enviar dados reais para a Emarsys.
 
 ### 🎯 **Para que serve o DEBUG:**
+
 - ✅ **Testa marcação `isSync=true`** sem envio real para Emarsys
 - ✅ **Evita duplicação** de pedidos na próxima execução
 - ✅ **Valida fluxo completo** antes do envio real
 - ✅ **Debug de problemas** de sincronização
 
 ### 🚀 **Como usar:**
+
 ```bash
 # 1. Ativar DEBUG
 echo "DEBUG=true" >> .env
@@ -28,6 +30,7 @@ echo "DEBUG=false" >> .env
 ```
 
 ### 📋 **Comportamento:**
+
 - **DEBUG=true**: Gera CSV + Simula envio + Marca `isSync=true` + Deleta `orders.json`
 - **DEBUG=false**: Gera CSV + Envia real + Marca `isSync=true` + Deleta `orders.json`
 
@@ -185,6 +188,8 @@ Edite o arquivo `.env` com suas credenciais:
 PORT=3000
 HOST=0.0.0.0
 NODE_ENV=development
+# BASE_URL para uso em produção nos cron jobs (ex: https://seu-dominio.com)
+BASE_URL=
 
 # Debug Mode - CRÍTICO: Configure DEBUG=true para testar antes do envio real
 DEBUG=false
@@ -239,11 +244,13 @@ npm run monitoring:setup
 ### Passo 5: Iniciar a Aplicação
 
 #### Desenvolvimento
+
 ```bash
 npm run dev
 ```
 
 #### Produção com PM2
+
 ```bash
 npm run prod
 ```
@@ -342,12 +349,12 @@ curl http://localhost:3000/api/background/status/{jobId}
 
 O sistema possui cron jobs pré-configurados que executam automaticamente:
 
-| Job | Frequência | Descrição |
-|-----|------------|-----------|
+| Job                 | Frequência     | Descrição               |
+| ------------------- | --------------- | ------------------------- |
 | Sync Orders Batched | A cada 10 horas | Sincronização combinada |
-| Sync Orders | A cada 12 horas | Apenas pedidos |
-| Sync Products | A cada 14 horas | Apenas produtos |
-| Products CSV | A cada hora | Geração de CSV |
+| Sync Orders         | A cada 12 horas | Apenas pedidos            |
+| Sync Products       | A cada 14 horas | Apenas produtos           |
+| Products CSV        | A cada hora     | Geração de CSV          |
 
 Para gerenciar os cron jobs:
 
@@ -367,9 +374,11 @@ curl -X POST http://localhost:3000/api/cron-management/start/sync-products
 ### 🐛 Modo DEBUG
 
 #### `POST /api/ems-orders/test-debug-mode`
+
 Testa o modo DEBUG e executa marcação de pedidos pendentes.
 
 **Resposta DEBUG=true:**
+
 ```json
 {
   "success": true,
@@ -385,9 +394,11 @@ Testa o modo DEBUG e executa marcação de pedidos pendentes.
 ```
 
 #### `GET /api/ems-orders/pending-for-test`
+
 Lista pedidos pendentes para teste (primeiros 5).
 
 **Resposta:**
+
 ```json
 {
   "success": true,
@@ -405,9 +416,11 @@ Lista pedidos pendentes para teste (primeiros 5).
 ```
 
 #### `POST /api/ems-orders/test-edit-single`
+
 Testa edição de um registro específico.
 
 **Body:**
+
 ```json
 {
   "orderId": "1563641491289-01"
@@ -417,9 +430,11 @@ Testa edição de um registro específico.
 ### Integração Principal
 
 #### `GET /api/integration/orders-extract-all`
+
 Extrai TODOS os pedidos do período com processamento completo (Hook → CSV → Emarsys)
 
 **Parâmetros (opcionais)**:
+
 - `brazilianDate` (string): Data brasileira (YYYY-MM-DD)
 - `startDate` (string): Data inicial UTC (ISO)
 - `toDate` (string): Data final UTC (ISO)
@@ -432,6 +447,7 @@ Extrai TODOS os pedidos do período com processamento completo (Hook → CSV →
 **🆕 Funcionalidade Automática**: Se nenhum parâmetro for fornecido, usa período baseado em `ORDERS_SYNC_CRON`
 
 **Exemplos**:
+
 ```bash
 # Sem parâmetros (usa período do cron automaticamente)
 GET /api/integration/orders-extract-all
@@ -444,6 +460,7 @@ GET /api/integration/orders-extract-all?startDate=2025-09-28T00:00:00.000Z&toDat
 ```
 
 **Configurações de Cron Suportadas**:
+
 - `*/30 * * * *`: A cada 30 minutos (último intervalo até agora)
 - `0 */2 * * *`: A cada 2 horas (último intervalo até agora)
 - `0 0 * * *`: Diariamente à meia-noite (dia anterior se antes das 6h)
@@ -451,31 +468,38 @@ GET /api/integration/orders-extract-all?startDate=2025-09-28T00:00:00.000Z&toDat
 - `0 0 * * 1`: Segunda-feira à meia-noite (semana anterior se não for segunda)
 
 #### `POST /api/integration/sales-feed`
+
 Processa feed de vendas completo (VTEX → Emarsys)
 
 **Parâmetros**:
+
 - `twoYears` (boolean): Buscar últimos 2 anos
 - `clientsOnly` (boolean): Apenas clientes
 - `startDate` (string): Data inicial (YYYY-MM-DD)
 - `toDate` (string): Data final (YYYY-MM-DD)
 
 #### `POST /api/integration/client-catalog`
+
 Processa catálogo de clientes
 
 ### Produtos VTEX
 
 #### `GET /api/vtex/products`
+
 Lista produtos com paginação
 
 **Query Parameters**:
+
 - `page` (number): Página atual
 - `limit` (number): Itens por página
 - `search` (string): Termo de busca
 
 #### `POST /api/vtex/products/sync`
+
 Sincroniza produtos da VTEX
 
 **Body**:
+
 ```json
 {
   "maxProducts": 1000,
@@ -485,14 +509,17 @@ Sincroniza produtos da VTEX
 ```
 
 #### `POST /api/vtex/products/generate-csv`
+
 Gera CSV dos produtos
 
 ### Contatos Emarsys
 
 #### `POST /api/emarsys/contacts/extract-recent`
+
 Extrai contatos recentes
 
 **Body**:
+
 ```json
 {
   "hours": 6,
@@ -502,9 +529,11 @@ Extrai contatos recentes
 ```
 
 #### `POST /api/emarsys/contacts/create-single`
+
 Cria contato individual
 
 **Body**:
+
 ```json
 {
   "nome": "João Silva",
@@ -517,20 +546,25 @@ Cria contato individual
 ### Vendas Emarsys
 
 #### `POST /api/emarsys/sales/send-unsynced`
+
 Envia apenas pedidos não sincronizados
 
 #### `GET /api/emarsys/sales/sync-status`
+
 Status da última sincronização
 
 #### `GET /api/emarsys/sales/orders-count`
+
 Contagem de pedidos por status
 
 ### Background Jobs
 
 #### `POST /api/background/sync-complete`
+
 Sincronização completa (produtos + pedidos)
 
 **Body**:
+
 ```json
 {
   "maxProducts": 5000,
@@ -539,9 +573,11 @@ Sincronização completa (produtos + pedidos)
 ```
 
 #### `GET /api/background/jobs`
+
 Lista todos os jobs
 
 **Query Parameters**:
+
 - `status`: running, completed, failed
 - `type`: sync-products, sync-orders
 - `limit`: número máximo de resultados
@@ -549,18 +585,23 @@ Lista todos os jobs
 ### Monitoramento
 
 #### `GET /api/metrics/dashboard`
+
 Dashboard visual de métricas
 
 #### `GET /api/metrics/prometheus`
+
 Métricas no formato Prometheus
 
 #### `GET /api/alerts/active`
+
 Lista alertas ativos
 
 #### `POST /api/alerts`
+
 Cria alerta manual
 
 **Body**:
+
 ```json
 {
   "type": "custom_alert",
@@ -608,11 +649,13 @@ O sistema gera alertas automáticos para:
 Sistema de logging aprimorado com logs isolados por módulo e melhor visualização:
 
 #### Logs por Módulo (Isolados)
+
 - `orders-logs-{date}.log`: Logs específicos de sincronização de pedidos
-- `product-logs-{date}.log`: Logs específicos de sincronização de produtos  
+- `product-logs-{date}.log`: Logs específicos de sincronização de produtos
 - `clients-logs-{date}.log`: Logs específicos de sincronização de clientes
 
 #### Logs Gerais do Sistema
+
 - `piccadilly-emarsys-system-{date}.log`: Logs gerais do sistema
 - `piccadilly-emarsys-errors-{date}.log`: Apenas erros
 - `piccadilly-emarsys-http-{date}.log`: Requisições HTTP
@@ -622,6 +665,7 @@ Sistema de logging aprimorado com logs isolados por módulo e melhor visualizaç
 - `piccadilly-emarsys-alerts-{date}.log`: Alertas do sistema
 
 #### Melhorias na Visualização
+
 - **Divisórias visuais**: Cada log é separado por linhas de igual (=) para melhor leitura
 - **Timezone São Paulo**: Todos os timestamps no fuso horário de Brasília
 - **Contexto detalhado**: Logs incluem informações específicas do módulo
@@ -657,6 +701,7 @@ tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
 **Sintomas**: Timeout ou 401 nas requisições
 
 **Solução**:
+
 1. Verificar credenciais no `.env`
 2. Confirmar whitelist de IPs na VTEX
 3. Testar com: `curl http://localhost:3000/api/integration/test-connections`
@@ -666,6 +711,7 @@ tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
 **Sintomas**: Jobs falhando ou produtos não aparecendo
 
 **Solução**:
+
 1. Verificar logs: `npm run logs:error`
 2. Limpar cache: `rm data/products.json`
 3. Sincronizar com limite menor: `{"maxProducts": 100}`
@@ -675,6 +721,7 @@ tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
 **Sintomas**: Aplicação reiniciando ou lenta
 
 **Solução**:
+
 1. Aumentar limite de memória no PM2
 2. Ativar otimizações: `npm run prod:optimize`
 3. Configurar garbage collection mais agressivo
@@ -684,6 +731,7 @@ tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
 **Sintomas**: Arquivos CSV vazios ou ausentes
 
 **Solução**:
+
 1. Verificar permissões do diretório `exports/`
 2. Confirmar dados em `data/orders.json`
 3. Executar geração manual
@@ -715,6 +763,7 @@ npm run prod:restart:gc
 O sistema foi otimizado para resolver problemas de timeout em produção:
 
 #### Configurações de Timeout Otimizadas
+
 ```env
 # Timeouts configuráveis (em milissegundos)
 PRODUCTS_TIMEOUT_MS=600000    # 10 minutos para produtos
@@ -722,6 +771,7 @@ ORDERS_TIMEOUT_MS=900000      # 15 minutos para pedidos
 ```
 
 #### Melhorias Implementadas
+
 - **Timeouts aumentados**: De 5 minutos para 10-15 minutos conforme o módulo
 - **Logs específicos**: Cada módulo tem seus próprios logs para melhor debugging
 - **Contexto detalhado**: Logs incluem informações completas sobre timeouts
@@ -732,6 +782,7 @@ ORDERS_TIMEOUT_MS=900000      # 15 minutos para pedidos
 #### Configurações Recomendadas
 
 **Produção com alto volume**:
+
 ```env
 # Processamento em lotes
 ORDERS_MAX_PAGES=50
@@ -748,6 +799,7 @@ PRODUCTS_CONCURRENCY=4
 ```
 
 **Ambiente limitado**:
+
 ```env
 # Reduzir consumo
 ORDERS_MAX_PAGES=5
@@ -767,12 +819,14 @@ PRODUCTS_CONCURRENCY=2
 ### Deploy Local/VPS com PM2
 
 1. **Configurar PM2**:
+
 ```bash
 npm install -g pm2
 pm2 install pm2-logrotate
 ```
 
 2. **Iniciar aplicação**:
+
 ```bash
 npm run prod
 pm2 save
@@ -780,11 +834,12 @@ pm2 startup
 ```
 
 3. **Configurar Nginx** (opcional):
+
 ```nginx
 server {
     listen 80;
     server_name api.suaempresa.com;
-    
+  
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
@@ -851,6 +906,7 @@ Tipos: feat, fix, docs, style, refactor, test, chore
 ### Reportar Bugs
 
 Use as issues do GitHub com:
+
 - Descrição clara do problema
 - Passos para reproduzir
 - Comportamento esperado vs atual
@@ -864,6 +920,7 @@ Este projeto é proprietário e confidencial.
 ## 📞 Suporte
 
 Para suporte e dúvidas:
+
 - Email: suporte@mptech.com.br
 - Documentação: [Wiki do Projeto](https://github.com/seu-repo/wiki)
 - Issues: [GitHub Issues](https://github.com/seu-repo/issues)

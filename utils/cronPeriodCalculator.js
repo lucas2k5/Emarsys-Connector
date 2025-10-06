@@ -117,45 +117,68 @@ function calculateHoursInterval(now, intervalHours) {
   const startOfDay = now.clone().startOf('day');
   const currentHour = now.hour();
   
-  // Encontra a última execução
+  // Encontra a última execução (período ANTERIOR completo)
   const lastExecutionHour = Math.floor(currentHour / intervalHours) * intervalHours;
-  const lastExecution = startOfDay.clone().hour(lastExecutionHour);
   
-  // Se for a primeira execução do dia, pega o dia anterior
-  if (lastExecutionHour === 0 && currentHour < intervalHours) {
-    const yesterday = now.clone().subtract(1, 'day');
-    const startDate = yesterday.startOf('day').toISOString();
-    const toDate = yesterday.endOf('day').toISOString();
+  // Se estamos exatamente no horário da execução, pegar o intervalo anterior
+  const isExactExecutionTime = now.minute() === 0 && now.second() < 5;
+  
+  let periodStart, periodEnd;
+  
+  if (lastExecutionHour === 0 && (currentHour < intervalHours || isExactExecutionTime)) {
+    // Primeira execução do dia ou meia-noite - pega o último intervalo do dia anterior
+    const yesterday = now.clone().subtract(1, 'day').startOf('day');
+    const lastIntervalYesterday = 24 - intervalHours;
+    periodStart = yesterday.clone().hour(lastIntervalYesterday);
+    periodEnd = yesterday.clone().endOf('day');
     
-    console.log('📅 [Cron Period] Calculando período de horas (dia anterior):', {
+    console.log('📅 [Cron Period] Calculando período de horas (último intervalo do dia anterior):', {
       agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
       intervaloHoras: intervalHours,
-      startDateUTC: startDate,
-      toDateUTC: toDate,
-      motivo: 'Primeira execução do dia'
+      periodStartLocal: periodStart.format('DD/MM/YYYY HH:mm:ss'),
+      periodEndLocal: periodEnd.format('DD/MM/YYYY HH:mm:ss'),
+      startDateUTC: periodStart.toISOString(),
+      toDateUTC: periodEnd.toISOString(),
+      motivo: 'Primeira execução do dia ou meia-noite'
     });
     
     return {
-      startDate,
-      toDate,
+      startDate: periodStart.toISOString(),
+      toDate: periodEnd.toISOString(),
       type: `hours_interval_${intervalHours}_previous_day`
     };
   }
   
-  const startDate = lastExecution.toISOString();
-  const toDate = now.toISOString();
+  // Buscar o intervalo anterior completo
+  if (isExactExecutionTime && lastExecutionHour >= intervalHours) {
+    // Estamos no momento exato da execução - pegar intervalo anterior
+    periodStart = startOfDay.clone().hour(lastExecutionHour - intervalHours);
+    periodEnd = startOfDay.clone().hour(lastExecutionHour).subtract(1, 'second');
+  } else if (lastExecutionHour > 0) {
+    // Durante o intervalo - pegar desde a última execução até agora
+    periodStart = startOfDay.clone().hour(lastExecutionHour);
+    periodEnd = now.clone();
+  } else {
+    // Caso padrão - do início da hora atual até agora
+    periodStart = now.clone().startOf('hour');
+    periodEnd = now.clone();
+  }
   
   console.log('📅 [Cron Period] Calculando período de horas:', {
     agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
     intervaloHoras: intervalHours,
-    ultimaExecucaoLocal: lastExecution.format('DD/MM/YYYY HH:mm:ss'),
-    startDateUTC: startDate,
-    toDateUTC: toDate
+    currentHour,
+    lastExecutionHour,
+    isExactExecutionTime,
+    periodStartLocal: periodStart.format('DD/MM/YYYY HH:mm:ss'),
+    periodEndLocal: periodEnd.format('DD/MM/YYYY HH:mm:ss'),
+    startDateUTC: periodStart.toISOString(),
+    toDateUTC: periodEnd.toISOString()
   });
   
   return {
-    startDate,
-    toDate,
+    startDate: periodStart.toISOString(),
+    toDate: periodEnd.toISOString(),
     type: `hours_interval_${intervalHours}`
   };
 }

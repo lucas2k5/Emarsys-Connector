@@ -90,11 +90,17 @@ app.use((req, res, next) => {
   unknownRouteAttempts.set(ip, entry);
 
   if (entry.count > UNKNOWN_MAX_ATTEMPTS) {
+    // Log de acesso bloqueado
+    logHelpers.logAccessAttempt(req, 429, true, entry.count);
+    
     return res.status(429).json({
       error: 'too_many_requests',
       message: 'Muitas tentativas em rotas inválidas. Tente novamente mais tarde.'
     });
   }
+
+  // Log de tentativa de acesso a rota inválida
+  logHelpers.logAccessAttempt(req, 404, false, entry.count);
 
   return res.status(404).json({ error: 'Route not found' });
 });
