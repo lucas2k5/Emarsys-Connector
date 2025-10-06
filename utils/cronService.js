@@ -95,8 +95,25 @@ class CronService {
       // Calcula o período com base em ORDERS_SYNC_CRON (ex.: a cada 2h)
       // e envia explicitamente startDate/toDate para a rota.
       const { calculatePeriodFromCron, calculateNextExecution } = require('./cronPeriodCalculator');
+      const moment = require('moment-timezone');
+      
+      console.log('📅 [CRON] Calculando período da extração...');
+      console.log(`   🕐 Horário atual (São Paulo): ${moment().tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss')}`);
+      console.log(`   🕐 Horário atual (UTC): ${moment().utc().format('DD/MM/YYYY HH:mm:ss')}`);
+      console.log(`   ⚙️ Expressão do cron: ${this.ordersSyncCron}`);
+      
       const period = calculatePeriodFromCron();
       const nextExecution = calculateNextExecution();
+      
+      if (period) {
+        const startSP = moment(period.startDate).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+        const endSP = moment(period.toDate).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+        console.log('📅 [CRON] Período calculado:');
+        console.log(`   🇧🇷 São Paulo: ${startSP} até ${endSP}`);
+        console.log(`   🌍 UTC: ${period.startDate} até ${period.toDate}`);
+        console.log(`   📝 Tipo: ${period.type}`);
+      }
+      
       logHelpers.logOrders('info', '🔗 [CRON] Período atual calculado', { period });
       logHelpers.logOrders('info', '🔗 [CRON] Próximo período calculado', { nextExecution });
       

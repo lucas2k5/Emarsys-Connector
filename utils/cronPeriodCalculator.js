@@ -94,6 +94,15 @@ function calculateMinutesInterval(now, intervalMinutes) {
   const startDate = lastExecution.toISOString();
   const toDate = now.toISOString();
   
+  // Log detalhado para debug
+  console.log('📅 [Cron Period] Calculando período de minutos:', {
+    agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
+    intervaloMinutos: intervalMinutes,
+    ultimaExecucaoLocal: lastExecution.format('DD/MM/YYYY HH:mm:ss'),
+    startDateUTC: startDate,
+    toDateUTC: toDate
+  });
+  
   return {
     startDate,
     toDate,
@@ -118,6 +127,14 @@ function calculateHoursInterval(now, intervalHours) {
     const startDate = yesterday.startOf('day').toISOString();
     const toDate = yesterday.endOf('day').toISOString();
     
+    console.log('📅 [Cron Period] Calculando período de horas (dia anterior):', {
+      agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
+      intervaloHoras: intervalHours,
+      startDateUTC: startDate,
+      toDateUTC: toDate,
+      motivo: 'Primeira execução do dia'
+    });
+    
     return {
       startDate,
       toDate,
@@ -127,6 +144,14 @@ function calculateHoursInterval(now, intervalHours) {
   
   const startDate = lastExecution.toISOString();
   const toDate = now.toISOString();
+  
+  console.log('📅 [Cron Period] Calculando período de horas:', {
+    agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
+    intervaloHoras: intervalHours,
+    ultimaExecucaoLocal: lastExecution.format('DD/MM/YYYY HH:mm:ss'),
+    startDateUTC: startDate,
+    toDateUTC: toDate
+  });
   
   return {
     startDate,

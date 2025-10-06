@@ -692,7 +692,6 @@ router.post('/orders-extract', async (req, res) => {
  * @param {string} endTime - Horário final brasileiro (HH:MM, opcional, padrão: 23:59)
  * @param {number} per_page - Número de pedidos por página (opcional, padrão: 100)
  * @param {boolean} batching - Usar processamento em lotes (opcional)
- * @param {number} daysPerBatch - Dias por lote quando batching=true (opcional, padrão: 7)
  * @desc Se nenhum parâmetro for fornecido, usa período baseado em ORDERS_SYNC_CRON
  * @example /orders-extract-all?brazilianDate=2025-09-03
  * @example /orders-extract-all?brazilianDate=2025-09-03&startTime=08:00&endTime=18:00
@@ -760,8 +759,7 @@ router.get('/orders-extract-all', async (req, res) => {
       startDate,
       toDate,
       perPage,
-      useBatching,
-      daysPerBatch
+      useBatching      
     });
 
     // Busca TODOS os pedidos do período usando getAllOrdersInPeriod
@@ -860,15 +858,10 @@ router.get('/orders-extract-all', async (req, res) => {
               // Buscar registro na EMS com filtros específicos (order, item, order_status)
             const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
               
-            if (emsRecord) {
-              if (emsRecord.isSync === false) {
+            if (emsRecord && emsRecord.isSync === false) {
                   console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
                   hookResults.alreadySynced++;
               } else {
-                  console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=true - pulando processamento (já sincronizado)`);
-                  hookResults.alreadySynced++;
-              }
-            } else {
                 // Registro não existe na EMS, pode processar
                 console.log(`🆕 Pedido ${orderId} não existe na EMS - processando...`);
                 
