@@ -97,12 +97,17 @@ class CronService {
       const { calculatePeriodFromCron, calculateNextExecution } = require('./cronPeriodCalculator');
       const period = calculatePeriodFromCron();
       const nextExecution = calculateNextExecution();
-
+      logHelpers.logOrders('info', '🔗 [CRON] Período atual calculado', { period });
+      logHelpers.logOrders('info', '🔗 [CRON] Próximo período calculado', { nextExecution });
+      
       const url = `${this.baseUrl}/api/integration/orders-extract-all`;
       const params = period
         ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 }
         : { per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 };
 
+      // Gerar log mostrando como ficará a URL final com os parâmetros
+      const urlComParametros = `${url}?${Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')}`;
+      console.log(`🔗 [CRON] URL de sincronização de orders: ${urlComParametros}`);
       logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON com batching ativo', {
         endpoint: url,
         params,
@@ -116,13 +121,12 @@ class CronService {
       try {
         const response = await axios.get(url, { params, timeout: this.ordersTimeout });
         
-        logHelpers.logOrders('info', '✅ Sincronização de orders concluída com sucesso', {
-          status: response.status,
-          statusText: response.statusText
-        });
-        
         // Log detalhado da resposta
         if (response.data && response.data.data) {
+          logHelpers.logOrders('info', '✅ Sincronização de orders concluída com sucesso', {
+            status: response.status,
+            statusText: response.statusText
+          });
           const data = response.data.data;
           logHelpers.logOrders('info', '📊 Resumo da sincronização de orders', {
             totalOrdersDetailed: data.totalOrdersDetailed,

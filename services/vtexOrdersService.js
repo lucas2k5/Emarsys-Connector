@@ -1813,13 +1813,9 @@ class VtexOrdersService {
 
     console.log(`📊 Gerando CSV com ${orders.length} pedidos...`);
     
-    // DEDUPLICAÇÃO: Remove duplicatas baseadas em order+item
     const uniqueOrders = new Map();
     
-    console.log('🔍 generateEmarsysCsvContent debug:', {
-      ordersLength: orders.length,
-      ordersSample: orders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
-    });
+    
     let duplicateCount = 0;
     
     for (const order of orders) {
@@ -2465,41 +2461,35 @@ class VtexOrdersService {
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
 
-      // 3.1 Opcional: Filtra apenas registros pendentes em emsOrdersV2 (isSync=false) antes de transformar/gerar CSV
-      try {
-        const emsOrdersService = require('./emsOrdersService');
-        const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
+      // // 3.1 Opcional: Filtra apenas registros pendentes em emsOrdersV2 (isSync=false) antes de transformar/gerar CSV
+      // try {
+      //   const emsOrdersService = require('./emsOrdersService');
+      //   const pending = await emsOrdersService.listEmsOrdersV2PendingSync();
 
-        if (Array.isArray(pending) && pending.length > 0) {
-          const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
-          const before = formattedOrders.length;
-          formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
-          console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
-          if (formattedOrders.length === 0) {
-            console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
-            return {
-              success: true,
-              totalOrders: orders.length,
-              transformedOrders: 0,
-              csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
-              emarsysSendResult: { success: false, message: 'Sem pendentes' },
-              duration: Date.now() - startTime,
-              timestamp: getBrazilianTimestamp()
-            };
-          }
-        } else {
-          console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
-        }
-      } catch (pendErr) {
-        console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
-      }
-
-      // 4. Transformar dados formatados para Emarsys
-      console.log('🔄 Transformando dados formatados para Emarsys...');
-      console.log('🔍 transformOrdersForEmarsys debug:', {
-        formattedOrdersLength: formattedOrders.length,
-        formattedOrdersSample: formattedOrders.slice(0, 2).map(o => ({ order: o.order, item: o.item, email: o.email }))
-      });
+      //   if (Array.isArray(pending) && pending.length > 0) {
+      //     const pendingKeys = new Set(pending.map(p => `${p.order}_${p.item}`));
+      //     const before = formattedOrders.length;
+      //     formattedOrders = formattedOrders.filter(o => pendingKeys.has(`${o.order || o.orderId}_${o.item || o.sku || o.productId}`));
+      //     console.log(`🔎 Filtrando por pendentes em emsOrdersV2: ${before} -> ${formattedOrders.length}`);
+      //     if (formattedOrders.length === 0) {
+      //       console.log('⏭️ Nenhum registro pendente para sincronizar. Encerrando sem gerar CSV.');
+      //       return {
+      //         success: true,
+      //         totalOrders: orders.length,
+      //         transformedOrders: 0,
+      //         csvResult: { success: true, skipped: true, reason: 'no_pending_in_emsOrdersV2' },
+      //         emarsysSendResult: { success: false, message: 'Sem pendentes' },
+      //         duration: Date.now() - startTime,
+      //         timestamp: getBrazilianTimestamp()
+      //       };
+      //     }
+      //   } else {
+      //     console.log('ℹ️ Nenhum pendente encontrado em emsOrdersV2. Manteremos todos os formatados.');
+      //   }
+      // } catch (pendErr) {
+      //   console.warn('⚠️ Erro ao filtrar por pendentes em emsOrdersV2, seguindo sem filtro:', pendErr.message);
+      // }
+     
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
       // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync será feito após envio
@@ -2541,7 +2531,7 @@ class VtexOrdersService {
 
       await this.saveSyncStats(finalStats);
       
-      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms - mica`);
+      console.log(`🎉 Sincronização de pedidos concluída em ${duration}ms`);
       console.log(`📊 Resumo final: ${orders.length} pedidos -> ${transformedOrders.emarsysData?.length || 0} transformados -> CSV: ${csvResult.success ? 'OK' : 'ERRO'} -> Emarsys: ${emarsysSendResult.success ? 'OK' : 'ERRO'}`);
       
       return {
