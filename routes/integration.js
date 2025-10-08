@@ -766,6 +766,57 @@ router.get('/orders-extract-all', async (req, res) => {
     const vtexOrdersService = new (require('../services/vtexOrdersService'))();
     
     try {
+      // VALIDAÇÃO DE LOTE DUPLICADO - Antes da ETAPA 1
+      console.log('🔍 VALIDAÇÃO: Verificando se lote já existe...');
+      
+      const fs = require('fs-extra');
+      const path = require('path');
+      const outputDir = path.join(__dirname, '..', 'exports');
+      
+      // Verifica se já existe algum arquivo CSV para este período
+      const files = await fs.readdir(outputDir);
+      const existingBatch = files.find(f => {
+        // Procura por arquivos que contenham a data/hora do início do período
+        // Exemplo: ems-sl-pcdly-2025-09-02T00-01-00-...
+        if (!f.startsWith('ems-sl-pcdly-') || !f.endsWith('.csv')) return false;
+        
+        // Extrai a data do arquivo e compara com o período solicitado
+        const startDateObj = new Date(startDate);
+        const year = startDateObj.getUTCFullYear();
+        const month = String(startDateObj.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(startDateObj.getUTCDate()).padStart(2, '0');
+        const hour = String(startDateObj.getUTCHours()).padStart(2, '0');
+        const minute = String(startDateObj.getUTCMinutes()).padStart(2, '0');
+        
+        const expectedStart = `${year}-${month}-${day}T${hour}-${minute}`;
+        return f.includes(expectedStart);
+      });
+      
+      if (existingBatch) {
+        console.log('⚠️ Lote já existe para este período:', existingBatch);
+        const stats = await fs.stat(path.join(outputDir, existingBatch));
+        return res.json({
+          success: false,
+          error: 'Lote já existe para este período',
+          message: 'Este período já foi processado. Não é possível executar novamente.',
+          existingBatch: {
+            filename: existingBatch,
+            createdAt: stats.birthtime,
+            size: stats.size
+          },
+          period: {
+            brazilianDate,
+            startTime,
+            endTime,
+            startUTC: startDate,
+            endUTC: toDate
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      console.log('✅ Lote não existe, prosseguindo com a busca...');
+      
       console.log('📦 ETAPA 1: Buscando pedidos por período...');
       console.log('📦 -------------OPN-EMS-SALES-SYNC[1]----------------------------');
       

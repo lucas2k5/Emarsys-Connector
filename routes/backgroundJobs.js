@@ -256,8 +256,12 @@ router.post('/orders-extract-all', async (req, res) => {
         // Processar pedidos (gerar CSV, enviar para Emarsys, etc.)
         let processingResult = null;
         if (ordersList.length > 0) {
-          const emsOrdersService = require('../services/emsOrdersService');
-          processingResult = await emsOrdersService.processOrdersForEmarsys(ordersList);
+          // Usa vtexOrdersService.syncOrders que já faz todo o fluxo completo
+          processingResult = await vtexOrdersService.syncOrders({
+            orders: ordersList,
+            dataInicial: finalStartDate,
+            dataFinal: finalToDate
+          });
         }
         
         // Atualizar status do job
@@ -268,9 +272,9 @@ router.post('/orders-extract-all', async (req, res) => {
           endTime: new Date().toISOString(),
           result: {
             totalOrders: ordersList.length,
-            ordersProcessed: processingResult?.processed || 0,
-            csvGenerated: processingResult?.csvGenerated || false,
-            emarsysSent: processingResult?.emarsysSent || false,
+            ordersProcessed: processingResult?.transformedOrders || 0,
+            csvGenerated: processingResult?.csvResult?.success || false,
+            emarsysSent: processingResult?.emarsysSendResult?.success || false,
             period: {
               startDate: finalStartDate,
               toDate: finalToDate,

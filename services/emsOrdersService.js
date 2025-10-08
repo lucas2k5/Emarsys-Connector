@@ -9,6 +9,20 @@ class EmsOrdersService {
     this.exportsDir = path.join(__dirname, '..', 'exports');
   }
 
+  /**
+   * Codifica caracteres especiais na query _where para funcionar corretamente com a API
+   * @param {string} whereClause - A cláusula where sem codificação
+   * @returns {string} A cláusula where codificada
+   */
+  encodeWhereClause(whereClause) {
+    return whereClause
+      .replace(/=/g, '%3D')  // Codifica o caractere '=' para '%3D'
+      .replace(/\(/g, '%28') // Codifica o caractere '(' para '%28'  
+      .replace(/\)/g, '%29') // Codifica o caractere ')' para '%29'
+      .replace(/\s+OR\s+/gi, '%20OR%20') // Codifica 'OR' com espaços
+      .replace(/\s+AND\s+/gi, '%20AND%20'); // Codifica 'AND' com espaços
+  }
+
   getVtexHeaders() {
     return {
       'Accept': 'application/vnd.vtex.ds.v10+json',
@@ -207,47 +221,40 @@ class EmsOrdersService {
   }
 
   /**
-   * Lista todos os pedidos da emsOrdersV2 (sem filtro de isSync)
-   * @returns {Array} Array de todos os pedidos
+   * Lista todos os pedidos da emsOrdersV2 com isSync=false
+   * @returns {Array} Array de pedidos pendentes
    */
   async listAllEmsOrdersV2() {
     try {
-      const url = `${this.vtexBaseUrl}/api/dataentities/${this.entity}/search`;
-      const perPage = 100;
-      let page = 1;
-      let fetched = 0;
-      let pages = 0;
-      const allOrders = [];
+      console.log('🔍 Buscando pedidos com isSync=false via API customizada...');
       
-      console.log('🔍 Buscando todos os pedidos via data entities com paginação...');
+      const url = `${this.vtexBaseUrl}/_v/orders/list`;
+      const params = {
+        _where: 'isSync%3Dfalse', // URL encoded: isSync=false (sem parênteses)
+        page: 1,
+        pageSize: 1000
+      };
       
-      while (true) {
-        const params = {
-          _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
-          _schema: this.entity,
-          _page: page,
-          _perPage: perPage,
-          _sort: 'timestamp ASC'
-        };
-        
-        const response = await axios.get(url, {
-          params,
-          headers: this.getVtexHeaders(),
-          timeout: 60000
-        });
-        const items = Array.isArray(response.data) ? response.data : [];
-        if (items.length > 0) allOrders.push(...items);
-        fetched += items.length;
-        pages += 1;
-        if (items.length < perPage) break;
-        page += 1;
-      }
+      const headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+        'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+      };
       
-      console.log(`✅ ${allOrders.length} pedidos encontrados (pages=${pages}, fetched=${fetched})`);
-      return allOrders;
+      const response = await axios.get(url, {
+        params,
+        headers,
+        timeout: 60000
+      });
+      
+      const orders = Array.isArray(response.data) ? response.data : [];
+      console.log(`✅ ${orders.length} pedidos com isSync=false encontrados`);
+      
+      return orders;
       
     } catch (error) {
-      console.error('❌ Erro ao buscar todos os pedidos via data entities:', error?.data || error.message);
+      console.error('❌ Erro ao buscar pedidos via API customizada:', error?.response?.data || error.message);
       return [];
     }
   }
