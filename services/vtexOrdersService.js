@@ -1657,7 +1657,7 @@ class VtexOrdersService {
             period: filename,
             data: periodDateTime, // Data/hora do período solicitado
             status: 'pending',
-            qtdy_items: lines.length, // Total de linhas no CSV (inclui header)
+            qtdy_items: lines.length - 1, // Total de linhas de dados (excluindo header)
             qtdy_orders: totalUniqueOrders // Total de pedidos únicos
           });
           console.log('📤 Resultado do envio para API externa:', externalLogResult);
