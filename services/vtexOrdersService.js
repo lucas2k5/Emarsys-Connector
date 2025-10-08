@@ -559,7 +559,10 @@ class VtexOrdersService {
       while (currentDate <= end) {
         const batchStart = new Date(currentDate);
         const batchEnd = new Date(currentDate);
-        batchEnd.setDate(batchEnd.getDate() + daysPerBatch - 1);
+        
+        // Calcula o fim do lote em milissegundos para suportar períodos < 1 dia
+        const batchDurationMs = daysPerBatch * 24 * 60 * 60 * 1000;
+        batchEnd.setTime(batchEnd.getTime() + batchDurationMs);
         
         // Garante que não ultrapasse a data final
         if (batchEnd > end) {
@@ -586,10 +589,10 @@ class VtexOrdersService {
           // Continua com o próximo lote mesmo se um falhar
         }
         
-        // Avança para o próximo lote
-        currentDate.setDate(currentDate.getDate() + daysPerBatch);
+        // Avança para o próximo lote (usando milissegundos para suportar períodos < 1 dia)
+        currentDate.setTime(currentDate.getTime() + batchDurationMs);
         
-        // Pausa entre lotes
+        // Pausa entre lotesp
         if (currentDate <= end) {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
@@ -2426,12 +2429,12 @@ class VtexOrdersService {
         console.error('❌ Erro ao buscar dados formatados:', formattedError?.response?.data || formattedError.message);
         console.log('🔄 Continuando com dados da VTEX OMS...');
       }
-
+      console.log('🔍 formattedOrders:', formattedOrders[0]);
       if (formattedOrders.length === 0) {
         console.warn('⚠️ Nenhum pedido formatado correspondente encontrado. Usando dados da VTEX OMS mapeados (restritos ao período).');
         formattedOrders = orders.map(order => ({
           order: order.orderId || order.id,
-          email: order.email,
+          email: order.clientProfileData?.email,
           item: order.items?.[0]?.id,
           price: order.items?.[0]?.price,
           quantity: order.items?.[0]?.quantity,
