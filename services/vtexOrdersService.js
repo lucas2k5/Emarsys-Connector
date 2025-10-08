@@ -1744,25 +1744,39 @@ class VtexOrdersService {
             try {
               console.log('📝 Marcando pedidos como sincronizados na emsOrdersV2...');
               
-              // Extrai IDs únicos dos pedidos que foram enviados no CSV
-              const uniqueOrderIds = [...new Set(ordersToProcess.map(order => order.order))];
-              console.log(`📊 Marcando ${uniqueOrderIds.length} pedidos únicos como sincronizados`);
+              // Cria lista de registros únicos baseados em order+item
+              const recordsMap = new Map();
+              ordersToProcess.forEach(order => {
+                const key = `${order.order}-${order.item}`;
+                recordsMap.set(key, {
+                  order: order.order,
+                  item: order.item
+                });
+              });
               
-              if (uniqueOrderIds.length > 0) {
+              const recordsList = Array.from(recordsMap.values());
+              console.log(`📊 Marcando ${recordsList.length} registros (order+item) como sincronizados`);
+              
+              if (recordsList.length > 0) {
                 const axios = require('axios');
                 
                 let syncedCount = 0;
                 let errorCount = 0;
                 
-                // Marca cada pedido como sincronizado usando o endpoint /_v/orders/{orderId}/sync
-                for (let i = 0; i < uniqueOrderIds.length; i++) {
-                  const orderId = uniqueOrderIds[i];
+                // Marca cada registro como sincronizado usando order + item
+                for (let i = 0; i < recordsList.length; i++) {
+                  const record = recordsList[i];
                   
                   try {
-                    const syncUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${orderId}/sync`;
+                    // Usa o endpoint que aceita order como parâmetro de path
+                    const syncUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${record.order}/sync`;
                     
+                    // Envia item no body para identificar o registro específico
                     await axios.patch(syncUrl, 
-                      { isSync: true },
+                      { 
+                        isSync: true,
+                        item: record.item
+                      },
                       {
                         headers: {
                           'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
@@ -1774,25 +1788,25 @@ class VtexOrdersService {
                     );
                     
                     syncedCount++;
-                    console.log(`✅ Pedido ${orderId} marcado como sincronizado (${i + 1}/${uniqueOrderIds.length})`);
+                    console.log(`✅ Registro ${record.order}-${record.item} marcado como sincronizado (${i + 1}/${recordsList.length})`);
                     
                   } catch (syncErr) {
                     errorCount++;
-                    console.error(`❌ Erro ao marcar pedido ${orderId}:`, syncErr.response?.data || syncErr.message);
+                    console.error(`❌ Erro ao marcar registro ${record.order}-${record.item}:`, syncErr.response?.data || syncErr.message);
                   }
                   
                   // Pausa entre requisições para não sobrecarregar
-                  if (i < uniqueOrderIds.length - 1) {
+                  if (i < recordsList.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 300));
                   }
                 }
                 
-                console.log(`✅ Sincronização concluída: ${syncedCount} sucesso, ${errorCount} erros de ${uniqueOrderIds.length} pedidos`);
+                console.log(`✅ Sincronização concluída: ${syncedCount} sucesso, ${errorCount} erros de ${recordsList.length} registros`);
                 
                 result.syncedOrders = syncedCount;
                 result.syncErrors = errorCount;
               } else {
-                console.log('ℹ️ Nenhum pedido para marcar como sincronizado');
+                console.log('ℹ️ Nenhum registro para marcar como sincronizado');
                 result.syncedOrders = 0;
                 result.syncErrors = 0;
               }
