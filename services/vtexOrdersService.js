@@ -2545,8 +2545,22 @@ class VtexOrdersService {
       
       try {
         const axios = require('axios');
+        
+        // Extrai os orderIds para filtrar apenas os pedidos do período
+        const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
+        console.log(`🔍 Buscando ${orderIds.length} pedidos formatados do emsOrdersV2...`);
+        
+        // Constrói a URL com filtro de orderIds para evitar buscar todos os pedidos
+        const orderIdsFilter = orderIds.map(id => `order%3D${id}`).join('%20OR%20');
+        const whereClause = orderIdsFilter ? `(${orderIdsFilter})` : '';
+        
         const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/list`;
         const response = await axios.get(formattedUrl, {
+          params: {
+            '_where': whereClause,
+            'page': 1,
+            'pageSize': Math.min(orderIds.length, 1000) // Limita ao tamanho necessário
+          },
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
@@ -2558,16 +2572,15 @@ class VtexOrdersService {
         
         console.log('📋 DEBUG - Estrutura da resposta:', {
           status: response?.status,
-          hasData: !!response?.data
+          hasData: !!response?.data,
+          dataLength: response?.data?.data?.length || 0
         });
         
         // O endpoint retorna {success: true, data: [...], pagination: {...}}
         if (response && response.data && response.data.success && Array.isArray(response.data.data)) {
           formattedData = response.data.data; // Armazena para uso no fallback
           
-          // Mapeia orderIds da VTEX OMS para comparar com os dados formatados
-          const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
-          console.log('🔍 OrderIds da VTEX OMS para filtro:', orderIds.slice(0, 5));
+          console.log('🔍 OrderIds buscados:', orderIds.slice(0, 5));
           
           // Debug: mostra os orderIds dos dados formatados
           const formattedOrderIds = formattedData.map(o => o.order || o.orderId).filter(Boolean);
@@ -2608,8 +2621,27 @@ class VtexOrdersService {
       }
       console.log('🔍 formattedOrders:', formattedOrders[0]);
       if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado correspondente encontrado. Usando dados da VTEX OMS mapeados (restritos ao período).');
-        formattedOrders = orders.map(order => ({
+        console.warn('⚠️ Nenhum pedido formatado correspondente encontrado no emsOrdersV2.');
+        console.warn('🔄 FALLBACK: Buscando detalhes completos dos pedidos da VTEX OMS para obter emails...');
+        
+        // Buscar detalhes completos de cada pedido para ter acesso ao email
+        const detailedOrders = [];
+        for (const order of orders) {
+          try {
+            const orderId = order.orderId || order.id;
+            console.log(`  📦 Buscando detalhes do pedido ${orderId}...`);
+            const detailedOrder = await this.getOrderById(orderId);
+            detailedOrders.push(detailedOrder);
+          } catch (error) {
+            console.error(`  ❌ Erro ao buscar pedido ${order.orderId || order.id}:`, error.message);
+            // Usa dados básicos se falhar
+            detailedOrders.push(order);
+          }
+        }
+        
+        console.log(`✅ Buscados ${detailedOrders.length} pedidos detalhados`);
+        
+        formattedOrders = detailedOrders.map(order => ({
           order: order.orderId || order.id,
           email: order.clientProfileData?.email,
           item: order.items?.[0]?.id,
@@ -2621,6 +2653,12 @@ class VtexOrdersService {
           s_sales_channel: 'ecommerce',
           s_discount: order.discount
         }));
+        
+        console.log('📊 Exemplo de pedido formatado via fallback:', {
+          order: formattedOrders[0]?.order,
+          hasEmail: !!formattedOrders[0]?.email,
+          email: formattedOrders[0]?.email
+        });
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
