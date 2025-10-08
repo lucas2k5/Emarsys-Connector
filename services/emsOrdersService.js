@@ -9,6 +9,20 @@ class EmsOrdersService {
     this.exportsDir = path.join(__dirname, '..', 'exports');
   }
 
+  /**
+   * Codifica caracteres especiais na query _where para funcionar corretamente com a API
+   * @param {string} whereClause - A cláusula where sem codificação
+   * @returns {string} A cláusula where codificada
+   */
+  encodeWhereClause(whereClause) {
+    return whereClause
+      .replace(/=/g, '%3D')  // Codifica o caractere '=' para '%3D'
+      .replace(/\(/g, '%28') // Codifica o caractere '(' para '%28'  
+      .replace(/\)/g, '%29') // Codifica o caractere ')' para '%29'
+      .replace(/\s+OR\s+/gi, '%20OR%20') // Codifica 'OR' com espaços
+      .replace(/\s+AND\s+/gi, '%20AND%20'); // Codifica 'AND' com espaços
+  }
+
   getVtexHeaders() {
     return {
       'Accept': 'application/vnd.vtex.ds.v10+json',
@@ -224,10 +238,10 @@ class EmsOrdersService {
       while (true) {
         const params = {
           _fields: 'id,order,item,quantity,timestamp,price,customer_email,isSync,order_status',
-          _schema: this.entity,
-          _page: page,
-          _perPage: perPage,
-          _sort: 'timestamp ASC'
+          _where: this.encodeWhereClause('(isSync=false)'), // Codifica caracteres especiais
+          _sort: 'timestamp ASC',
+          _from: (page - 1) * perPage,
+          _to: page * perPage - 1
         };
         
         const response = await axios.get(url, {

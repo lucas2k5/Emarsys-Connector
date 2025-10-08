@@ -769,7 +769,7 @@ class VtexOrdersService {
       const outputDir = await this.ensureOutputDirectory();
       const files = await fs.readdir(outputDir);
       const csvFiles = files
-        .filter(f => f.startsWith('emarsys-sales-piccadilly-') && f.endsWith('.csv'))
+        .filter(f => (f.startsWith('ems-sl-pcdly-') || f.startsWith('emarsys-sales-piccadilly-')) && f.endsWith('.csv'))
         .map(f => path.join(outputDir, f));
       
       
@@ -1422,7 +1422,8 @@ class VtexOrdersService {
       // Sanitiza o período para ser válido em nomes de arquivo
       const sanitizedPeriod = period.replace(/[<>:"/\\|?*]/g, '-');
       
-      const filename = options.filename || `emarsys-sales-piccadilly-${timestamp}-period-${sanitizedPeriod}.csv`;
+      // Formato resumido: ems-sl-pcdly-{data}-{periodo}.csv
+      const filename = options.filename || `ems-sl-pcdly-${timestamp}-${sanitizedPeriod}.csv`;
       
       // Adiciona extensão .csv se não tiver
       if (!filename.endsWith('.csv')) {
@@ -1609,6 +1610,11 @@ class VtexOrdersService {
       console.log(`🔍 Salvando arquivo CSV: ${filePath}`);
       console.log(`🔍 Tamanho do arquivo: ${csvWithBom.length} caracteres`);
       
+      // Declara variáveis no escopo mais amplo para uso posterior
+      let externalLogResult = null;
+      let currentBrazilianDate = null;
+      let totalUniqueOrders = 0;
+      
       try {
         await fs.writeFile(filePath, csvWithBom, 'utf8');
         console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
@@ -1625,13 +1631,34 @@ class VtexOrdersService {
         });
         
         // Envia dados para API externa de logs
+        
         try {
-          const externalLogResult = await this.sendToExternalLogApi({
+          // Extrai a data/hora do período a partir do filename
+          // Formato: ems-sl-pcdly-2025-09-02T00-01-00-00-01-05-00.csv
+          const filenameParts = filename.match(/ems-sl-pcdly-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/);
+          let periodDateTime;
+          
+          if (filenameParts && filenameParts[1]) {
+            // Converte o formato do filename (2025-09-02T00-01-00) para o formato da API (2025-09-02T00:01:00)
+            periodDateTime = filenameParts[1].replace(/-(\d{2})-(\d{2})$/, ':$1:$2').replace(/T(\d{2})-(\d{2})/, 'T$1:$2');
+          } else {
+            // Fallback para data atual se não conseguir extrair
+            const { getBrazilianTimestamp } = require('../utils/dateUtils');
+            periodDateTime = getBrazilianTimestamp();
+          }
+          
+          currentBrazilianDate = periodDateTime; // Data/hora do período sendo processado
+          
+          // Conta pedidos únicos (não itens)
+          const uniqueOrders = new Set(ordersToProcess.map(o => o.order));
+          totalUniqueOrders = uniqueOrders.size;
+          
+          externalLogResult = await this.sendToExternalLogApi({
             period: filename,
-            data: new Date().toISOString().split('T')[0], // Data atual no formato YYYY-MM-DD
+            data: periodDateTime, // Data/hora do período solicitado
             status: 'pending',
-            qtdy_items: lines.length,
-            qtdy_orders: ordersToProcess.length
+            qtdy_items: lines.length, // Total de linhas no CSV (inclui header)
+            qtdy_orders: totalUniqueOrders // Total de pedidos únicos
           });
           console.log('📤 Resultado do envio para API externa:', externalLogResult);
         } catch (externalLogError) {
@@ -1652,7 +1679,8 @@ class VtexOrdersService {
         fileSize: Buffer.byteLength(csvWithBom, 'utf8'),
         timestamp: getBrazilianTimestamp(),
         totalOrders: ordersToProcess.length,
-        originalOrders: orders.length
+        originalOrders: orders.length,
+        batchDocumentId: externalLogResult?.documentId || null
       };
 
       // Se autoSend estiver habilitado, envia o CSV e marca como sincronizado
@@ -1674,6 +1702,94 @@ class VtexOrdersService {
               console.log('✅ [DEBUG] Simulação de envio bem-sucedida, marcando pedidos como sincronizados...');
             } else {
               console.log('✅ CSV enviado com sucesso para Emarsys, marcando pedidos como sincronizados...');
+            }
+            
+            // Valida se o arquivo CSV realmente existe antes de atualizar o lote
+            const csvFileExists = await fs.access(filePath).then(() => true).catch(() => false);
+            console.log(`🔍 Validando existência do arquivo CSV: ${csvFileExists ? '✅ Existe' : '❌ Não existe'}`);
+            
+            if (!csvFileExists) {
+              console.error(`❌ ERRO CRÍTICO: Arquivo CSV não existe em: ${filePath}`);
+              result.batchStatusUpdated = false;
+              result.batchStatusError = 'Arquivo CSV não existe';
+              result.fileValidationFailed = true;
+            } else {
+              // Atualiza status do lote para 'done' (mesmo em modo DEBUG)
+              if (result.batchDocumentId && externalLogResult) {
+                try {
+                  console.log(`📝 Atualizando status do lote para 'done'...`);
+                  
+                  const updateResult = await this.updateBatchStatus(result.batchDocumentId, 'done');
+                  if (updateResult.success) {
+                    console.log(`✅ Status do lote atualizado com sucesso`);
+                    result.batchStatusUpdated = true;
+                  } else {
+                    console.warn(`⚠️ Falha ao atualizar status do lote: ${updateResult.error}`);
+                    result.batchStatusUpdated = false;
+                    result.batchStatusError = updateResult.error;
+                  }
+                } catch (updateError) {
+                  console.error(`❌ Erro ao atualizar status do lote:`, updateError.message);
+                  result.batchStatusUpdated = false;
+                  result.batchStatusError = updateError.message;
+                }
+              } else {
+                console.warn('⚠️ DocumentId do lote não disponível - pulando atualização de status');
+                result.batchStatusUpdated = false;
+                result.batchStatusError = 'DocumentId não disponível';
+              }
+            }
+            
+            // Marca pedidos como sincronizados na emsOrdersV2
+            try {
+              console.log('📝 Marcando pedidos como sincronizados na emsOrdersV2...');
+              
+              // Busca registros da emsOrdersV2 para os pedidos enviados
+              const emsOrdersService = require('./emsOrdersService');
+              const allPendingRecords = await emsOrdersService.listEmsOrdersV2PendingSync();
+              
+              // Filtra apenas os registros que correspondem aos pedidos enviados no CSV
+              const ordersMap = new Map();
+              ordersToProcess.forEach(order => {
+                const key = `${order.order}-${order.item}`;
+                ordersMap.set(key, order);
+              });
+              
+              const recordsToSync = allPendingRecords.filter(record => {
+                const key = `${record.order}-${record.item}`;
+                return ordersMap.has(key);
+              });
+              
+              console.log(`📊 Encontrados ${recordsToSync.length} registros para marcar como sincronizados de ${ordersToProcess.length} pedidos enviados`);
+              
+              if (recordsToSync.length > 0) {
+                // Usa o OrderSyncHelper para marcar como sincronizado
+                const OrderSyncHelper = require('../helpers/orderSyncHelper');
+                const vtexHeaders = {
+                  'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                  'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                };
+                const orderSyncHelper = new OrderSyncHelper(
+                  process.env.VTEX_BASE_URL,
+                  'emsOrdersV2',
+                  () => vtexHeaders
+                );
+                
+                const syncResult = await orderSyncHelper.markAsSynced(recordsToSync, vtexHeaders);
+                console.log(`✅ Pedidos marcados como sincronizados: ${syncResult.updated} sucesso, ${syncResult.errors} erros`);
+                
+                result.syncedOrders = syncResult.updated;
+                result.syncErrors = syncResult.errors;
+              } else {
+                console.log('ℹ️ Nenhum registro pendente encontrado para marcar como sincronizado');
+                result.syncedOrders = 0;
+                result.syncErrors = 0;
+              }
+            } catch (syncError) {
+              console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
+              result.syncError = syncError.message;
             }
             
             // Em modo DEBUG, não deleta o arquivo orders.json para facilitar análise
@@ -1705,11 +1821,35 @@ class VtexOrdersService {
             console.error('❌ Falha ao enviar CSV para Emarsys:', sendResult.error);
             result.emarsysSent = false;
             result.sendError = sendResult.error;
+            
+            // Atualiza status do lote para 'error' em caso de falha
+            // (não valida existência do arquivo pois o erro pode ser justamente a falta dele)
+            if (result.batchDocumentId && externalLogResult) {
+              try {
+                console.log(`📝 Atualizando status do lote para 'error'...`);
+                
+                await this.updateBatchStatus(result.batchDocumentId, 'error');
+              } catch (updateError) {
+                console.error(`❌ Erro ao atualizar status do lote:`, updateError.message);
+              }
+            }
           }
         } catch (sendError) {
           console.error('❌ Erro ao enviar CSV para Emarsys:', sendError.message);
           result.emarsysSent = false;
           result.sendError = sendError.message;
+          
+          // Atualiza status do lote para 'error' em caso de exceção
+          // (não valida existência do arquivo pois o erro pode ser justamente a falta dele)
+          if (result.batchDocumentId && externalLogResult) {
+            try {
+              console.log(`📝 Atualizando status do lote para 'error'...`);
+              
+              await this.updateBatchStatus(result.batchDocumentId, 'error');
+            } catch (updateError) {
+              console.error(`❌ Erro ao atualizar status do lote:`, updateError.message);
+            }
+          }
         }
       }
 
@@ -2526,6 +2666,80 @@ class VtexOrdersService {
   }
 
   /**
+   * Verifica se já existe um lote para o período especificado
+   * @param {string} period - Nome do período (ex: "emarsys-sales-piccadilly-2025-09-02T00-01-00-2025-09-02T05-00-00")
+   * @returns {Promise<Object>} Resultado da verificação { exists: boolean, batch: object|null }
+   */
+  async checkBatchExists(period) {
+    try {
+      const fs = require('fs-extra');
+      const path = require('path');
+      const axios = require('axios');
+      const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
+      
+      console.log(`🔍 Verificando se lote já existe: ${period}`);
+      
+      // Verifica localmente se o arquivo CSV já existe
+      const outputDir = await this.ensureOutputDirectory();
+      const expectedFilePath = path.join(outputDir, period);
+      
+      const fileExists = await fs.pathExists(expectedFilePath);
+      
+      if (fileExists) {
+        console.log(`✅ Lote já existe localmente: ${period}`);
+        const stats = await fs.stat(expectedFilePath);
+        return {
+          exists: true,
+          batch: {
+            period,
+            filePath: expectedFilePath,
+            createdAt: stats.birthtime,
+            size: stats.size
+          }
+        };
+      }
+      
+      // Se não existe localmente, verifica na API externa
+      try {
+        const vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
+        const url = `${vtexBaseUrl}/_v/order-batches/check`;
+        
+        const response = await axios.post(url, { period }, {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        });
+        
+        if (response.data?.exists) {
+          console.log(`✅ Lote já existe na API externa:`, response.data.batch);
+          return {
+            exists: true,
+            batch: response.data.batch
+          };
+        }
+      } catch (apiError) {
+        console.warn('⚠️ Erro ao verificar lote na API externa (continuando verificação local):', apiError.message);
+      }
+      
+      console.log(`✅ Lote não existe, pode prosseguir`);
+      return {
+        exists: false,
+        batch: null
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao verificar lote:', error.message);
+      // Em caso de erro, retorna como não existe para não bloquear o fluxo
+      return {
+        exists: false,
+        batch: null,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Envia dados para API externa de logs
    * @param {Object} data - Dados para enviar
    * @returns {Promise<Object>} Resultado do envio
@@ -2533,7 +2747,9 @@ class VtexOrdersService {
   async sendToExternalLogApi(data) {
     try {
       const axios = require('axios');
-      const url = 'https://ems--piccadilly.myvtex.com/_v/order-batches/create';
+      const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
+      const vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
+      const url = `${vtexBaseUrl}/_v/order-batches/create`;
       
       console.log('📤 Enviando dados para API externa de logs:', data);
       console.log('📤 URL da API:', url);
@@ -2561,7 +2777,8 @@ class VtexOrdersService {
       return {
         success: true,
         status: response.status,
-        data: response.data
+        data: response.data,
+        documentId: response.data?.data?.DocumentId || response.data?.DocumentId
       };
       
     } catch (error) {
@@ -2573,6 +2790,72 @@ class VtexOrdersService {
         type: 'external_log_error',
         error: error.message,
         data: data,
+        timestamp: getBrazilianTimestamp()
+      });
+      
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Atualiza o status do lote após envio para Emarsys
+   * @param {string} documentId - ID do documento do lote
+   * @param {string} status - Novo status ('done', 'error', etc.)
+   * @returns {Promise<Object>} Resultado da atualização
+   */
+  async updateBatchStatus(documentId, status = 'done') {
+    try {
+      const axios = require('axios');
+      const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
+      const vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
+      const url = `${vtexBaseUrl}/_v/order-batches/${documentId}/status`;
+      
+      // Payload simplificado conforme API espera
+      const updateData = {
+        status: status
+      };
+      
+      console.log(`📝 Atualizando status do lote ${documentId} para '${status}'...`);
+      console.log('📤 URL da API:', url);
+      console.log('📤 Payload:', updateData);
+      
+      const response = await axios.post(url, updateData, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      console.log(`✅ Status do lote ${documentId} atualizado com sucesso para '${status}'`);
+      
+      // Log local
+      const { ordersLogger } = require('../utils/logger');
+      ordersLogger.info('✅ Status do lote atualizado', {
+        type: 'batch_status_updated',
+        documentId: documentId,
+        status: status,
+        batchData: updateData,
+        timestamp: getBrazilianTimestamp()
+      });
+      
+      return {
+        success: true,
+        status: response.status,
+        data: response.data
+      };
+      
+    } catch (error) {
+      console.error(`❌ Erro ao atualizar status do lote ${documentId}:`, error.message);
+      
+      // Log do erro
+      const { ordersLogger } = require('../utils/logger');
+      ordersLogger.error('❌ Erro ao atualizar status do lote', {
+        type: 'batch_status_update_error',
+        documentId: documentId,
+        error: error.message,
         timestamp: getBrazilianTimestamp()
       });
       
