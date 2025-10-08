@@ -1743,70 +1743,84 @@ class VtexOrdersService {
             // Marca pedidos como sincronizados na emsOrdersV2
             try {
               console.log('📝 Marcando pedidos como sincronizados na emsOrdersV2...');
+              console.log(`📊 Total de ${ordersToProcess.length} itens no CSV para marcar como sincronizados`);
               
-              // Cria lista de registros únicos baseados em order+item
-              const recordsMap = new Map();
-              ordersToProcess.forEach(order => {
-                const key = `${order.order}-${order.item}`;
-                recordsMap.set(key, {
-                  order: order.order,
-                  item: order.item
-                });
-              });
-              
-              const recordsList = Array.from(recordsMap.values());
-              console.log(`📊 Marcando ${recordsList.length} registros (order+item) como sincronizados`);
-              
-              if (recordsList.length > 0) {
+              if (ordersToProcess.length > 0) {
                 const axios = require('axios');
                 
                 let syncedCount = 0;
                 let errorCount = 0;
+                let notFoundCount = 0;
                 
-                // Marca cada registro como sincronizado usando order + item
-                for (let i = 0; i < recordsList.length; i++) {
-                  const record = recordsList[i];
+                // Para cada item do CSV, busca o registro e atualiza
+                for (let i = 0; i < ordersToProcess.length; i++) {
+                  const csvItem = ordersToProcess[i];
                   
                   try {
-                    // Usa o endpoint que aceita order como parâmetro de path
-                    const syncUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${record.order}/sync`;
+                    // 1. Busca o registro existente usando order + item + order_status
+                    const filterUrl = `https://ems--piccadilly.myvtex.com/_v/orders/filter`;
+                    const filterParams = {
+                      order: csvItem.order,
+                      item: csvItem.item
+                    };
                     
-                    // Envia item no body para identificar o registro específico
-                    await axios.patch(syncUrl, 
-                      { 
-                        isSync: true,
-                        item: record.item
+                    const filterResponse = await axios.get(filterUrl, {
+                      params: filterParams,
+                      headers: {
+                        'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                        'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+                        'Accept': 'application/json'
                       },
-                      {
-                        headers: {
-                          'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-                          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
-                          'Content-Type': 'application/json'
-                        },
-                        timeout: 30000
-                      }
-                    );
+                      timeout: 30000
+                    });
                     
-                    syncedCount++;
-                    console.log(`✅ Registro ${record.order}-${record.item} marcado como sincronizado (${i + 1}/${recordsList.length})`);
+                    // 2. Se encontrou o registro, atualiza usando o ID
+                    if (filterResponse.data?.success && filterResponse.data?.data?.length > 0) {
+                      const existingRecord = filterResponse.data.data[0];
+                      const recordId = existingRecord.id;
+                      
+                      console.log(`🔍 Registro encontrado: ${csvItem.order}-${csvItem.item} (ID: ${recordId})`);
+                      
+                      // Atualiza usando o ID do registro
+                      const syncUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${recordId}/sync`;
+                      
+                      await axios.patch(syncUrl, 
+                        { isSync: true },
+                        {
+                          headers: {
+                            'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                            'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+                            'Content-Type': 'application/json'
+                          },
+                          timeout: 30000
+                        }
+                      );
+                      
+                      syncedCount++;
+                      console.log(`✅ Registro ${recordId} (${csvItem.order}-${csvItem.item}) marcado como sincronizado (${i + 1}/${ordersToProcess.length})`);
+                    } else {
+                      notFoundCount++;
+                      console.warn(`⚠️ Registro não encontrado: ${csvItem.order}-${csvItem.item}`);
+                    }
                     
                   } catch (syncErr) {
                     errorCount++;
-                    console.error(`❌ Erro ao marcar registro ${record.order}-${record.item}:`, syncErr.response?.data || syncErr.message);
+                    console.error(`❌ Erro ao processar ${csvItem.order}-${csvItem.item}:`, syncErr.response?.data || syncErr.message);
                   }
                   
                   // Pausa entre requisições para não sobrecarregar
-                  if (i < recordsList.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                  if (i < ordersToProcess.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
                   }
                 }
                 
-                console.log(`✅ Sincronização concluída: ${syncedCount} sucesso, ${errorCount} erros de ${recordsList.length} registros`);
+                console.log(`✅ Sincronização concluída: ${syncedCount} atualizados, ${notFoundCount} não encontrados, ${errorCount} erros de ${ordersToProcess.length} itens`);
                 
                 result.syncedOrders = syncedCount;
                 result.syncErrors = errorCount;
+                result.syncNotFound = notFoundCount;
               } else {
-                console.log('ℹ️ Nenhum registro para marcar como sincronizado');
+                console.log('ℹ️ Nenhum item no CSV para marcar como sincronizado');
                 result.syncedOrders = 0;
                 result.syncErrors = 0;
               }
