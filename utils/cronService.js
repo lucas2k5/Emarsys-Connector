@@ -84,6 +84,7 @@ class CronService {
 
   /**
    * Configura o cron para sincronização de orders usando o fluxo orders-extract-all (dia anterior)
+   * Usa a rota de background job para evitar timeout de 504
    */
   setupOrdersSync() {
     // Cron expression configurável via variável de ambiente
@@ -121,56 +122,57 @@ class CronService {
       logHelpers.logOrders('info', '🔗 [CRON] Período atual calculado', { period });
       logHelpers.logOrders('info', '🔗 [CRON] Próximo período calculado', { nextExecution });
       
-      const url = `${this.baseUrl}/api/integration/orders-extract-all`;
-      const params = period
-        ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 }
-        : { per_page: 50, batching: 'true', daysPerBatch: 1, maxOrders: 100 };
+      // MUDANÇA: Usar rota de background job ao invés da rota síncrona para evitar timeout 504
+      const url = `${this.baseUrl}/api/background/orders-extract-all`;
+      const payload = period
+        ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 }
+        : { per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 };
 
-      // Gerar log mostrando como ficará a URL final com os parâmetros
-      const urlComParametros = `${url}?${Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')}`;
-      console.log(`🔗 [CRON] URL de sincronização de orders: ${urlComParametros}`);
-      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON com batching ativo', {
+      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON (background job)', {
         endpoint: url,
-        params,
+        payload,
         cronExpression: this.ordersSyncCron,
-        timeout: this.ordersTimeout,
+        mode: 'background-job',
         batchingEnabled: true,
         daysPerBatch: 1,
         maxOrders: 100
       });
       
       try {
-        const response = await axios.get(url, { params, timeout: this.ordersTimeout });
+        // POST para rota de background job (responde imediatamente com jobId)
+        const response = await axios.post(url, payload, { 
+          timeout: 10000, // timeout curto pois a rota responde imediatamente
+          headers: { 'Content-Type': 'application/json' }
+        });
         
-        // Log detalhado da resposta
-        if (response.data && response.data.data) {
-          logHelpers.logOrders('info', '✅ Sincronização de orders concluída com sucesso', {
-            status: response.status,
-            statusText: response.statusText
+        if (response.data && response.data.success) {
+          const jobId = response.data.jobId;
+          logHelpers.logOrders('info', '✅ Job de sincronização de orders criado com sucesso', {
+            jobId,
+            checkStatusUrl: response.data.checkStatus,
+            status: response.status
           });
-          const data = response.data.data;
-          logHelpers.logOrders('info', '📊 Resumo da sincronização de orders', {
-            totalOrdersDetailed: data.totalOrdersDetailed,
-            period: data.period,
-            perPage: data.perPage,
-            useBatching: data.useBatching,
-            syncSuccess: data.summary?.syncSuccess
-          });
-        }
-        
-        // Exibir previsão da próxima execução
-        if (nextExecution) {
-          logHelpers.logOrders('info', '⏰ Previsão da próxima extração', {
-            nextExecution: nextExecution.nextExecution,
-            description: nextExecution.description,
-            timeUntilNext: `${Math.floor(nextExecution.timeUntilNext / 60)}h ${nextExecution.timeUntilNext % 60}min`,
-            interval: nextExecution.interval,
-            cronExpression: this.ordersSyncCron
-          });
-        } else {
-          logHelpers.logOrders('warn', '⚠️ Não foi possível calcular a previsão da próxima execução', {
-            cronExpression: this.ordersSyncCron
-          });
+          
+          console.log(`✅ [CRON] Job criado: ${jobId}`);
+          console.log(`   📊 Acompanhe em: ${this.baseUrl}${response.data.checkStatus}`);
+          
+          // Exibir previsão da próxima execução
+          if (nextExecution) {
+            const nextDate = moment(nextExecution.nextExecution).tz('America/Sao_Paulo');
+            const nextDateFormatted = nextDate.format('DD/MM/YYYY [às] HH:mm:ss');
+            
+            console.log(`⏰ [CRON] O próximo cron de pedidos será executado dia ${nextDateFormatted}`);
+            
+            logHelpers.logOrders('info', '⏰ Previsão da próxima extração', {
+              nextExecution: nextExecution.nextExecution,
+              nextExecutionFormatted: nextDateFormatted,
+              description: nextExecution.description,
+              timeUntilNext: `${Math.floor(nextExecution.timeUntilNext / 60)}h ${nextExecution.timeUntilNext % 60}min`,
+              interval: nextExecution.interval,
+              cronExpression: this.ordersSyncCron,
+              nextExecution: `Próxima execução em ${nextDateFormatted}`
+            });
+          }
         }
         
         // Resetar contador de crashes em caso de sucesso
@@ -181,9 +183,10 @@ class CronService {
         logHelpers.logOrdersError(error, {
           serviceName,
           endpoint: url,
-          params,
-          timeout: this.ordersTimeout,
-          cronExpression: this.ordersSyncCron
+          payload,
+          timeout: 10000,
+          cronExpression: this.ordersSyncCron,
+          mode: 'background-job'
         });
         
         // Registrar crash para proteção
@@ -192,7 +195,7 @@ class CronService {
     }, null, true, this.cronTimezone);
 
     this.jobs.set('orders-sync', job);
-    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone})`);
+    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job]`);
   }
 
   /**
