@@ -1,6 +1,6 @@
 {
   "name": "emarsys-server",
-  "version": "1.10.0",
+  "version": "1.12.0",
   "description": "Servidor Express para integração com Emarsys",
   "main": "server.js",
   "scripts": {
@@ -21,7 +21,8 @@
     "clear-logs": "node scripts/clear-logs.js",
     "dashboards": "echo 'Dashboards disponíveis: http://localhost:3000/api/metrics/dashboard | http://localhost:3000/api/alerts/dashboard'",
     "monitoring:setup": "mkdir -p logs data && echo 'Sistema de monitoramento configurado!'",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "deploy": "node scripts/deploy.js"
   },
   "keywords": [
     "emarsys",
