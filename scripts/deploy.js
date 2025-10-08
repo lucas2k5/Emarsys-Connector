@@ -4,6 +4,7 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const os = require('os');
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -12,6 +13,7 @@ const rl = readline.createInterface({
 
 const packagePath = path.join(__dirname, '..', 'package.json');
 const changelogPath = path.join(__dirname, '..', 'CHANGELOG.md');
+const releasesPath = path.join(__dirname, '..', 'docs', 'releases.md');
 
 // Função para fazer perguntas
 function question(query) {
@@ -43,6 +45,32 @@ function execGit(command) {
     console.error(error.message);
     throw error;
   }
+}
+
+// Função para obter IP local
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // Pular endereços internos e não-ipv4
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'N/A';
+}
+
+// Função para obter informações da máquina
+function getMachineInfo() {
+  return {
+    hostname: os.hostname(),
+    username: os.userInfo().username,
+    platform: os.platform(),
+    arch: os.arch(),
+    ip: getLocalIP(),
+    nodeVersion: process.version
+  };
 }
 
 async function main() {
@@ -160,6 +188,77 @@ async function main() {
       console.log(`✓ Commit realizado: "bump version ${newVersion}"`);
       
       console.log('\n✅ Deploy preparado com sucesso!');
+      
+      // 8. Atualizar releases.md
+      console.log('\n📋 Atualizando documentação de releases...');
+      
+      const machineInfo = getMachineInfo();
+      const releaseDate = new Date();
+      const dateTimeStr = releaseDate.toLocaleString('pt-BR', { 
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+      
+      // Criar diretório docs se não existir
+      const docsDir = path.join(__dirname, '..', 'docs');
+      if (!fs.existsSync(docsDir)) {
+        fs.mkdirSync(docsDir, { recursive: true });
+      }
+      
+      let releasesContent = '';
+      if (fs.existsSync(releasesPath)) {
+        releasesContent = fs.readFileSync(releasesPath, 'utf-8');
+      } else {
+        releasesContent = '# Releases\n\nHistórico de todas as releases do projeto.\n\n---\n\n';
+      }
+      
+      const releaseEntry = `## Versão ${newVersion}\n\n` +
+        `**📅 Data e Hora:** ${dateTimeStr}\n\n` +
+        `**🔧 Mudanças:**\n${changes.map(c => `- ${c}`).join('\n')}\n\n` +
+        `**💻 Informações da Máquina:**\n` +
+        `- **Hostname:** ${machineInfo.hostname}\n` +
+        `- **Usuário:** ${machineInfo.username}\n` +
+        `- **IP:** ${machineInfo.ip}\n` +
+        `- **Sistema Operacional:** ${machineInfo.platform} (${machineInfo.arch})\n` +
+        `- **Node.js:** ${machineInfo.nodeVersion}\n\n` +
+        `---\n\n`;
+      
+      // Inserir após o cabeçalho
+      const releaseLines = releasesContent.split('\n');
+      let releaseInsertIndex = 0;
+      
+      for (let i = 0; i < releaseLines.length; i++) {
+        if (releaseLines[i].startsWith('## Versão')) {
+          releaseInsertIndex = i;
+          break;
+        }
+        if (releaseLines[i] === '---') {
+          releaseInsertIndex = i + 1;
+          break;
+        }
+      }
+      
+      if (releaseInsertIndex === 0) {
+        releaseInsertIndex = releaseLines.length;
+      }
+      
+      releaseLines.splice(releaseInsertIndex, 0, releaseEntry);
+      fs.writeFileSync(releasesPath, releaseLines.join('\n'));
+      
+      // Adicionar releases.md ao commit
+      try {
+        execGit('git add docs/releases.md');
+        execGit(`git commit --amend --no-edit`);
+        console.log('✓ Documentação de releases atualizada e incluída no commit');
+      } catch (error) {
+        console.warn('⚠️  Aviso: Não foi possível adicionar releases.md ao commit');
+      }
+      
       console.log(`\n📋 Próximos passos:`);
       console.log(`   1. Revise as mudanças: git show`);
       console.log(`   2. Envie para o repositório: git push origin ${branchName}`);
