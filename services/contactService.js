@@ -1757,12 +1757,30 @@ class ContactService {
 
   /**
    * Obtém o telefone correto do registro (phone ou homePhone como fallback)
+   * e normaliza adicionando +55 se necessário
    * @param {Object} record - Registro da CL
-   * @returns {string} Telefone ou string vazia
+   * @returns {string} Telefone normalizado ou string vazia
    */
   getPhoneNumber(record) {
     // Prioriza o campo 'phone', se não tiver, usa 'homePhone'
-    return record.phone || record.homePhone || '';
+    const phone = record.phone || record.homePhone || '';
+    return this.normalizarTelefone(phone);
+  }
+
+  /**
+   * Normaliza telefone brasileiro adicionando +55 se necessário
+   * @param {string} phone - Número de telefone
+   * @returns {string} - Número com +55 no início
+   */
+  normalizarTelefone(phone) {
+    if (!phone) return '';
+    
+    const limpo = phone.trim().replace(/[^\d+]/g, '');
+    
+    if (limpo.startsWith('+55')) return limpo;
+    if (limpo.startsWith('55')) return '+' + limpo;
+    
+    return '+55' + limpo;
   }
 
   /**
@@ -1805,12 +1823,15 @@ class ContactService {
   /**
    * Remove todos os caracteres que não são dígitos.
    * Usado para normalizar o campo external_id (CPF/CNPJ) no CSV.
+   * Remove pontos, traços e espaços da formatação.
    * @param {string|number} value
    * @returns {string}
    */
   onlyDigits(value) {
     if (value === null || value === undefined) return '';
-    return String(value).replace(/\D+/g, '');
+    if (typeof value !== 'string') value = String(value);
+    // Remove pontos, traços e espaços (formatação de CPF/CNPJ)
+    return value.replace(/[.\-\s]/g, '');
   }
 
   /**
