@@ -94,7 +94,10 @@ class EmsClientsService {
         homePhone: rec.homePhone || rec.phone || '',
         city: rec.city || '',
         state: rec.state || '',
-        optin: typeof rec.optin === 'boolean' ? rec.optin : (rec.optIn || false),
+        optin: (rec.optin === true || rec.optin === 1 || rec.optin === "1" || 
+                rec.optIn === true || rec.optIn === 1 || rec.optIn === "1" ||
+                (typeof rec.optin === 'string' && rec.optin.toLowerCase() === 'true') ||
+                (typeof rec.optIn === 'string' && rec.optIn.toLowerCase() === 'true')) ? "1" : "2",
         isSync: false
       };
       if (!body.email) continue;
