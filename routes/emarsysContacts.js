@@ -938,7 +938,10 @@ router.post('/create-single', async (req, res) => {
     
     // Define opt-in se informado (campo 31). Emarsys espera 1=True e 2=False
     if (typeof optin !== 'undefined') {
-      contact['31'] = optin ? "1" : "2";
+      // Normaliza optin para booleano (trata strings "false", "0", etc)
+      const normalizedOptin = optin === true || optin === 1 || optin === "1" || 
+                              (typeof optin === 'string' && optin.toLowerCase() === 'true');
+      contact['31'] = normalizedOptin ? "1" : "2";
     }
     
     // Adiciona cidade se fornecida
@@ -1024,7 +1027,9 @@ router.post('/create-single', async (req, res) => {
             mobile: mobile || '',
             birth_date: normalizeBirthDate(birth_date) || '',
             gender: typeof gender !== 'undefined' ? gender : null,
-            optin: typeof optin !== 'undefined' ? (optin ? "1" : "2") : "1",
+            optin: typeof optin !== 'undefined' ? 
+              ((optin === true || optin === 1 || optin === "1" || 
+                (typeof optin === 'string' && optin.toLowerCase() === 'true')) ? "1" : "2") : "1",
             city: city || '',
             state: state || '',
             zip_code: zip_code || '',
