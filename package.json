@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=3072 server.js",
     "dev": "nodemon --expose-gc --max-old-space-size=3072 server.js",
-    "prod": "npm install && pm2 start ecosystem.config.js --env production",
+    "prod": "npm install && pm2 stop emarsys-server && pm2 start ecosystem.config.js --env production || npm install && pm2 start ecosystem.config.js --env production",
     "prod:dev": "npm install && pm2 start ecosystem.config.js --env development",
     "prod:stop": "pm2 stop emarsys-server",
     "prod:restart": "npm install && pm2 restart emarsys-server",
