@@ -18,6 +18,26 @@ function normalizeBirthDate(input) {
   return null;
 }
 
+// Remove formatação de documentos (CPF, CNPJ, etc)
+function cleanDocument(document) {
+  if (!document || typeof document !== 'string') {
+    return '';
+  }
+  return document.replace(/[.\-\s]/g, '');
+}
+
+// Normaliza telefone brasileiro adicionando +55 se necessário
+function normalizarTelefone(phone) {
+  if (!phone) return '';
+  
+  const limpo = phone.trim().replace(/[^\d+]/g, '');
+  
+  if (limpo.startsWith('+55')) return limpo;
+  if (limpo.startsWith('55')) return '+' + limpo;
+  
+  return '+55' + limpo;
+}
+
 /**
  * @route GET /api/emarsys/contacts/files
  * @desc Lista todos os arquivos CSV de contatos disponíveis
@@ -703,6 +723,7 @@ router.post('/create-single-from-ad', async (req, res) => {
       city: city || '',
       state: state || '',
       country: "24",
+      document: clRecord.document || '',
       zip_code: zip_code || ''
     };
 
@@ -718,6 +739,10 @@ router.post('/create-single-from-ad', async (req, res) => {
     if (forwardBody.state) contact['12'] = forwardBody.state;
     if (forwardBody.zip_code) contact['13'] = forwardBody.zip_code;
     if (forwardBody.country) contact['14'] = forwardBody.country;
+    if (forwardBody.document) {
+      const cleanedDoc = cleanDocument(forwardBody.document);
+      if (cleanedDoc) contact['43'] = cleanedDoc;
+    }
 
     const result = await emarsysImportService.createContact(contact);
 
@@ -803,6 +828,9 @@ router.post('/create-single', async (req, res) => {
         if (clone.zip_code) {
           clone.zip_code = String(clone.zip_code).replace(/\d(?=\d{2})/g, '*');
         }
+        if (clone.document) {
+          clone.document = String(clone.document).replace(/\d(?=\d{2})/g, '*');
+        }
         return clone;
       };
       const maskedBody = mask(req.body);
@@ -824,7 +852,7 @@ router.post('/create-single', async (req, res) => {
       console.warn('⚠️ Falha ao logar auditoria da requisição:', e.message);
     }
     
-    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country } = req.body;
+    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country, document } = req.body;
 
     // X-Request-Id para correlação
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -867,11 +895,17 @@ router.post('/create-single', async (req, res) => {
     
     // Adiciona telefone fixo se fornecido
     if (phone) {
-      contact['15'] = phone; // Campo 15 = Telefone (phone)
+      const normalizedPhone = normalizarTelefone(phone);
+      if (normalizedPhone) {
+        contact['15'] = normalizedPhone; // Campo 15 = Telefone (phone)
+      }
     }
     // Adiciona celular se fornecido
     if (mobile) {
-      contact['37'] = mobile; // Campo 37 = Mobile (celular)
+      const normalizedMobile = normalizarTelefone(mobile);
+      if (normalizedMobile) {
+        contact['37'] = normalizedMobile; // Campo 37 = Mobile (celular)
+      }
     }
     
     // Adiciona data de nascimento se fornecida
@@ -933,6 +967,14 @@ router.post('/create-single', async (req, res) => {
       }
     }
     
+    // Adiciona documento (CPF/CNPJ) se fornecido
+    if (document) {
+      const cleanedDoc = cleanDocument(document);
+      if (cleanedDoc) {
+        contact['43'] = cleanedDoc; // Campo 43 = Documento (CPF/CNPJ)
+      }
+    }
+    
     try {
       const { logger } = require('../utils/logger');
       logger.info('Dados do contato preparados (masked)', {
@@ -943,6 +985,7 @@ router.post('/create-single', async (req, res) => {
           '37': contact['37'] ? String(contact['37']).replace(/\d(?=\d{2})/g, '*') : undefined,
           '4': contact['4'] ? '****-**-**' : undefined,
           '13': contact['13'] ? String(contact['13']).replace(/\d(?=\d{2})/g, '*') : undefined,
+          '43': contact['43'] ? String(contact['43']).replace(/\d(?=\d{2})/g, '*') : undefined,
         }
       });
     } catch (_) {}
@@ -986,6 +1029,7 @@ router.post('/create-single', async (req, res) => {
             state: state || '',
             zip_code: zip_code || '',
             country: "24",
+            document: document || '',
           },
           emarsysResponse: result.data
         },
