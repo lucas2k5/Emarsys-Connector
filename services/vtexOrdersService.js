@@ -2538,10 +2538,9 @@ class VtexOrdersService {
         throw new Error(`Falha ao salvar pedidos: ${saveResult.error}`);
       }
       
-      // 3. Buscar dados formatados do endpoint /_v/orders/list
+      // 3. Buscar dados formatados do endpoint /_v/orders/filter
       console.log('🔄 Buscando dados formatados do emsOrdersV2');
       let formattedOrders = [];
-      let formattedData = null; // Armazena os dados formatados para uso no fallback
       
       try {
         const axios = require('axios');
@@ -2550,74 +2549,63 @@ class VtexOrdersService {
         const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
         console.log(`🔍 Buscando ${orderIds.length} pedidos formatados do emsOrdersV2...`);
         
-        // Constrói a URL com filtro de orderIds para evitar buscar todos os pedidos
-        const orderIdsFilter = orderIds.map(id => `order%3D${id}`).join('%20OR%20');
-        const whereClause = orderIdsFilter ? `(${orderIdsFilter})` : '';
+        // Busca pedidos em lotes usando o endpoint /_v/orders/filter
+        const BATCH_SIZE = 50; // Busca em lotes de 50 para não sobrecarregar
+        const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/filter`;
         
-        const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/list`;
-        const response = await axios.get(formattedUrl, {
-          params: {
-            '_where': whereClause,
-            'page': 1,
-            'pageSize': Math.min(orderIds.length, 1000) // Limita ao tamanho necessário
-          },
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-            'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
-          },
-          timeout: 30000
-        });
-        
-        console.log('📋 DEBUG - Estrutura da resposta:', {
-          status: response?.status,
-          hasData: !!response?.data,
-          dataLength: response?.data?.data?.length || 0
-        });
-        
-        // O endpoint retorna {success: true, data: [...], pagination: {...}}
-        if (response && response.data && response.data.success && Array.isArray(response.data.data)) {
-          formattedData = response.data.data; // Armazena para uso no fallback
+        for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
+          const batchIds = orderIds.slice(i, i + BATCH_SIZE);
+          console.log(`📦 Buscando lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(orderIds.length / BATCH_SIZE)} (${batchIds.length} pedidos)...`);
           
-          console.log('🔍 OrderIds buscados:', orderIds.slice(0, 5));
-          
-          // Debug: mostra os orderIds dos dados formatados
-          const formattedOrderIds = formattedData.map(o => o.order || o.orderId).filter(Boolean);
-          console.log('🔍 OrderIds dos dados formatados:', formattedOrderIds.slice(0, 5));
-          
-          // Verifica se há correspondência
-          const matchingIds = orderIds.filter(id => formattedOrderIds.includes(id));
-          console.log('🔍 OrderIds que coincidem:', matchingIds.slice(0, 5));
-          
-          // Filtra os dados formatados que correspondem aos pedidos da VTEX OMS
-          formattedOrders = formattedData.filter(o => orderIds.includes(o.order || o.orderId));
-          
-          // Filtro adicional: verifica se o pedido está no período especificado
-          if (options.dataInicial && options.dataFinal) {
-            const startDate = new Date(options.dataInicial);
-            const endDate = new Date(options.dataFinal);
+          // Busca cada pedido do lote
+          for (const orderId of batchIds) {
+            try {
+              const response = await axios.get(formattedUrl, {
+                params: {
+                  order: orderId
+                },
+                headers: {
+                  'Accept': 'application/json',
+                  'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                  'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+                },
+                timeout: 30000
+              });
+              
+              // O endpoint retorna {success: true, data: [...]}
+              if (response?.data?.success && Array.isArray(response.data.data)) {
+                // Adiciona todos os itens do pedido (pode ter múltiplos itens por pedido)
+                formattedOrders.push(...response.data.data);
+              }
+            } catch (orderError) {
+              console.warn(`⚠️ Erro ao buscar pedido ${orderId}:`, orderError.message);
+              // Continua com os próximos pedidos
+            }
             
-            const beforeFilter = formattedOrders.length;
-            formattedOrders = formattedOrders.filter(o => {
-              const orderDate = new Date(o.timestamp || o.creationDate || o.date);
-              return orderDate >= startDate && orderDate <= endDate;
-            });
-            
-            console.log(`🔍 Filtro por período: ${beforeFilter} -> ${formattedOrders.length} pedidos`);
+            // Pequena pausa entre requisições para não sobrecarregar
+            await new Promise(resolve => setTimeout(resolve, 100));
           }
-          
-        } else {
-          console.warn('⚠️ Resposta inesperada do endpoint /_v/orders/list:', response?.data?.data?.length || 'sem data');
-          console.log('📋 Resposta completa para debug:', {
-            status: response?.status,
-            headers: response?.headers,
-            data: response?.data
-          });
         }
+        
+        console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length} pedidos do emsOrdersV2`);
+        
+        // Filtro adicional: verifica se o pedido está no período especificado
+        if (options.dataInicial && options.dataFinal && formattedOrders.length > 0) {
+          const startDate = new Date(options.dataInicial);
+          const endDate = new Date(options.dataFinal);
+          
+          const beforeFilter = formattedOrders.length;
+          formattedOrders = formattedOrders.filter(o => {
+            const orderDate = new Date(o.timestamp || o.creationDate || o.date);
+            return orderDate >= startDate && orderDate <= endDate;
+          });
+          
+          console.log(`🔍 Filtro por período: ${beforeFilter} -> ${formattedOrders.length} itens`);
+        }
+        
       } catch (formattedError) {
         console.error('❌ Erro ao buscar dados formatados:', formattedError?.response?.data || formattedError.message);
-        console.log('🔄 Continuando com dados da VTEX OMS...');
+        console.log('🔄 Continuando com fallback para buscar dados da VTEX OMS...');
       }
       console.log('🔍 formattedOrders:', formattedOrders[0]);
       if (formattedOrders.length === 0) {
@@ -2632,6 +2620,9 @@ class VtexOrdersService {
             console.log(`  📦 Buscando detalhes do pedido ${orderId}...`);
             const detailedOrder = await this.getOrderById(orderId);
             detailedOrders.push(detailedOrder);
+            
+            // Pausa entre requisições
+            await new Promise(resolve => setTimeout(resolve, 200));
           } catch (error) {
             console.error(`  ❌ Erro ao buscar pedido ${order.orderId || order.id}:`, error.message);
             // Usa dados básicos se falhar
@@ -2641,24 +2632,42 @@ class VtexOrdersService {
         
         console.log(`✅ Buscados ${detailedOrders.length} pedidos detalhados`);
         
-        formattedOrders = detailedOrders.map(order => ({
-          order: order.orderId || order.id,
-          email: order.clientProfileData?.email,
-          item: order.items?.[0]?.id,
-          price: order.items?.[0]?.price,
-          quantity: order.items?.[0]?.quantity,
-          timestamp: order.creationDate,
-          s_channel_source: 'web',
-          s_store_id: 'piccadilly',
-          s_sales_channel: 'ecommerce',
-          s_discount: order.discount
-        }));
+        // Processa cada pedido e seus itens (um pedido pode ter múltiplos itens)
+        formattedOrders = [];
+        for (const order of detailedOrders) {
+          const orderId = order.orderId;
+          const email = order?.email;
+          const timestamp = order.creationDate;
+          const orderStatus = order.status;
+          
+          // Processa cada item do pedido
+          if (order.items && Array.isArray(order.items)) {
+            for (const item of order.items) {
+              formattedOrders.push({
+                order: orderId,
+                email: email,
+                item: item.refId,
+                price: (item.price / 100).toFixed(2), // Converte centavos para reais
+                quantity: item.quantity || 1,
+                timestamp: timestamp,
+                order_status: orderStatus,
+                s_channel_source: order.salesChannel || 'web',
+                s_store_id: 'piccadilly',
+                s_sales_channel: 'ecommerce',
+                s_discount: item.discount ? (item.discount / 100).toFixed(2) : '0'
+              });
+            }
+          }
+        }
         
-        console.log('📊 Exemplo de pedido formatado via fallback:', {
+        console.log('📊 Exemplo de item formatado via fallback:', {
           order: formattedOrders[0]?.order,
           hasEmail: !!formattedOrders[0]?.email,
-          email: formattedOrders[0]?.email
+          email: formattedOrders[0]?.email,
+          item: formattedOrders[0]?.item,
+          price: formattedOrders[0]?.price
         });
+        console.log(`✅ Total de ${formattedOrders.length} itens formatados via fallback`);
       }
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
