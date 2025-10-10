@@ -1122,6 +1122,16 @@ class VtexOrdersService {
     const processedOrders = [];
     const errorOrders = [];
     
+    console.log(`[PROD-DEBUG] ========================================`);
+    console.log(`[PROD-DEBUG] ENTRADA transformOrdersForEmarsys:`);
+    console.log(`[PROD-DEBUG] - orders.length: ${orders?.length || 0}`);
+    console.log(`[PROD-DEBUG] - orders é array: ${Array.isArray(orders)}`);
+    console.log(`[PROD-DEBUG] - checkDuplicates: ${checkDuplicates}`);
+    if (orders && orders.length > 0) {
+      console.log(`[PROD-DEBUG] - Primeiro pedido (amostra):`, JSON.stringify(orders[0]).substring(0, 300));
+    }
+    console.log(`[PROD-DEBUG] ========================================`);
+    
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
     // Verifica duplicatas se solicitado
@@ -2607,13 +2617,27 @@ class VtexOrdersService {
         const BATCH_SIZE = 50; // Busca em lotes de 50 para não sobrecarregar
         const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/filter`;
         
+        console.log(`[PROD-DEBUG] URL base do emsOrdersV2: ${formattedUrl}`);
+        console.log(`[PROD-DEBUG] Total de pedidos a buscar: ${orderIds.length}`);
+        console.log(`[PROD-DEBUG] Primeiros 5 orderIds:`, orderIds.slice(0, 5));
+        
         for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
           const batchIds = orderIds.slice(i, i + BATCH_SIZE);
-          console.log(`📦 Buscando lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(orderIds.length / BATCH_SIZE)} (${batchIds.length} pedidos)...`);
+          const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(orderIds.length / BATCH_SIZE);
+          
+          console.log(`📦 Buscando lote ${batchNum}/${totalBatches} (${batchIds.length} pedidos)...`);
           
           // Busca cada pedido do lote
+          let batchItemsFound = 0;
+          let batchErrors = 0;
+          let batchEmptyResponses = 0;
+          
           for (const orderId of batchIds) {
             try {
+              const requestUrl = `${formattedUrl}?order=${orderId}`;
+              console.log(`[PROD-DEBUG] Consultando: ${requestUrl}`);
+              
               const response = await axios.get(formattedUrl, {
                 params: {
                   order: orderId
@@ -2626,28 +2650,61 @@ class VtexOrdersService {
                 timeout: 30000
               });
               
+              console.log(`[PROD-DEBUG] Response status para ${orderId}: ${response.status}`);
+              console.log(`[PROD-DEBUG] Response data.success: ${response?.data?.success}`);
+              console.log(`[PROD-DEBUG] Response data.data type: ${Array.isArray(response?.data?.data) ? 'array' : typeof response?.data?.data}`);
+              console.log(`[PROD-DEBUG] Response data.data length: ${response?.data?.data?.length || 0}`);
+              
               // O endpoint retorna {success: true, data: [...]}
               if (response?.data?.success && Array.isArray(response.data.data)) {
-                // Adiciona todos os itens do pedido (pode ter múltiplos itens por pedido)
-                formattedOrders.push(...response.data.data);
+                const itemsCount = response.data.data.length;
+                if (itemsCount > 0) {
+                  // Log do primeiro item como amostra
+                  console.log(`[PROD-DEBUG] Primeiro item do pedido ${orderId}:`, JSON.stringify(response.data.data[0]).substring(0, 200));
+                  formattedOrders.push(...response.data.data);
+                  batchItemsFound += itemsCount;
+                } else {
+                  console.log(`[PROD-DEBUG] ⚠️ Pedido ${orderId} retornou array vazio`);
+                  batchEmptyResponses++;
+                }
+              } else {
+                console.warn(`[PROD-DEBUG] ⚠️ Resposta inesperada do endpoint para ${orderId}:`, {
+                  status: response?.status,
+                  success: response?.data?.success,
+                  hasData: !!response?.data?.data,
+                  isArray: Array.isArray(response?.data?.data),
+                  dataLength: response?.data?.data?.length,
+                  fullResponse: JSON.stringify(response?.data).substring(0, 300)
+                });
+                batchEmptyResponses++;
               }
             } catch (orderError) {
-              console.warn(`⚠️ Erro ao buscar pedido ${orderId}:`, orderError.message);
-              // Continua com os próximos pedidos
+              console.error(`[PROD-DEBUG] ❌ Erro ao buscar pedido ${orderId}:`, {
+                message: orderError.message,
+                status: orderError.response?.status,
+                statusText: orderError.response?.statusText,
+                responseData: orderError.response?.data ? JSON.stringify(orderError.response.data).substring(0, 200) : 'N/A',
+                url: `${formattedUrl}?order=${orderId}`
+              });
+              batchErrors++;
             }
             
             // Pequena pausa entre requisições para não sobrecarregar
             await new Promise(resolve => setTimeout(resolve, 100));
           }
+          
+          console.log(`[PROD-DEBUG] Resumo do lote ${batchNum}: ${batchItemsFound} itens encontrados, ${batchEmptyResponses} vazios, ${batchErrors} erros`);
         }
         
         console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length} pedidos do emsOrdersV2`);
+        console.log(`[PROD-DEBUG] formattedOrders.length: ${formattedOrders.length}, é array: ${Array.isArray(formattedOrders)}`);
         
         // Filtro adicional: verifica se o pedido está no período especificado
         if (options.dataInicial && options.dataFinal && formattedOrders.length > 0) {
           const startDate = new Date(options.dataInicial);
           const endDate = new Date(options.dataFinal);
           
+          console.log(`[PROD-DEBUG] Aplicando filtro de período: ${options.dataInicial} até ${options.dataFinal}`);
           const beforeFilter = formattedOrders.length;
           formattedOrders = formattedOrders.filter(o => {
             const orderDate = new Date(o.timestamp || o.creationDate || o.date);
@@ -2658,71 +2715,21 @@ class VtexOrdersService {
         }
         
       } catch (formattedError) {
-        console.error('❌ Erro ao buscar dados formatados:', formattedError?.response?.data || formattedError.message);
-        console.log('🔄 Continuando com fallback para buscar dados da VTEX OMS...');
-      }
-      console.log('🔍 formattedOrders:', formattedOrders[0]);
-      if (formattedOrders.length === 0) {
-        console.warn('⚠️ Nenhum pedido formatado correspondente encontrado no emsOrdersV2.');
-        console.warn('🔄 FALLBACK: Buscando detalhes completos dos pedidos da VTEX OMS para obter emails...');
-        
-        // Buscar detalhes completos de cada pedido para ter acesso ao email
-        const detailedOrders = [];
-        for (const order of orders) {
-          try {
-            const orderId = order.orderId || order.id;
-            console.log(`  📦 Buscando detalhes do pedido ${orderId}...`);
-            const detailedOrder = await this.getOrderById(orderId);
-            detailedOrders.push(detailedOrder);
-            
-            // Pausa entre requisições
-            await new Promise(resolve => setTimeout(resolve, 200));
-          } catch (error) {
-            console.error(`  ❌ Erro ao buscar pedido ${order.orderId || order.id}:`, error.message);
-            // Usa dados básicos se falhar
-            detailedOrders.push(order);
-          }
-        }
-        
-        console.log(`✅ Buscados ${detailedOrders.length} pedidos detalhados`);
-        
-        // Processa cada pedido e seus itens (um pedido pode ter múltiplos itens)
-        formattedOrders = [];
-        for (const order of detailedOrders) {
-          const orderId = order.orderId;
-          const email = order?.email;
-          const timestamp = order.creationDate;
-          const orderStatus = order.status;
-          
-          // Processa cada item do pedido
-          if (order.items && Array.isArray(order.items)) {
-            for (const item of order.items) {
-              formattedOrders.push({
-                order: orderId,
-                email: email,
-                item: item.refId,
-                price: (item.price / 100).toFixed(2), // Converte centavos para reais
-                quantity: item.quantity || 1,
-                timestamp: timestamp,
-                order_status: orderStatus,
-                s_channel_source: order.salesChannel || 'web',
-                s_store_id: 'piccadilly',
-                s_sales_channel: 'ecommerce',
-                s_discount: item.discount ? (item.discount / 100).toFixed(2) : '0'
-              });
-            }
-          }
-        }
-        
-        console.log('📊 Exemplo de item formatado via fallback:', {
-          order: formattedOrders[0]?.order,
-          hasEmail: !!formattedOrders[0]?.email,
-          email: formattedOrders[0]?.email,
-          item: formattedOrders[0]?.item,
-          price: formattedOrders[0]?.price
+        console.error('[PROD-DEBUG] ❌ Erro CRÍTICO ao buscar dados formatados:', {
+          message: formattedError.message,
+          status: formattedError.response?.status,
+          statusText: formattedError.response?.statusText,
+          responseData: formattedError.response?.data,
+          stack: formattedError.stack
         });
-        console.log(`✅ Total de ${formattedOrders.length} itens formatados via fallback`);
       }
+      
+      console.log(`[PROD-DEBUG] ========================================`);
+      console.log(`[PROD-DEBUG] RESULTADO FINAL DA BUSCA emsOrdersV2:`);
+      console.log(`[PROD-DEBUG] - Pedidos da VTEX OMS: ${orders.length}`);
+      console.log(`[PROD-DEBUG] - Itens formatados encontrados: ${formattedOrders.length}`);
+      console.log(`[PROD-DEBUG] - Tipo de formattedOrders: ${Array.isArray(formattedOrders) ? 'array' : typeof formattedOrders}`);
+      console.log(`[PROD-DEBUG] ========================================`);
 
       console.log(`✅ ${formattedOrders.length} pedidos formatados encontrados de ${orders.length} pedidos da VTEX OMS`);
 

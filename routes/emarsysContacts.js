@@ -1026,7 +1026,7 @@ router.post('/create-single', async (req, res) => {
             phone: phone || '',
             mobile: mobile || '',
             birth_date: normalizeBirthDate(birth_date) || '',
-            gender: typeof gender !== 'undefined' ? gender : null,
+            gender: typeof gender !== 'undefined' ? gender : '',
             optin: typeof optin !== 'undefined' ? 
               ((optin === true || optin === 1 || optin === "1" || 
                 (typeof optin === 'string' && optin.toLowerCase() === 'true')) ? "1" : "2") : "1",
