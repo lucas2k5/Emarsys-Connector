@@ -1535,6 +1535,16 @@ class VtexOrdersService {
             });
             
             if (lastSig && newSig && lastSig === newSig) {
+              const { logHelpers } = require('../utils/logger');
+              
+              logHelpers.logOrders('info', '⏭️ [CSV] CSV idêntico ao anterior - não será criado', {
+                reason: 'same_as_last_csv',
+                lastFile: path.basename(lastCsvPath),
+                expectedFilename: filename,
+                totalOrders: ordersToProcess.length,
+                csvSignature: lastSig.substring(0, 16)
+              });
+              
               console.log('⏭️ CSV idêntico ao último gerado. Pulando criação de novo arquivo.');
               return {
                 success: true,
@@ -1561,6 +1571,15 @@ class VtexOrdersService {
       console.log(`🔍 CSV content preview: ${csvContent.substring(0, 200)}...`);
       
       if (lines.length <= 1) {
+        const { logHelpers } = require('../utils/logger');
+        
+        logHelpers.logOrders('warn', '⚠️ [CSV] CSV vazio - não será criado arquivo', {
+          reason: 'CSV vazio ou apenas header',
+          totalOrders: ordersToProcess.length,
+          csvLines: lines.length,
+          expectedFilename: filename
+        });
+        
         console.log('⚠️ CSV vazio ou apenas header - não gerando arquivo');
         return {
           success: false,
@@ -1616,19 +1635,41 @@ class VtexOrdersService {
       let totalUniqueOrders = 0;
       
       try {
-        await fs.writeFile(filePath, csvWithBom, 'utf8');
-        console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
+        const { logHelpers } = require('../utils/logger');
         
-        // Log nos logs de orders indicando o arquivo gerado
-        const { ordersLogger } = require('../utils/logger');
-        ordersLogger.info('📄 CSV de pedidos gerado', {
-          type: 'csv_generated',
-          filename: filename,
-          filePath: filePath,
+        logHelpers.logOrders('info', '💾 [CSV] Iniciando gravação do arquivo CSV', {
+          filename,
+          filePath,
+          fileSize: `${csvWithBom.length} caracteres`,
           totalOrders: ordersToProcess.length,
-          csvLines: lines.length,
-          timestamp: getBrazilianTimestamp()
+          csvLines: lines.length
         });
+        
+        await fs.writeFile(filePath, csvWithBom, 'utf8');
+        
+        // Verifica se o arquivo foi realmente criado
+        const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
+        const fileStats = fileExists ? await fs.stat(filePath) : null;
+        
+        if (fileExists && fileStats) {
+          logHelpers.logOrders('info', '✅ [CSV] Arquivo criado com sucesso', {
+            filename,
+            filePath,
+            fileSize: `${fileStats.size} bytes`,
+            totalOrders: ordersToProcess.length,
+            csvLines: lines.length,
+            createdAt: fileStats.birthtime
+          });
+          
+          console.log(`✅ Arquivo CSV de pedidos gerado: ${filePath}`);
+        } else {
+          logHelpers.logOrders('error', '❌ [CSV] Arquivo não foi criado', {
+            filename,
+            filePath,
+            expectedSize: csvWithBom.length
+          });
+          throw new Error('Arquivo CSV não foi criado após writeFile');
+        }
         
         // Envia dados para API externa de logs
         
@@ -1666,9 +1707,22 @@ class VtexOrdersService {
         }
         
       } catch (writeError) {
+        const { logHelpers } = require('../utils/logger');
+        const dirExists = await fs.access(path.dirname(filePath)).then(() => true).catch(() => false);
+        
+        logHelpers.logOrders('error', '❌ [CSV] Falha ao criar arquivo CSV', {
+          filename,
+          filePath,
+          errorMessage: writeError.message,
+          errorCode: writeError.code,
+          errorStack: writeError.stack,
+          directoryExists: dirExists,
+          parentDirectory: path.dirname(filePath)
+        });
+        
         console.error('❌ Erro ao escrever arquivo CSV:', writeError);
         console.error('📁 Caminho do arquivo:', filePath);
-        console.error('📁 Diretório pai existe?', await fs.access(path.dirname(filePath)).then(() => true).catch(() => false));
+        console.error('📁 Diretório pai existe?', dirExists);
         throw writeError;
       }
 

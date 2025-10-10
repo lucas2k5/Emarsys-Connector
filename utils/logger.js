@@ -66,9 +66,19 @@ const transports = [
     format: consoleFormat,
   }),
 
+  // Arquivo de logs combinados (TUDO em um só arquivo)
+  new DailyRotateFile({
+    filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+    datePattern: 'DD-MM-YYYY',
+    maxSize: '50m',
+    maxFiles: '7d',
+    level: 'info',
+    format: logFormat,
+  }),
+
   // Arquivo de logs gerais do sistema
   new DailyRotateFile({
-    filename: path.join('logs', 'system-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-system-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
@@ -78,7 +88,7 @@ const transports = [
 
   // Arquivo de logs de erros e falhas
   new DailyRotateFile({
-    filename: path.join('logs', 'errors-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-errors-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '30d',
@@ -88,7 +98,7 @@ const transports = [
 
   // Arquivo de logs de requisições HTTP
   new DailyRotateFile({
-    filename: path.join('logs', 'http-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-http-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '7d',
@@ -98,7 +108,7 @@ const transports = [
 
   // Arquivo de logs de sincronização
   new DailyRotateFile({
-    filename: path.join('logs', 'sync-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-sync-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
@@ -108,7 +118,7 @@ const transports = [
 
   // Arquivo de logs de reprocessamento
   new DailyRotateFile({
-    filename: path.join('logs', 'retry-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-retry-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '14d',
@@ -118,7 +128,7 @@ const transports = [
 
   // Arquivo de logs de alertas
   new DailyRotateFile({
-    filename: path.join('logs', 'alerts-%DATE%.log'),
+    filename: path.join('logs', 'ems-pcy-alerts-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
     maxSize: '20m',
     maxFiles: '30d',
@@ -152,10 +162,18 @@ const metricsLogger = winston.createLogger({
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'metrics-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-metrics-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '20m',
       maxFiles: '30d',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
+      level: 'info',
     }),
   ],
 });
@@ -169,10 +187,18 @@ const auditLogger = winston.createLogger({
   ),
   transports: [
     new DailyRotateFile({
-      filename: path.join('logs', 'audit-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-audit-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '20m',
       maxFiles: '90d',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
+      level: 'info',
     }),
   ],
 });
@@ -190,11 +216,20 @@ const ordersLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'cro-orders-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-cro-orders-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
+      level: 'info',
+      format: dividerFormat,
     }),
   ],
 });
@@ -212,11 +247,20 @@ const productsLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'cro-products-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-cro-products-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
+      level: 'info',
+      format: dividerFormat,
     }),
   ],
 });
@@ -234,11 +278,20 @@ const clientsLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'cro-clients-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-cro-clients-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '50m',
       maxFiles: '30d',
       level: 'info',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
+      level: 'info',
+      format: dividerFormat,
     }),
   ],
 });
@@ -256,10 +309,18 @@ const accessLogger = winston.createLogger({
       format: consoleFormat,
     }),
     new DailyRotateFile({
-      filename: path.join('logs', 'access-requests-%DATE%.log'),
+      filename: path.join('logs', 'ems-pcy-access-requests-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
       maxSize: '20m',
       maxFiles: '30d',
+      level: 'info',
+    }),
+    // Adiciona também ao log combinado
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '7d',
       level: 'info',
     }),
   ],
