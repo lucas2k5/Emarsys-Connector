@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { logHelpers } = require('../utils/logger');
+
 // Usar armazenamento global para compatibilidade com outros endpoints
 if (!global.jobStatus) {
   global.jobStatus = new Map();
@@ -8,7 +10,10 @@ const jobStatus = global.jobStatus;
 
 // Middleware para log de requisições
 router.use((req, res, next) => {
-  console.log(`🔄 [Background Jobs] ${req.method} ${req.path}`);
+  logHelpers.logOrders('info', '🔄 [Background Jobs] Requisição recebida', {
+    method: req.method,
+    path: req.path
+  });
   next();
 });
 
@@ -171,7 +176,14 @@ router.post('/orders-extract-all', async (req, res) => {
       maxOrders = 100 
     } = req.body;
     
-    console.log(`🚀 [Background] Iniciando extração de pedidos: brazilianDate=${brazilianDate}, batching=${batching}`);
+    logHelpers.logOrders('info', '🚀 [Background] Iniciando extração de pedidos', {
+      brazilianDate,
+      startDate,
+      toDate,
+      batching,
+      daysPerBatch,
+      maxOrders
+    });
     
     // Gerar ID único para o job
     const jobId = `orders-extract-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -196,6 +208,12 @@ router.post('/orders-extract-all', async (req, res) => {
       }
     });
     
+    logHelpers.logOrders('info', '📋 [Background] Job criado', {
+      jobId,
+      type: 'orders-extract-all',
+      status: 'starting'
+    });
+    
     // Executar extração diretamente em background
     setImmediate(async () => {
       try {
@@ -209,6 +227,12 @@ router.post('/orders-extract-all', async (req, res) => {
           progress: 10
         });
         
+        logHelpers.logOrders('info', '▶️ [Background] Job em execução', {
+          jobId,
+          status: 'running',
+          progress: 10
+        });
+        
         let finalStartDate = startDate;
         let finalToDate = toDate;
         
@@ -218,6 +242,13 @@ router.post('/orders-extract-all', async (req, res) => {
           const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
           finalStartDate = range.startUTC;
           finalToDate = range.endUTC;
+          
+          logHelpers.logOrders('info', '📅 [Background] Data brasileira processada', {
+            jobId,
+            brazilianDate,
+            convertedStartUTC: finalStartDate,
+            convertedEndUTC: finalToDate
+          });
         }
         
         // Atualizar progresso
@@ -228,12 +259,28 @@ router.post('/orders-extract-all', async (req, res) => {
         
         let ordersList;
         if (batching) {
-          console.log(`🔄 Usando processamento em lotes de ${daysPerBatch} dias...`);
+          logHelpers.logOrders('info', '🔄 [Background] Usando processamento em lotes', {
+            jobId,
+            daysPerBatch,
+            startDate: finalStartDate,
+            toDate: finalToDate
+          });
           ordersList = await vtexOrdersService.getAllOrdersInPeriodBatched(finalStartDate, finalToDate, daysPerBatch);
         } else {
-          console.log(`🔄 Usando busca normal...`);
+          logHelpers.logOrders('info', '🔄 [Background] Usando busca normal', {
+            jobId,
+            startDate: finalStartDate,
+            toDate: finalToDate
+          });
           ordersList = await vtexOrdersService.getAllOrdersInPeriod(finalStartDate, finalToDate, false);
         }
+        
+        logHelpers.logOrders('info', '📊 [Background] Pedidos obtidos da VTEX', {
+          jobId,
+          totalOrders: ordersList.length,
+          startDate: finalStartDate,
+          toDate: finalToDate
+        });
         
         // Atualizar progresso
         jobStatus.set(jobId, {
@@ -243,7 +290,12 @@ router.post('/orders-extract-all', async (req, res) => {
         
         // Aplicar limite de pedidos se especificado
         if (maxOrders && ordersList.length > maxOrders) {
-          console.log(`⚠️ Aplicando limite de ${maxOrders} pedidos (encontrados: ${ordersList.length})`);
+          logHelpers.logOrders('warn', '⚠️ [Background] Aplicando limite de pedidos', {
+            jobId,
+            maxOrders,
+            totalFound: ordersList.length,
+            willProcess: maxOrders
+          });
           ordersList = ordersList.slice(0, maxOrders);
         }
         
@@ -256,11 +308,27 @@ router.post('/orders-extract-all', async (req, res) => {
         // Processar pedidos (gerar CSV, enviar para Emarsys, etc.)
         let processingResult = null;
         if (ordersList.length > 0) {
+          logHelpers.logOrders('info', '⚙️ [Background] Iniciando processamento de pedidos', {
+            jobId,
+            totalToProcess: ordersList.length
+          });
+          
           // Usa vtexOrdersService.syncOrders que já faz todo o fluxo completo
           processingResult = await vtexOrdersService.syncOrders({
             orders: ordersList,
             dataInicial: finalStartDate,
             dataFinal: finalToDate
+          });
+          
+          logHelpers.logOrders('info', '✅ [Background] Processamento concluído', {
+            jobId,
+            processingResult
+          });
+        } else {
+          logHelpers.logOrders('info', 'ℹ️ [Background] Nenhum pedido encontrado no período', {
+            jobId,
+            startDate: finalStartDate,
+            toDate: finalToDate
           });
         }
         
@@ -275,6 +343,7 @@ router.post('/orders-extract-all', async (req, res) => {
             ordersProcessed: processingResult?.transformedOrders || 0,
             csvGenerated: processingResult?.csvResult?.success || false,
             emarsysSent: processingResult?.emarsysSendResult?.success || false,
+            csvFile: processingResult?.csvResult?.filename || null,
             period: {
               startDate: finalStartDate,
               toDate: finalToDate,
@@ -285,16 +354,28 @@ router.post('/orders-extract-all', async (req, res) => {
           }
         });
         
-        console.log(`✅ [Background] Extração de pedidos ${jobId} concluída: ${ordersList.length} pedidos`);
+        logHelpers.logOrders('info', '🎉 [Background] Job finalizado com sucesso', {
+          jobId,
+          status: 'completed',
+          totalOrders: ordersList.length,
+          csvGenerated: processingResult?.csvResult?.success || false,
+          csvFile: processingResult?.csvResult?.filename || null
+        });
         
       } catch (error) {
-        console.error(`❌ Erro na extração de pedidos ${jobId}:`, error);
+        logHelpers.logOrders('error', '❌ [Background] Erro na extração de pedidos', {
+          jobId,
+          errorMessage: error.message,
+          errorStack: error.stack
+        });
+        
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
           status: 'failed',
           progress: 0,
           endTime: new Date().toISOString(),
-          error: error.message
+          error: error.message,
+          errorStack: error.stack
         });
       }
     });
