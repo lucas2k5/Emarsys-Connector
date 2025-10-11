@@ -305,6 +305,76 @@ router.post('/orders-extract-all', async (req, res) => {
           progress: 80
         });
         
+        // ETAPA 2.5: Enviar pedidos para o hook ANTES de buscar do emsOrdersV2
+        if (ordersList.length > 0) {
+          logHelpers.logOrders('info', '📤 [Background] Enviando pedidos para o hook emsOrdersV2', {
+            jobId,
+            totalToSend: ordersList.length
+          });
+          
+          const hookResults = {
+            success: 0,
+            failed: 0,
+            errors: []
+          };
+          
+          for (let i = 0; i < ordersList.length; i++) {
+            const order = ordersList[i];
+            const orderId = order.orderId || order.id;
+            
+            if (!orderId) {
+              console.warn(`⚠️ Pedido sem ID encontrado:`, order);
+              continue;
+            }
+            
+            try {
+              const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
+              if (sendResult.success) {
+                hookResults.success++;
+              } else {
+                hookResults.failed++;
+                hookResults.errors.push({ 
+                  orderId, 
+                  error: sendResult.error 
+                });
+              }
+            } catch (hookError) {
+              hookResults.failed++;
+              hookResults.errors.push({ 
+                orderId, 
+                error: hookError.message 
+              });
+              console.error(`❌ Erro ao enviar pedido ${orderId} para hook:`, hookError.message);
+            }
+            
+            // Pequena pausa entre requisições
+            if (i < ordersList.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          
+          logHelpers.logOrders('info', '✅ [Background] Envio para hook concluído', {
+            jobId,
+            totalOrders: ordersList.length,
+            successfulSends: hookResults.success,
+            failedSends: hookResults.failed,
+            errors: hookResults.errors.slice(0, 5) // Log apenas os primeiros 5 erros
+          });
+          
+          // Aguardar 2 segundos para o hook processar e armazenar na emsOrdersV2
+          logHelpers.logOrders('info', '⏳ [Background] Aguardando processamento do hook...', {
+            jobId,
+            waitTime: '2 segundos'
+          });
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 85
+        });
+        
         // Processar pedidos (gerar CSV, enviar para Emarsys, etc.)
         let processingResult = null;
         if (ordersList.length > 0) {
