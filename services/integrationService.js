@@ -323,19 +323,18 @@ class IntegrationService {
       }
 
       // Busca o status de opt-in da CL (Customer List)
-      let optinStatus = true; // Valor padrão
+      // Valor inicial vem da trigger (pedido), não deve ser true por padrão
+      let optinStatus = clientProfile.optin;
       try {
         const clOptIn = await this.vtexOrdersService.getCLOptInStatus(realEmail);
         if (clOptIn !== null) {
-          // Usa o valor da CL se disponível
+          // Usa o valor da CL se disponível (prioridade)
           optinStatus = clOptIn;
-        } else if (clientProfile.optin !== undefined) {
-          // Fallback para o valor do pedido se CL não retornar resultado
-          optinStatus = clientProfile.optin;
         }
+        // Se clOptIn for null, mantém o valor da trigger (clientProfile.optin)
       } catch (error) {
-        console.warn(`⚠️ Erro ao buscar opt-in da CL para ${realEmail}, usando fallback`);
-        optinStatus = clientProfile.optin || true;
+        console.warn(`⚠️ Erro ao buscar opt-in da CL para ${realEmail}, usando valor da trigger`);
+        // Mantém o valor da trigger em caso de erro
       }
 
       // Processa documento

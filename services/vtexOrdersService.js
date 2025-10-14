@@ -508,14 +508,26 @@ class VtexOrdersService {
     try {
       if (!email) return null;
       
-      const url = `/api/dataentities/CL/search`;
+      const baseUrl = (process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
+      const url = `${baseUrl}/api/dataentities/CL/search`;
       const params = {
         _where: `email=${encodeURIComponent(email)}`,
         _fields: 'optIn',
         _size: 1
       };
       
-      const response = await this.client.get(url, { params, timeout: 20000 });
+      const response = await axios.get(url, { 
+        params,
+        headers: {
+          'Accept': 'application/vnd.vtex.ds.v10+json',
+          'Content-Type': 'application/json',
+          'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+          'pragma': 'no-cache',
+          'cache-control': 'max-age=0'
+        },
+        timeout: 20000 
+      });
       
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         const optIn = response.data[0].optIn;
