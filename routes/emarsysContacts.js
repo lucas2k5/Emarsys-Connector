@@ -886,9 +886,48 @@ router.post('/create-single', async (req, res) => {
       setTimeout(() => __inFlightCreateByEmail.delete(emailKey), IDEMPOTENCY_WINDOW_MS);
     }
 
+    // Obtém email real se necessário (desofuscar email)
+    const VtexOrdersService = require('../services/vtexOrdersService');
+    const vtexOrdersService = new VtexOrdersService();
+    let realEmail = emailKey;
+    try {
+      const emailMapping = await vtexOrdersService.getRealEmail(emailKey);
+      console.log('👤 DEBUG getRealEmail:', emailMapping);
+      if (emailMapping && emailMapping.email) {
+        realEmail = emailMapping.email;
+        console.log('👤 Email desofuscado:', realEmail);
+      } else {
+        console.log('👤 Email não é ofuscado, usando original:', emailKey);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Erro ao obter email real para ${emailKey}:`, error.message);
+      // Mantém o email original em caso de erro
+    }
+
+    // Busca o status de isNewsletterOptIn da CL (Customer List)
+    let optinStatus = optin; // Valor inicial vem do body
+    console.log('👤 optinStatus inicial (do body):', optinStatus);
+    try {
+      console.log('👤 Buscando opt-in na CL para email:', realEmail);
+      const clOptIn = await vtexOrdersService.getCLOptInStatus(realEmail);
+      console.log('👤 clOptIn retornado da CL:', clOptIn, '(tipo:', typeof clOptIn, ')');
+      if (clOptIn !== null) {
+        // Usa o valor da CL se disponível (prioridade)
+        optinStatus = clOptIn;
+        console.log('✅ Usando optinStatus da CL:', optinStatus);
+      } else {
+        console.log('⚠️ clOptIn é null - cliente não encontrado na CL ou sem valor de opt-in');
+      }
+      // Se clOptIn for null, mantém o valor do body
+    } catch (error) {
+      console.error(`❌ Erro ao buscar isNewsletterOptIn da CL para ${realEmail}:`, error.message);
+      console.error('Stack:', error.stack);
+      // Mantém o valor do body em caso de erro
+    }
+
     // Prepara os dados do contato no formato Emarsys
     const contact = {
-      '3': emailKey, // Campo 3 = Email (chave primária)
+      '3': realEmail, // Campo 3 = Email real (chave primária)
       '1': first_name, // Campo 1 = Primeiro nome (first_name)
       '2': last_name, // Campo 2 = Sobrenome (last_name)
     };
@@ -936,12 +975,13 @@ router.post('/create-single', async (req, res) => {
       contact['5'] = value; // Campo 5 = Gênero (gender)
     }
     
-    // Define opt-in se informado (campo 31). Emarsys espera 1=True e 2=False
-    if (typeof optin !== 'undefined') {
-      // Normaliza optin para booleano (trata strings "false", "0", etc)
-      const normalizedOptin = optin === true || optin === 1 || optin === "1" || 
-                              (typeof optin === 'string' && optin.toLowerCase() === 'true');
+    // Define opt-in baseado no valor da CL ou do body (campo 31). Emarsys espera 1=True e 2=False
+    if (typeof optinStatus !== 'undefined') {
+      // Normaliza optinStatus para booleano (trata strings "false", "0", etc)
+      const normalizedOptin = optinStatus === true || optinStatus === 1 || optinStatus === "1" || 
+                              (typeof optinStatus === 'string' && optinStatus.toLowerCase() === 'true');
       contact['31'] = normalizedOptin ? "1" : "2";
+      console.log('👤 Opt-in enviado para Emarsys:', contact['31'], '(1=optou, 2=não optou)');
     }
     
     // Adiciona cidade se fornecida

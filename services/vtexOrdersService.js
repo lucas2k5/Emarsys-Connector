@@ -506,43 +506,61 @@ class VtexOrdersService {
    */
   async getCLOptInStatus(email) {
     try {
-      if (!email) return null;
+      if (!email) {
+        console.log('👤 getCLOptInStatus: email vazio, retornando null');
+        return null;
+      }
       
-      const baseUrl = (process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
-      const url = `${baseUrl}/api/dataentities/CL/search`;
+      const baseUrl = process.env.VTEX_BASE_URL;
+      const url = `https://piccadilly.myvtex.com/api/dataentities/CL/search`;
       const params = {
-        _where: `email=${encodeURIComponent(email)}`,
+        _where: `email=${email}`, // Axios já faz o encoding automaticamente
         _fields: 'isNewsletterOptIn',
         _size: 1
       };
       
+      console.log('👤 getCLOptInStatus: Consultando CL para email:', email);
+      console.log('👤 getCLOptInStatus: URL:', url);
+      console.log('👤 getCLOptInStatus: Params:', params);
+      
       const response = await axios.get(url, { 
         params,
         headers: {
-          'Accept': 'application/vnd.vtex.ds.v10+json',
-          'Content-Type': 'application/json',
           'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
-          'pragma': 'no-cache',
-          'cache-control': 'max-age=0'
+          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
         },
         timeout: 20000 
       });
       
+      console.log('👤 getCLOptInStatus: Response status:', response.status);
+      console.log('👤 getCLOptInStatus: Response data:', response.data);
+      
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         const isNewsletterOptIn = response.data[0].isNewsletterOptIn;
+        console.log('👤 getCLOptInStatus: isNewsletterOptIn valor bruto:', isNewsletterOptIn, '(tipo:', typeof isNewsletterOptIn, ')');
+        
         // Normaliza o valor para boolean
         // VTEX CL armazena isNewsletterOptIn como string "true"/"false" ou boolean
         if (isNewsletterOptIn === true || isNewsletterOptIn === 'true' || isNewsletterOptIn === '1' || isNewsletterOptIn === 1) {
+          console.log('👤 getCLOptInStatus: Retornando true');
           return true;
         } else if (isNewsletterOptIn === false || isNewsletterOptIn === 'false' || isNewsletterOptIn === '0' || isNewsletterOptIn === 0) {
+          console.log('👤 getCLOptInStatus: Retornando false');
           return false;
+        } else {
+          console.log('👤 getCLOptInStatus: Valor não reconhecido, retornando null');
         }
+      } else {
+        console.log('👤 getCLOptInStatus: Nenhum registro encontrado na CL');
       }
       
       return null; // Não encontrado ou valor inválido
     } catch (error) {
-      console.warn(`⚠️ Erro ao buscar isNewsletterOptIn da CL para ${email}:`, error.message);
+      console.error(`❌ getCLOptInStatus: Erro ao buscar isNewsletterOptIn da CL para ${email}:`, error.message);
+      if (error.response) {
+        console.error('❌ getCLOptInStatus: Status:', error.response.status);
+        console.error('❌ getCLOptInStatus: Data:', JSON.stringify(error.response.data));
+      }
       return null;
     }
   }
