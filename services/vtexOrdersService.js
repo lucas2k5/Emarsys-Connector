@@ -500,6 +500,42 @@ class VtexOrdersService {
   }
 
   /**
+   * Busca o status de opt-in do cliente na CL (Customer List) por email
+   * @param {string} email - Email do cliente
+   * @returns {Promise<boolean|null>} Status de opt-in (true/false) ou null se não encontrado
+   */
+  async getCLOptInStatus(email) {
+    try {
+      if (!email) return null;
+      
+      const url = `/api/dataentities/CL/search`;
+      const params = {
+        _where: `email=${encodeURIComponent(email)}`,
+        _fields: 'optIn',
+        _size: 1
+      };
+      
+      const response = await this.client.get(url, { params, timeout: 20000 });
+      
+      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+        const optIn = response.data[0].optIn;
+        // Normaliza o valor para boolean
+        // VTEX CL armazena optIn como string "true"/"false" ou boolean
+        if (optIn === true || optIn === 'true' || optIn === '1' || optIn === 1) {
+          return true;
+        } else if (optIn === false || optIn === 'false' || optIn === '0' || optIn === 0) {
+          return false;
+        }
+      }
+      
+      return null; // Não encontrado ou valor inválido
+    } catch (error) {
+      console.warn(`⚠️ Erro ao buscar opt-in da CL para ${email}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
    * Obtém feed de pedidos
    * @returns {Promise<Object>} Feed de pedidos
    */

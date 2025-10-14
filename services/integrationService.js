@@ -322,6 +322,22 @@ class IntegrationService {
         console.warn(`⚠️ Não foi possível obter email real para ${email}`);
       }
 
+      // Busca o status de opt-in da CL (Customer List)
+      let optinStatus = true; // Valor padrão
+      try {
+        const clOptIn = await this.vtexOrdersService.getCLOptInStatus(realEmail);
+        if (clOptIn !== null) {
+          // Usa o valor da CL se disponível
+          optinStatus = clOptIn;
+        } else if (clientProfile.optin !== undefined) {
+          // Fallback para o valor do pedido se CL não retornar resultado
+          optinStatus = clientProfile.optin;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Erro ao buscar opt-in da CL para ${realEmail}, usando fallback`);
+        optinStatus = clientProfile.optin || true;
+      }
+
       // Processa documento
       const document = clientProfile.document !== '' 
         ? clientProfile.document.replace(/\D+/g, '').slice(0, 11).padStart(11, '0')
@@ -342,7 +358,7 @@ class IntegrationService {
         state: order.shippingData.address.state,
         postalCode: order.shippingData.address.postalCode,
         userProfileId: clientProfile.userProfileId,
-        optin: clientProfile.optin || true
+        optin: optinStatus
       };
 
     } catch (error) {
