@@ -500,6 +500,54 @@ class VtexOrdersService {
   }
 
   /**
+   * Busca o status de isNewsletterOptIn do cliente na CL (Customer List) por email
+   * @param {string} email - Email do cliente
+   * @returns {Promise<boolean|null>} Status de isNewsletterOptIn (true/false) ou null se não encontrado
+   */
+  async getCLOptInStatus(email) {
+    try {
+      if (!email) return null;
+      
+      const baseUrl = (process.env.VTEX_BASE_URL || '').replace(/\/$/, '');
+      const url = `${baseUrl}/api/dataentities/CL/search`;
+      const params = {
+        _where: `email=${encodeURIComponent(email)}`,
+        _fields: 'isNewsletterOptIn',
+        _size: 1
+      };
+      
+      const response = await axios.get(url, { 
+        params,
+        headers: {
+          'Accept': 'application/vnd.vtex.ds.v10+json',
+          'Content-Type': 'application/json',
+          'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+          'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+          'pragma': 'no-cache',
+          'cache-control': 'max-age=0'
+        },
+        timeout: 20000 
+      });
+      
+      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+        const isNewsletterOptIn = response.data[0].isNewsletterOptIn;
+        // Normaliza o valor para boolean
+        // VTEX CL armazena isNewsletterOptIn como string "true"/"false" ou boolean
+        if (isNewsletterOptIn === true || isNewsletterOptIn === 'true' || isNewsletterOptIn === '1' || isNewsletterOptIn === 1) {
+          return true;
+        } else if (isNewsletterOptIn === false || isNewsletterOptIn === 'false' || isNewsletterOptIn === '0' || isNewsletterOptIn === 0) {
+          return false;
+        }
+      }
+      
+      return null; // Não encontrado ou valor inválido
+    } catch (error) {
+      console.warn(`⚠️ Erro ao buscar isNewsletterOptIn da CL para ${email}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
    * Obtém feed de pedidos
    * @returns {Promise<Object>} Feed de pedidos
    */
