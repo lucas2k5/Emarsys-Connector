@@ -315,6 +315,7 @@ class IntegrationService {
       let realEmail = email;
       try {
         const emailMapping = await this.vtexOrdersService.getRealEmail(email);
+        console.log('👤 DEBUG : emailMapping:', emailMapping);
         if (emailMapping && emailMapping.email) {
           realEmail = emailMapping.email;
         }
@@ -325,6 +326,7 @@ class IntegrationService {
       // Busca o status de isNewsletterOptIn da CL (Customer List)
       // Valor inicial vem da trigger (pedido) - campo isNewsletterOptIn
       let optinStatus = clientProfile.isNewsletterOptIn;
+      console.log('👤 optinStatus:', optinStatus);
       try {
         const clOptIn = await this.vtexOrdersService.getCLOptInStatus(realEmail);
         if (clOptIn !== null) {
