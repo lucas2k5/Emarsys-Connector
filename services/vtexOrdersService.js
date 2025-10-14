@@ -500,9 +500,9 @@ class VtexOrdersService {
   }
 
   /**
-   * Busca o status de opt-in do cliente na CL (Customer List) por email
+   * Busca o status de isNewsletterOptIn do cliente na CL (Customer List) por email
    * @param {string} email - Email do cliente
-   * @returns {Promise<boolean|null>} Status de opt-in (true/false) ou null se não encontrado
+   * @returns {Promise<boolean|null>} Status de isNewsletterOptIn (true/false) ou null se não encontrado
    */
   async getCLOptInStatus(email) {
     try {
@@ -512,7 +512,7 @@ class VtexOrdersService {
       const url = `${baseUrl}/api/dataentities/CL/search`;
       const params = {
         _where: `email=${encodeURIComponent(email)}`,
-        _fields: 'optIn',
+        _fields: 'isNewsletterOptIn',
         _size: 1
       };
       
@@ -530,19 +530,19 @@ class VtexOrdersService {
       });
       
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-        const optIn = response.data[0].optIn;
+        const isNewsletterOptIn = response.data[0].isNewsletterOptIn;
         // Normaliza o valor para boolean
-        // VTEX CL armazena optIn como string "true"/"false" ou boolean
-        if (optIn === true || optIn === 'true' || optIn === '1' || optIn === 1) {
+        // VTEX CL armazena isNewsletterOptIn como string "true"/"false" ou boolean
+        if (isNewsletterOptIn === true || isNewsletterOptIn === 'true' || isNewsletterOptIn === '1' || isNewsletterOptIn === 1) {
           return true;
-        } else if (optIn === false || optIn === 'false' || optIn === '0' || optIn === 0) {
+        } else if (isNewsletterOptIn === false || isNewsletterOptIn === 'false' || isNewsletterOptIn === '0' || isNewsletterOptIn === 0) {
           return false;
         }
       }
       
       return null; // Não encontrado ou valor inválido
     } catch (error) {
-      console.warn(`⚠️ Erro ao buscar opt-in da CL para ${email}:`, error.message);
+      console.warn(`⚠️ Erro ao buscar isNewsletterOptIn da CL para ${email}:`, error.message);
       return null;
     }
   }
