@@ -6,7 +6,7 @@
 
 const axios = require('axios');
 
-const BASE_URL = 'http://177.93.135.200';
+const BASE_URL = 'http://20.84.155.174';
 
 async function testMonitoringSystem() {
   console.log('🧪 Iniciando testes do sistema de monitoramento...\n');
