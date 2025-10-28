@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { logHelpers } = require('../utils/logger');
+
 // Usar armazenamento global para compatibilidade com outros endpoints
 if (!global.jobStatus) {
   global.jobStatus = new Map();
@@ -8,7 +10,10 @@ const jobStatus = global.jobStatus;
 
 // Middleware para log de requisições
 router.use((req, res, next) => {
-  console.log(`🔄 [Background Jobs] ${req.method} ${req.path}`);
+  logHelpers.logOrders('info', '🔄 [Background Jobs] Requisição recebida', {
+    method: req.method,
+    path: req.path
+  });
   next();
 });
 
@@ -148,6 +153,328 @@ router.post('/sync-orders', async (req, res) => {
     
   } catch (error) {
     console.error(`❌ [Background] Erro ao iniciar sync de pedidos: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// POST /api/background/orders-extract-all
+// Inicia extração completa de pedidos em background (evita timeout)
+router.post('/orders-extract-all', async (req, res) => {
+  try {
+    const { 
+      brazilianDate, 
+      startDate, 
+      toDate, 
+      startTime, 
+      endTime, 
+      per_page = 50, 
+      batching = true, 
+      daysPerBatch = 1, 
+      maxOrders = 100 
+    } = req.body;
+    
+    logHelpers.logOrders('info', '🚀 [Background] Iniciando extração de pedidos', {
+      brazilianDate,
+      startDate,
+      toDate,
+      batching,
+      daysPerBatch,
+      maxOrders
+    });
+    
+    // Gerar ID único para o job
+    const jobId = `orders-extract-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Inicializar status do job
+    jobStatus.set(jobId, {
+      id: jobId,
+      type: 'orders-extract-all',
+      status: 'starting',
+      progress: 0,
+      startTime: new Date().toISOString(),
+      config: { 
+        brazilianDate, 
+        startDate, 
+        toDate, 
+        startTime, 
+        endTime, 
+        per_page, 
+        batching, 
+        daysPerBatch, 
+        maxOrders 
+      }
+    });
+    
+    logHelpers.logOrders('info', '📋 [Background] Job criado', {
+      jobId,
+      type: 'orders-extract-all',
+      status: 'starting'
+    });
+    
+    // Executar extração diretamente em background
+    setImmediate(async () => {
+      try {
+        const VtexOrdersService = require('../services/vtexOrdersService');
+        const vtexOrdersService = new VtexOrdersService();
+        
+        // Atualizar status para running
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'running',
+          progress: 10
+        });
+        
+        logHelpers.logOrders('info', '▶️ [Background] Job em execução', {
+          jobId,
+          status: 'running',
+          progress: 10
+        });
+        
+        let finalStartDate = startDate;
+        let finalToDate = toDate;
+        
+        // Processar data brasileira se fornecida
+        if (brazilianDate) {
+          const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+          const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
+          finalStartDate = range.startUTC;
+          finalToDate = range.endUTC;
+          
+          logHelpers.logOrders('info', '📅 [Background] Data brasileira processada', {
+            jobId,
+            brazilianDate,
+            convertedStartUTC: finalStartDate,
+            convertedEndUTC: finalToDate
+          });
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 20
+        });
+        
+        let ordersList;
+        if (batching) {
+          logHelpers.logOrders('info', '🔄 [Background] Usando processamento em lotes', {
+            jobId,
+            daysPerBatch,
+            startDate: finalStartDate,
+            toDate: finalToDate
+          });
+          ordersList = await vtexOrdersService.getAllOrdersInPeriodBatched(finalStartDate, finalToDate, daysPerBatch);
+        } else {
+          logHelpers.logOrders('info', '🔄 [Background] Usando busca normal', {
+            jobId,
+            startDate: finalStartDate,
+            toDate: finalToDate
+          });
+          ordersList = await vtexOrdersService.getAllOrdersInPeriod(finalStartDate, finalToDate, false);
+        }
+        
+        logHelpers.logOrders('info', '📊 [Background] Pedidos obtidos da VTEX', {
+          jobId,
+          totalOrders: ordersList.length,
+          startDate: finalStartDate,
+          toDate: finalToDate
+        });
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 60
+        });
+        
+        // Aplicar limite de pedidos se especificado
+        if (maxOrders && ordersList.length > maxOrders) {
+          logHelpers.logOrders('warn', '⚠️ [Background] Aplicando limite de pedidos', {
+            jobId,
+            maxOrders,
+            totalFound: ordersList.length,
+            willProcess: maxOrders
+          });
+          ordersList = ordersList.slice(0, maxOrders);
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 80
+        });
+        
+        // ETAPA 2.5: Enviar pedidos para o hook ANTES de buscar do emsOrdersV2
+        if (ordersList.length > 0) {
+          logHelpers.logOrders('info', '📤 [Background] Enviando pedidos para o hook emsOrdersV2', {
+            jobId,
+            totalToSend: ordersList.length
+          });
+          
+          const hookResults = {
+            success: 0,
+            failed: 0,
+            errors: []
+          };
+          
+          for (let i = 0; i < ordersList.length; i++) {
+            const order = ordersList[i];
+            const orderId = order.orderId || order.id;
+            
+            if (!orderId) {
+              console.warn(`⚠️ Pedido sem ID encontrado:`, order);
+              continue;
+            }
+            
+            try {
+              const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
+              if (sendResult.success) {
+                hookResults.success++;
+              } else {
+                hookResults.failed++;
+                hookResults.errors.push({ 
+                  orderId, 
+                  error: sendResult.error 
+                });
+              }
+            } catch (hookError) {
+              hookResults.failed++;
+              hookResults.errors.push({ 
+                orderId, 
+                error: hookError.message 
+              });
+              console.error(`❌ Erro ao enviar pedido ${orderId} para hook:`, hookError.message);
+            }
+            
+            // Pequena pausa entre requisições
+            if (i < ordersList.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          
+          logHelpers.logOrders('info', '✅ [Background] Envio para hook concluído', {
+            jobId,
+            totalOrders: ordersList.length,
+            successfulSends: hookResults.success,
+            failedSends: hookResults.failed,
+            errors: hookResults.errors.slice(0, 5) // Log apenas os primeiros 5 erros
+          });
+          
+          // Aguardar 2 segundos para o hook processar e armazenar na emsOrdersV2
+          logHelpers.logOrders('info', '⏳ [Background] Aguardando processamento do hook...', {
+            jobId,
+            waitTime: '2 segundos'
+          });
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        // Atualizar progresso
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          progress: 85
+        });
+        
+        // Processar pedidos (gerar CSV, enviar para Emarsys, etc.)
+        let processingResult = null;
+        if (ordersList.length > 0) {
+          logHelpers.logOrders('info', '⚙️ [Background] Iniciando processamento de pedidos', {
+            jobId,
+            totalToProcess: ordersList.length
+          });
+          
+          // Usa vtexOrdersService.syncOrders que já faz todo o fluxo completo
+          processingResult = await vtexOrdersService.syncOrders({
+            orders: ordersList,
+            dataInicial: finalStartDate,
+            dataFinal: finalToDate
+          });
+          
+          logHelpers.logOrders('info', '✅ [Background] Processamento concluído', {
+            jobId,
+            processingResult
+          });
+        } else {
+          logHelpers.logOrders('info', 'ℹ️ [Background] Nenhum pedido encontrado no período', {
+            jobId,
+            startDate: finalStartDate,
+            toDate: finalToDate
+          });
+        }
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result: {
+            totalOrders: ordersList.length,
+            ordersProcessed: processingResult?.transformedOrders || 0,
+            csvGenerated: processingResult?.csvResult?.success || false,
+            emarsysSent: processingResult?.emarsysSendResult?.success || false,
+            csvFile: processingResult?.csvResult?.filename || null,
+            period: {
+              startDate: finalStartDate,
+              toDate: finalToDate,
+              brazilianDate,
+              startTime,
+              endTime
+            }
+          }
+        });
+        
+        logHelpers.logOrders('info', '🎉 [Background] Job finalizado com sucesso', {
+          jobId,
+          status: 'completed',
+          totalOrders: ordersList.length,
+          csvGenerated: processingResult?.csvResult?.success || false,
+          csvFile: processingResult?.csvResult?.filename || null
+        });
+        
+      } catch (error) {
+        logHelpers.logOrders('error', '❌ [Background] Erro na extração de pedidos', {
+          jobId,
+          errorMessage: error.message,
+          errorStack: error.stack
+        });
+        
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message,
+          errorStack: error.stack
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      jobId,
+      message: 'Extração de pedidos iniciada em background - evita timeout de 1 minuto',
+      checkStatus: `/api/background/status/${jobId}`,
+      config: { 
+        brazilianDate, 
+        startDate, 
+        toDate, 
+        startTime, 
+        endTime, 
+        per_page, 
+        batching, 
+        daysPerBatch, 
+        maxOrders 
+      },
+      instructions: {
+        pt: 'Use o endpoint checkStatus para acompanhar o progresso',
+        en: 'Use the checkStatus endpoint to track progress'
+      },
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`❌ [Background] Erro ao iniciar extração de pedidos: ${error.message}`);
     res.status(500).json({
       success: false,
       error: error.message

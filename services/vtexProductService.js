@@ -1,5 +1,6 @@
 const axios = require('axios');
 const rateLimit = require('axios-rate-limit');
+const MemoryOptimizer = require('../utils/memoryOptimizer');
 const fs = require('fs-extra');
 const path = require('path');
 const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../utils/dateUtils');
@@ -25,8 +26,8 @@ class VtexProductService {
     this._initializeAxiosRetry();
     
     // Configurações de diretórios
-    const defaultDataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, '..', 'data');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultDataDir =  path.join(__dirname, '..', 'data');
+    const defaultExports =  path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
     
@@ -36,6 +37,9 @@ class VtexProductService {
     
     // Controle de sincronização
     this._isSyncRunning = false;
+    
+    // Otimizador de memória
+    this.memoryOptimizer = new MemoryOptimizer();
     
     // Configurações SFTP para Emarsys
     this.sftpConfig = {
@@ -79,10 +83,23 @@ class VtexProductService {
         ]
       }
     };
-    this.sftpRemotePath = process.env.SFTP_REMOTE_PATH || '/catalog/catalog.csv.gz';
+    this.sftpRemotePath = process.env.SFTP_REMOTE_PATH;
     
     // Validação das configurações SFTP
     this._validateSftpConfig();
+  }
+
+  // Aguarda até que um arquivo exista e tenha tamanho mínimo
+  async _waitUntilFileReady(filePath, { timeoutMs = 60000, intervalMs = 200, minSize = 1 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const stats = await fs.stat(filePath);
+        if (stats.size >= minSize) return true;
+      } catch (_) { /* arquivo ainda não existe */ }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    throw new Error(`Arquivo não ficou pronto a tempo: ${filePath}`);
   }
 
   /**
@@ -493,6 +510,33 @@ class VtexProductService {
       console.log(`✅ ${products.length} produtos salvos em ${this.productsFile}`);
     } catch (error) {
       console.error('❌ Erro ao salvar produtos:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Salva produtos no arquivo JSON de forma otimizada (sem formatação)
+   * @param {Array} products - Array de produtos
+   */
+  async saveProductsToFileOptimized(products) {
+    try {
+      console.log(`💾 Salvando ${products.length} produtos (otimizado)...`);
+      await this.ensureDataDirectory();
+      
+      // Usa JSON.stringify diretamente para economizar memória
+      const jsonString = JSON.stringify(products);
+      const fsPromises = require('fs').promises;
+      await fsPromises.writeFile(this.productsFile, jsonString, 'utf8');
+      
+      // Força garbage collection após salvar
+      if (global.gc) {
+        console.log('🧹 Executando garbage collection após salvar produtos...');
+        global.gc();
+      }
+      
+      console.log(`✅ ${products.length} produtos salvos em ${this.productsFile} (otimizado)`);
+    } catch (error) {
+      console.error('❌ Erro ao salvar produtos (otimizado):', error.message);
       throw error;
     }
   }
@@ -1047,56 +1091,14 @@ class VtexProductService {
     });
   }
 
+
   /**
    * Upload do arquivo para Emarsys via SFTP
    * @param {string} localFilePath - Caminho do arquivo local
-   * @param {string} remotePath - Caminho remoto (opcional)
    * @returns {Promise<Object>} Resultado do upload
    */
-  async uploadToEmarsys(localFilePath, remotePath = null) {
+  async uploadToEmarsys(localFilePath) {
     console.log('📤 Iniciando upload para Emarsys via SFTP...');
-    
-    // Validação do arquivo local
-    if (!localFilePath) {
-      console.error('❌ Erro: localFilePath é undefined ou null');
-      return { success: false, error: 'localFilePath é undefined ou null' };
-    }
-    
-    try {
-      // Verifica se o arquivo existe
-      await fs.access(localFilePath);
-      const stats = await fs.stat(localFilePath);
-      console.log(`📁 Arquivo local: ${localFilePath}`);
-      console.log(`📏 Tamanho: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-    } catch (fileError) {
-      console.error(`❌ Erro ao acessar arquivo ${localFilePath}:`, fileError.message);
-      return { success: false, error: `Arquivo não encontrado: ${localFilePath}` };
-    }
-    
-    // Validação das configurações SFTP
-    const requiredVars = ['SFTP_HOST', 'SFTP_PORT', 'SFTP_USERNAME', 'SFTP_PASSWORD'];
-    const missingVars = requiredVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      console.error(`❌ Variáveis de ambiente SFTP ausentes: ${missingVars.join(', ')}`);
-      return { success: false, error: `Configuração SFTP incompleta: ${missingVars.join(', ')}` };
-    }
-    
-    // Determina o caminho remoto
-    let finalRemotePath = remotePath;
-    if (!finalRemotePath) {
-      const fileName = path.basename(localFilePath);
-      if (fileName.endsWith('.gz')) {
-        // Para arquivos .gz, usa o diretório catalog
-        finalRemotePath = this.sftpRemotePath;
-      } else {
-        // Para outros arquivos, usa o diretório catalog
-        finalRemotePath = `/catalog/${fileName}`;
-      }
-    }
-    
-    console.log(`📂 Caminho remoto: ${finalRemotePath}`);
-    
     const maxRetries = 3;
     const baseDelayMs = 2000;
     let attempt = 0;
@@ -1104,32 +1106,17 @@ class VtexProductService {
     const tryOnce = () => new Promise((resolve, reject) => {
       const conn = new Client();
       let timedOut = false;
-      
-      // Timeout para handshake inicial
-      const handshakeTimeout = setTimeout(() => {
-        timedOut = true;
-        console.error('❌ Timeout no handshake SFTP');
-        try { conn.end(); } catch (_) {}
-        reject(new Error('Timed out while waiting for handshake'));
-      }, 30000); // 30 segundos para handshake
-      
-      // Timeout geral do upload
       const overallTimeout = setTimeout(() => {
         timedOut = true;
         console.error('❌ Timeout geral do upload atingido');
         try { conn.end(); } catch (_) {}
         reject(new Error('SFTP upload timeout'));
-      }, 180000); // 3 minutos para upload completo
+      }, 120000); // 2 minutos por tentativa
 
-      const cleanup = () => {
-        clearTimeout(handshakeTimeout);
-        clearTimeout(overallTimeout);
-      };
+      const cleanup = () => clearTimeout(overallTimeout);
 
       conn.on('ready', () => {
         console.log('✅ Conexão SFTP estabelecida');
-        clearTimeout(handshakeTimeout); // Limpa o timeout do handshake
-        
         conn.sftp((err, sftp) => {
           if (err) {
             cleanup();
@@ -1141,7 +1128,7 @@ class VtexProductService {
 
           console.log('📤 Fazendo upload do arquivo...');
           const readStream = fs.createReadStream(localFilePath);
-          const writeStream = sftp.createWriteStream(finalRemotePath, { autoClose: true });
+          const writeStream = sftp.createWriteStream(this.sftpRemotePath, { autoClose: true });
 
           let bytesSent = 0;
           readStream.on('data', chunk => { bytesSent += chunk.length; });
@@ -1151,7 +1138,7 @@ class VtexProductService {
               cleanup();
               console.log(`✅ Upload concluído com sucesso (${bytesSent} bytes)`);
               conn.end();
-              resolve({ success: true, remotePath: finalRemotePath, localPath: localFilePath, bytesSent });
+              resolve({ success: true, remotePath: this.sftpRemotePath, localPath: localFilePath, bytesSent });
             }
           });
 
@@ -1184,18 +1171,6 @@ class VtexProductService {
 
     while (attempt < maxRetries) {
       try {
-        // Teste de conectividade antes de tentar upload
-        if (attempt === 0) {
-          console.log('🔍 Testando conectividade SFTP antes do upload...');
-          try {
-            await this.testSftpConnectivity();
-            console.log('✅ Conectividade SFTP OK, prosseguindo com upload...');
-          } catch (connectivityError) {
-            console.error('❌ Falha no teste de conectividade SFTP:', connectivityError.message);
-            return { success: false, error: `Falha na conectividade SFTP: ${connectivityError.message}` };
-          }
-        }
-        
         return await tryOnce();
       } catch (err) {
         attempt += 1;
@@ -1264,14 +1239,22 @@ class VtexProductService {
         
         console.log(`📋 Encontrados ${allProducts.length} produtos na API da VTEX`);
         
-        // Salva produtos
+        // Salva produtos usando método otimizado
         let saveSuccess = false;
         try {
-          await this.saveProductsToFile(allProducts);
+          await this.saveProductsToFileOptimized(allProducts);
           saveSuccess = true;
           console.log('✅ Produtos salvos com sucesso!');
         } catch (saveError) {
           console.error('❌ Erro ao salvar produtos:', saveError.message);
+          // Fallback para método tradicional
+          try {
+            await this.saveProductsToFile(allProducts);
+            saveSuccess = true;
+            console.log('✅ Produtos salvos com método fallback!');
+          } catch (fallbackError) {
+            console.error('❌ Erro no método fallback:', fallbackError.message);
+          }
         }
         
         // Salva informações da sincronização
@@ -1299,21 +1282,16 @@ class VtexProductService {
           console.error('❌ Erro ao gerar CSV:', csvError.message);
         }
         
-        // Tentar upload para SFTP se configurado
+        // Tentar upload SOMENTE do arquivo .gz
         let uploadResult = null;
         let gzUploadResult = null;
         if (csvResult && process.env.ENABLE_EMARSYS_UPLOAD === 'true') {
-          try {
-            console.log('📤 Enviando arquivo CSV para SFTP...');
-            uploadResult = await this.uploadToEmarsys(csvResult.filepath);
-            console.log('✅ Upload CSV concluído');
-          } catch (uploadError) {
-            console.error('❌ Erro no upload CSV:', uploadError.message);
-          }
-          
-          // Tentar upload do arquivo .gz se foi gerado
-          if (csvResult.gzFilepath) {
+          if (!csvResult.gzFilepath) {
+            console.error('❌ Arquivo .gz não foi gerado. Abortando upload.');
+          } else {
             try {
+              // Aguarda o .gz estar fisicamente pronto no disco
+              await this._waitUntilFileReady(csvResult.gzFilepath, { timeoutMs: 120000, intervalMs: 300, minSize: 10 });
               console.log('📤 Enviando arquivo .gz para SFTP...');
               gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
               console.log('✅ Upload .gz concluído');

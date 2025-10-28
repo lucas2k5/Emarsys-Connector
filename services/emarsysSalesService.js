@@ -1,4 +1,4 @@
-require('dotenv').config({ debug: true });
+require('dotenv').config();
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
@@ -8,13 +8,8 @@ class EmarsysSalesService {
   constructor() {
     this.baseURL = process.env.EMARSYS_HAPI_URL;
     this.bearerToken = process.env.EMARSYS_BEARER_TOKEN;
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
-    console.log('🔧 [EmarsysSalesService] Constructor inicializado:');
-    console.log('   🌐 BaseURL:', this.baseURL);
-    console.log('   🔑 BearerToken configurado:', this.bearerToken ? 'Sim' : 'Não');
-    console.log('   📁 ExportsDir:', this.exportsDir);
-    console.log('   🔑 EMARSYS_BEARER_TOKEN:', process.env.EMARSYS_BEARER_TOKEN ? 'Configurado' : 'NÃO CONFIGURADO');
   }
 
   getAuthToken() {
@@ -95,6 +90,43 @@ class EmarsysSalesService {
    */
   async sendCsvFileToEmarsys(filename = null) {
     try {
+      // Verifica se está em modo DEBUG
+      const debugMode = process.env.DEBUG === 'true';
+      
+      if (debugMode) {
+        console.log('🐛 [DEBUG MODE] Pulando envio para Emarsys - apenas simulando envio...');
+        
+        let csvFile;
+        if (filename) {
+          const filePath = path.join(this.exportsDir, filename);
+          try {
+            const stats = await fs.stat(filePath);
+            csvFile = { filename, filePath, size: stats.size, modified: stats.mtime };
+            console.log(`📄 [DEBUG] Arquivo encontrado: ${filename}`);
+          } catch (error) {
+            throw new Error(`Arquivo não encontrado: ${filename}`);
+          }
+        } else {
+          csvFile = await this.getLatestOrdersCsvFile();
+          if (!csvFile) {
+            throw new Error('Nenhum arquivo CSV de orders encontrado');
+          }
+        }
+        
+        // Simula o envio bem-sucedido
+        console.log('✅ [DEBUG] Simulação de envio bem-sucedida para Emarsys');
+        
+        return {
+          success: true,
+          response: { message: 'DEBUG MODE - Envio simulado' },
+          source: 'debug',
+          filename: csvFile.filename,
+          csvSize: csvFile.size,
+          fileSize: csvFile.size,
+          debugMode: true
+        };
+      }
+      
       console.log('📤 [EmarsysSalesService] Enviando arquivo CSV para Emarsys...');
       
       const token = this.getAuthToken();
@@ -120,15 +152,6 @@ class EmarsysSalesService {
       }
 
       const csvContent = await this.loadCsvContent(csvFile.filePath);
-      
-      console.log(`📤 Enviando arquivo ${csvFile.filename} (${csvContent.length} caracteres) para Emarsys...`);
-      console.log('🌐 URL:', this.baseURL);
-      console.log('🔑 Token (primeiros 50 chars):', token.substring(0, 50) + '...');
-      console.log('📄 Headers a serem enviados:', {
-        'Authorization': `bearer ${token.substring(0, 20)}...`,
-        'Content-type': 'text/csv',
-        'Accept': 'text/plain'
-      });
 
       const response = await axios.post(this.baseURL, csvContent, {
         headers: {
@@ -157,12 +180,6 @@ class EmarsysSalesService {
       };
     } catch (error) {
       console.error('❌ Erro ao enviar arquivo CSV para Emarsys:');
-      console.error('   📊 Status:', error.response?.status);
-      console.error('   📝 Status Text:', error.response?.statusText);
-      console.error('   📄 Response Data:', error.response?.data);
-      console.error('   🔗 URL:', this.baseURL);
-      console.error('   🔑 Token (primeiros 20):', this.getAuthToken().substring(0, 20) + '...');
-      console.error('   📨 Headers enviados:', error.config?.headers);
       console.error('   🚨 Message:', error.message);
       
       return {

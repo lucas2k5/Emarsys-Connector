@@ -4,6 +4,163 @@ const { getBrazilianTimestampForFilename, getBrazilianTimestamp } = require('../
 
 class EmarsysCsvService {
   constructor() {}
+
+  /**
+   * Gera conteúdo CSV para produtos (com processamento em lotes otimizado)
+   * @param {Array} products - Array de produtos
+   * @returns {string} Conteúdo CSV
+   */
+  generateProductCsvContent(products) {
+    // Cabeçalho conforme especificação da Emarsys Catalog
+    const headers = [
+      'item',
+      'title',
+      'category',
+      'available',
+      'description',
+      'price',
+      'msrp',
+      'link',
+      'image',
+      'zoom_image',
+      'group_id',
+      'c_stock',
+      'c_ean',
+      'c_dataLancamento',
+      'c_altura_do_salto',
+      'c_beneficios',
+      'c_collab_barbie',
+      'c_cor',
+      'c_fechamento',
+      'c_forro',
+      'c_genero',
+      'c_material',
+      'c_medida_do_salto_cm',
+      'c_medidas',
+      'c_modelo',
+      'c_peso_do_produto',
+      'c_referencia_curta',
+      'c_tecnologia',
+      'c_tamanho'
+    ];
+
+    let csvContent = headers.join(',') + '\n';
+    const batchSize = 100; // Aumentado de 50 para 100 para acelerar processamento
+
+    console.log(`📊 Processando ${products.length} produtos em lotes de ${batchSize} (otimizado)...`);
+
+    for (let i = 0; i < products.length; i += batchSize) {
+      const batch = products.slice(i, i + batchSize);
+      const currentBatch = Math.floor(i/batchSize) + 1;
+      const totalBatches = Math.ceil(products.length/batchSize);
+      
+      // Log apenas a cada 10 lotes para reduzir verbosidade
+      if (currentBatch % 10 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
+        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}`);
+      }
+
+      batch.forEach(product => {
+        // Para cada produto, gerar uma linha para cada item (SKU)
+        if (product.items && Array.isArray(product.items)) {
+          product.items.forEach(item => {
+            // Função auxiliar para extrair valores de arrays
+            const extractArrayValue = (array, index = 0) => {
+              if (Array.isArray(array) && array.length > index) {
+                return array[index];
+              }
+              return '';
+            };
+            const row = [
+               this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
+               this.sanitizeField(product.productName, 100), // title
+               this.sanitizeCategory(product.categories?.[0] || product.category, 50), // category
+               item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',     // available
+               this.sanitizeField(product.description || '', 200),                      // description
+               this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
+               this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),   // msrp
+               this.sanitizeField(product.link || '', 200),                             // link
+               this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // image (sanitizada)
+               this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // zoom_image (sanitizada)
+               this.sanitizeField(product.productId, 50),                         // group_id
+               item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,             // c_stock
+               this.sanitizeField(item.ean || '', 50),                                  // c_ean
+               this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
+               this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),  // c_altura_do_salto
+               '',                                                                      // c_beneficios
+               '',                                                                      // c_collab_barbie
+               this.sanitizeField(extractArrayValue(product['Cor']), 50),              // c_cor
+               '',                                                                      // c_fechamento
+               this.sanitizeField(extractArrayValue(product['Forro']), 50),            // c_forro
+               this.sanitizeField(extractArrayValue(product['Gênero']), 50),           // c_genero
+               this.sanitizeField(extractArrayValue(product['Material']), 50),         // c_material
+               this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
+               '',                                                                      // c_medidas
+               this.sanitizeField(extractArrayValue(product['Modelo']), 50),           // c_modelo
+               this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),  // c_peso_do_produto
+               this.sanitizeField(extractArrayValue(product['Referência Curta']), 50), // c_referencia_curta
+               '',                                                                      // c_tecnologia
+               this.sanitizeField(extractArrayValue(item.Tamanho), 50)                 // c_tamanho
+            ];
+
+            csvContent += row.join(',') + '\n';
+          });
+        } else {
+          // Fallback: se não há items, usar dados do produto principal
+          const extractArrayValue = (array, index = 0) => {
+            if (Array.isArray(array) && array.length > index) {
+              return array[index];
+            }
+            return '';
+          };
+
+          const row = [
+             this.sanitizeField(product.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
+             this.sanitizeField(product.productName || '', 100),                       // title
+             this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
+             'true',                                                                   // available
+             this.sanitizeField(product.description || '', 200),                       // description
+             this.formatPrice(product.price || 0),                                     // price
+             this.formatPrice(product.listPrice || 0),                                 // msrp
+             this.sanitizeField(product.link || '', 200),                              // link
+             this.sanitizeImageUrl(product.imageUrl),                            // image (sanitizada)
+             this.sanitizeImageUrl(product.imageUrl),                            // zoom_image (sanitizada)
+             this.sanitizeField(product.productId, 50),                                // group_id
+             product.availableQuantity || 0,                                           // c_stock
+             this.sanitizeField(product.ean || '', 50),                                // c_ean
+             this.formatEmarsysTimestamp(product.releaseDate || ''),                   // c_dataLancamento
+             this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),   // c_altura_do_salto
+             '',                                                                       // c_beneficios
+             '',                                                                       // c_collab_barbie
+             this.sanitizeField(extractArrayValue(product['Cor']), 50),               // c_cor
+             '',                                                                       // c_fechamento
+             this.sanitizeField(extractArrayValue(product['Forro']), 50),             // c_forro
+             this.sanitizeField(extractArrayValue(product['Gênero']), 50),            // c_genero
+             this.sanitizeField(extractArrayValue(product['Material']), 50),          // c_material
+             this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
+             '',                                                                       // c_medidas
+             this.sanitizeField(extractArrayValue(product['Modelo']), 50),            // c_modelo
+             this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),   // c_peso_do_produto
+             this.sanitizeField(extractArrayValue(product['Referência Curta']), 50),  // c_referencia_curta
+             '',                                                                       // c_tecnologia
+             this.sanitizeField(extractArrayValue(product['Tamanho']), 50)            // c_tamanho
+           ];
+
+           csvContent += row.join(',') + '\n';
+        }
+      });
+
+      // Força garbage collection a cada 20 lotes para liberar memória (ajustado para lotes maiores)
+      if (i > 0 && i % (batchSize * 10) === 0) {
+        if (global.gc) {
+          console.log('🧹 Executando garbage collection durante geração CSV...');
+          global.gc();
+        }
+      }
+    }
+
+    return csvContent;
+  }
+
   /**
    * Gera arquivo CSV de catálogo (produtos) para Emarsys
    * @param {Array} products - Array de produtos
@@ -32,7 +189,7 @@ class EmarsysCsvService {
       }
   
       // Cria o diretório de saída se não existir
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       let outputDir = process.env.EXPORTS_DIR || defaultExports;
       
       // Garante que o diretório existe
@@ -49,27 +206,12 @@ class EmarsysCsvService {
         }
       } catch (error) {
         console.error(`❌ Erro ao criar diretório ${outputDir}:`, error.message);
-        // Fallback para /tmp se houver erro
-        if (process.env.VERCEL) {
-          const fallbackDir = '/tmp';
-          console.log(`🔄 Usando diretório fallback: ${fallbackDir}`);
-          try {
-            await fs.mkdir(fallbackDir, { recursive: true });
-            await fs.access(fallbackDir);
-            console.log(`✅ Diretório fallback ${fallbackDir} criado e acessível`);
-            outputDir = fallbackDir;
-          } catch (fallbackError) {
-            console.error(`❌ Erro ao criar diretório fallback ${fallbackDir}:`, fallbackError.message);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        
       }
   
       const filePath = path.join(outputDir, filename);
   
-      // Gera o conteúdo CSV
+      // Gera o conteúdo CSV (método otimizado para produtos)
       const csvContent = this.generateProductCsvContent(products);
   
       // Salva o arquivo com BOM para UTF-8
@@ -194,38 +336,15 @@ class EmarsysCsvService {
   }
 
   /**
-   * Sanitiza categoria removendo barras e extraindo a palavra correta
-   * @param {string} category - Categoria no formato /palavra1/palavra2/
-   * @param {number} maxLength - Comprimento máximo do campo
-   * @returns {string} Categoria sanitizada
+   * Retorna apenas a última categoria (folha), ex: "/Sandálias/Anabela/" -> "Anabela"
+   * Suporta separadores '/' e '>'.
    */
-  sanitizeCategory(category, maxLength = 50) {
+  sanitizeCategory(category) {
     if (!category) return '';
-    
-    let cleanCategory = String(category).trim();
-    
-    // Remove barras do início e fim
-    cleanCategory = cleanCategory.replace(/^\/+|\/+$/g, '');
-    
-    // Remove caracteres especiais (>)
-    cleanCategory = cleanCategory.replace(/>/g, '');
-    
-    // Se há barras no meio (mais de uma palavra)
-    if (cleanCategory.includes('/')) {
-      const parts = cleanCategory.split('/').filter(part => part.trim() !== '');
-      // Pega a segunda palavra (índice 1) se existir, senão a primeira
-      cleanCategory = parts.length > 1 ? parts[1] : parts[0] || '';
-    }
-    
-    // Remove espaços extras
-    cleanCategory = cleanCategory.trim();
-    
-    // Trunca se necessário
-    if (cleanCategory.length > maxLength) {
-      cleanCategory = cleanCategory.substring(0, maxLength);
-    }
-    
-    return cleanCategory;
+    const normalized = String(category).trim().replace(/^\/+|\/+$/g, '');
+    if (!normalized) return '';
+    const parts = normalized.split(/[\/>]/).filter(Boolean).map(s => s.trim());
+    return parts.length ? parts[parts.length - 1] : '';
   }
 
   /**
@@ -273,140 +392,6 @@ class EmarsysCsvService {
     return parseFloat(price).toFixed(2);
   }
 
-  /**
-   * Gera conteúdo CSV para produtos no formato Emarsys Catalog
-   * @param {Array} products - Array de produtos
-   * @returns {string} Conteúdo CSV
-   */
-  generateProductCsvContent(products) {
-    // Cabeçalho conforme especificação da Emarsys Catalog
-    const headers = [
-      'item',
-      'title',
-      'category',
-      'available',
-      'description',
-      'price',
-      'msrp',
-      'link',
-      'image',
-      'zoom_image',
-      'group_id',
-      'c_stock',
-      'c_ean',
-      'c_dataLancamento',
-      'c_altura_do_salto',
-      'c_beneficios',
-      'c_collab_barbie',
-      'c_cor',
-      'c_fechamento',
-      'c_forro',
-      'c_genero',
-      'c_material',
-      'c_medida_do_salto_cm',
-      'c_medidas',
-      'c_modelo',
-      'c_peso_do_produto',
-      'c_referencia_curta',
-      'c_tecnologia',
-      'c_tamanho'
-    ];
-
-    const csvRows = [headers.join(',')];
-
-    products.forEach(product => {
-      // Para cada produto, gerar uma linha para cada item (SKU)
-      if (product.items && Array.isArray(product.items)) {
-        product.items.forEach(item => {
-          // Função auxiliar para extrair valores de arrays
-          const extractArrayValue = (array, index = 0) => {
-            if (Array.isArray(array) && array.length > index) {
-              return array[index];
-            }
-            return '';
-          };
-
-          const row = [
-             this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-             this.sanitizeField(product.productName, 100), // title
-             this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
-             item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',     // available
-             this.sanitizeField(product.description || '', 200),                      // description
-             this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
-             this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),   // msrp
-             this.sanitizeField(product.link || '', 200),                             // link
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl || ''),                 // image (sanitizada)
-             this.sanitizeImageUrl(item.images?.[0]?.imageUrl || ''),                 // zoom_image (sanitizada)
-             this.sanitizeField(product.productId || '', 50),                         // group_id
-             item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,             // c_stock
-             this.sanitizeField(item.ean || '', 50),                                  // c_ean
-             this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
-             this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),  // c_altura_do_salto
-             '',                                                                      // c_beneficios
-             '',                                                                      // c_collab_barbie
-             this.sanitizeField(extractArrayValue(product['Cor']), 50),              // c_cor
-             '',                                                                      // c_fechamento
-             this.sanitizeField(extractArrayValue(product['Forro']), 50),            // c_forro
-             this.sanitizeField(extractArrayValue(product['Gênero']), 50),           // c_genero
-             this.sanitizeField(extractArrayValue(product['Material']), 50),         // c_material
-             this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-             '',                                                                      // c_medidas
-             this.sanitizeField(extractArrayValue(product['Modelo']), 50),           // c_modelo
-             this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),  // c_peso_do_produto
-             this.sanitizeField(extractArrayValue(product['Referência Curta']), 50), // c_referencia_curta
-             '',                                                                      // c_tecnologia
-             this.sanitizeField(extractArrayValue(item.Tamanho), 50)                 // c_tamanho
-          ];
-
-          csvRows.push(row.join(','));
-        });
-      } else {
-        // Fallback: se não há items, usar dados do produto principal
-        const extractArrayValue = (array, index = 0) => {
-          if (Array.isArray(array) && array.length > index) {
-            return array[index];
-          }
-          return '';
-        };
-
-                 const row = [
-           this.sanitizeField(product.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-           this.sanitizeField(product.productName || '', 100),                       // title
-           this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
-           'true',                                                                   // available
-           this.sanitizeField(product.description || '', 200),                       // description
-           this.formatPrice(product.price || 0),                                     // price
-           this.formatPrice(product.listPrice || 0),                                 // msrp
-           this.sanitizeField(product.link || '', 200),                              // link
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl || ''),               // image (sanitizada)
-           this.sanitizeImageUrl(product.images?.[0]?.imageUrl || ''),               // zoom_image (sanitizada)
-           this.sanitizeField(product.productId || '', 50),                          // group_id
-           product.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,           // c_stock
-            '',                                                                       // c_ean
-            this.formatEmarsysTimestamp(product.releaseDate || ''),                   // c_dataLancamento
-           this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),   // c_altura_do_salto
-           '',                                                                       // c_beneficios
-           '',                                                                       // c_collab_barbie
-           this.sanitizeField(extractArrayValue(product['Cor']), 50),               // c_cor
-           '',                                                                       // c_fechamento
-           this.sanitizeField(extractArrayValue(product['Forro']), 50),             // c_forro
-           this.sanitizeField(extractArrayValue(product['Gênero']), 50),            // c_genero
-           this.sanitizeField(extractArrayValue(product['Material']), 50),          // c_material
-           this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-           '',                                                                       // c_medidas
-           this.sanitizeField(extractArrayValue(product['Modelo']), 50),            // c_modelo
-           this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),   // c_peso_do_produto
-           this.sanitizeField(extractArrayValue(product['Referência Curta']), 50),  // c_referencia_curta
-           '',                                                                       // c_tecnologia
-           ''                                                                        // c_tamanho
-         ];
-
-        csvRows.push(row.join(','));
-      }
-    });
-
-    return csvRows.join('\n');
-  }
 
   /**
    * Valida todos os pedidos antes de gerar CSV
@@ -434,7 +419,7 @@ class EmarsysCsvService {
    */
   async listCsvFiles() {
     try {
-      const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+      const defaultExports = path.join(__dirname, '..', 'exports');
       const exportsDir = process.env.EXPORTS_DIR || defaultExports;
       
       const files = await fs.readdir(exportsDir);

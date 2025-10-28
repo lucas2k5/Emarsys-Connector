@@ -6,3 +6,9 @@ node_modules/
 data/
 .vercel
 .env
+
+
+# Logs do sistema de monitoramento
+logs/
+data/alerts.json
+*.log

@@ -274,39 +274,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * @route GET /api/vtex/products/:id
- * @desc Obtém detalhes de um produto específico
- * @access Public
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const products = await vtexProductService.loadProductsFromFile();
-    
-    const product = products.find(p => p.id.toString() === id);
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Produto não encontrado',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: product,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// NOTE: Dynamic route moved to the end to avoid capturing specific paths like /sync
 
 /**
  * @route POST /api/vtex/products/sync
@@ -385,10 +353,69 @@ router.post('/sync', async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Erro ao iniciar sincronização em background:`, error.message);
+    console.error(`❌ Erro ao iniciar sincronização em background:`, error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/vtex/products/test-config
+ * @desc Testa configuração das variáveis de ambiente (para debug)
+ * @access Public
+ */
+router.get('/test-config', async (req, res) => {
+  try {
+    console.log('🧪 Testando configuração das variáveis de ambiente...');
+    
+    const config = {
+      VTEX_BASE_URL: process.env.VTEX_BASE_URL || 'undefined',
+      VTEX_APP_KEY: process.env.VTEX_APP_KEY ? '***' + process.env.VTEX_APP_KEY.slice(-4) : 'undefined',
+      VTEX_APP_TOKEN: process.env.VTEX_APP_TOKEN ? '***' + process.env.VTEX_APP_TOKEN.slice(-4) : 'undefined',
+      NODE_ENV: process.env.NODE_ENV || 'undefined'
+    };
+    
+    res.json({
+      success: true,
+      data: config,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro no teste de configuração:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/vtex/products/test-connectivity
+ * @desc Testa apenas a conectividade com a VTEX (para debug)
+ * @access Public
+ */
+router.get('/test-connectivity', async (req, res) => {
+  try {
+    console.log('🧪 Testando conectividade com VTEX...');
+    
+    const connectivityTest = await vtexProductService.testConnectivity();
+    
+    res.json({
+      success: true,
+      data: connectivityTest,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro no teste de conectividade:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
       timestamp: new Date().toISOString()
     });
   }
@@ -403,7 +430,7 @@ router.get('/sync', async (req, res) => {
   try {
     console.log(`🚀 Iniciando sincronização de produtos em background [GET]`);
     
-    const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.query;
+    const { maxProducts = '0', forceRefresh = 'false', batchSize = '50' } = req.query;
     
     // Gerar ID único para o job
     const jobId = `sync-products-get-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -422,7 +449,7 @@ router.get('/sync', async (req, res) => {
       status: 'starting',
       progress: 0,
       startTime: new Date().toISOString(),
-      config: { maxProducts: parseInt(maxProducts), forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) }
+      config: { maxProducts: parseInt(maxProducts) || 0, forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) || 50 }
     });
     
     // Executar sincronização diretamente em background
@@ -435,11 +462,18 @@ router.get('/sync', async (req, res) => {
           progress: 5
         });
         
-        const result = await vtexProductService.syncProducts({ 
-          maxProducts: parseInt(maxProducts), 
-          forceRefresh: forceRefresh === 'true', 
-          batchSize: parseInt(batchSize) 
+        // Adicionar timeout para evitar operações infinitas
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Timeout: Sincronização de produtos excedeu 30 minutos')), 30 * 60 * 1000);
         });
+        
+        const syncPromise = vtexProductService.syncProducts({ 
+          maxProducts: parseInt(maxProducts) || 0, 
+          forceRefresh: forceRefresh === 'true', 
+          batchSize: parseInt(batchSize) || 50 
+        });
+        
+        const result = await Promise.race([syncPromise, timeoutPromise]);
         
         // Atualizar status do job
         jobStatus.set(jobId, {
@@ -453,13 +487,27 @@ router.get('/sync', async (req, res) => {
         console.log(`✅ [Background] Sincronização GET ${jobId} concluída com sucesso`);
       } catch (error) {
         console.error(`❌ [Background] Erro no sync GET de produtos ${jobId}:`, error);
+        console.error(`❌ [Background] Stack trace completo:`, error?.data || error.stack);
+        
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
           status: 'failed',
           progress: 0,
           endTime: new Date().toISOString(),
-          error: error.message
+          error: error.message,
+          stack: error.stack,
+          type: error.constructor.name
         });
+        
+        // Log adicional para debug em produção
+        if (process.env.NODE_ENV === 'production') {
+          console.error(`❌ [PRODUCTION ERROR] Product sync failed:`, {
+            jobId,
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     });
     
@@ -483,7 +531,7 @@ router.get('/sync', async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Erro ao iniciar sincronização GET em background:`, error.message);
+    console.error(`❌ Erro ao iniciar sincronização GET em background:`, error?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -631,7 +679,7 @@ router.post('/generate-emarsys-csv', async (req, res) => {
     // Filtros opcionais do body da requisição
     const filters = {
       active: req.body.active !== undefined ? req.body.active : undefined,
-      category: req.body.category || undefined,
+      category: req.body.category,
       brand: req.body.brand || undefined
     };
     
@@ -815,6 +863,40 @@ router.get('/filter', async (req, res) => {
         department: department || null,
         active: active !== undefined ? active === 'true' : null
       },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route GET /api/vtex/products/:id
+ * @desc Obtém detalhes de um produto específico
+ * @access Public
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const products = await vtexProductService.loadProductsFromFile();
+    
+    const product = products.find(p => p.id.toString() === id);
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: product,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

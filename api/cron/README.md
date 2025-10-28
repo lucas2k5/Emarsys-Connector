@@ -16,8 +16,9 @@ Os cron jobs agora são executados diretamente pelo servidor Node.js usando a bi
 2. **Sincronização de Orders**  
    - **Frequência**: A cada 5 horas (`0 */5 * * *`)
    - **Endpoint**: `GET /api/integration/orders-extract-all`
-   - **Parâmetros**: `?batching=true&startDate=...&toDate=...`
+   - **Parâmetros**: `?batching=true&daysPerBatch=1&maxOrders=100&per_page=50&startDate=...&toDate=...`
    - **Configurado em**: `utils/cronService.js`
+   - **🆕 Batching Automático**: Sempre usa processamento em lotes para evitar timeouts
 
 ### Gerenciamento
 

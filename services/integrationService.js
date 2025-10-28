@@ -17,8 +17,8 @@ class IntegrationService {
     // this.vtexService removido - usando vtexOrdersService diretamente
     this.emarsysWebdav = new EmarsysWebdavService();
     this.emarsysHapi = new EmarsysHapiService();
-    const defaultDataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, '..', 'data');
-    const defaultExports = process.env.VERCEL ? '/tmp/exports' : path.join(__dirname, '..', 'exports');
+    const defaultDataDir = path.join(__dirname, '..', 'data');
+    const defaultExports = path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
   }
@@ -315,11 +315,28 @@ class IntegrationService {
       let realEmail = email;
       try {
         const emailMapping = await this.vtexOrdersService.getRealEmail(email);
+        console.log('👤 DEBUG : emailMapping:', emailMapping);
         if (emailMapping && emailMapping.email) {
           realEmail = emailMapping.email;
         }
       } catch (error) {
         console.warn(`⚠️ Não foi possível obter email real para ${email}`);
+      }
+
+      // Busca o status de isNewsletterOptIn da CL (Customer List)
+      // Valor inicial vem da trigger (pedido) - campo isNewsletterOptIn
+      let optinStatus = clientProfile.isNewsletterOptIn;
+      console.log('👤 optinStatus:', optinStatus);
+      try {
+        const clOptIn = await this.vtexOrdersService.getCLOptInStatus(realEmail);
+        if (clOptIn !== null) {
+          // Usa o valor da CL se disponível (prioridade)
+          optinStatus = clOptIn;
+        }
+        // Se clOptIn for null, mantém o valor da trigger (clientProfile.isNewsletterOptIn)
+      } catch (error) {
+        console.warn(`⚠️ Erro ao buscar isNewsletterOptIn da CL para ${realEmail}, usando valor da trigger`);
+        // Mantém o valor da trigger em caso de erro
       }
 
       // Processa documento
@@ -342,7 +359,7 @@ class IntegrationService {
         state: order.shippingData.address.state,
         postalCode: order.shippingData.address.postalCode,
         userProfileId: clientProfile.userProfileId,
-        optin: clientProfile.optin || true
+        optin: optinStatus
       };
 
     } catch (error) {
@@ -397,9 +414,33 @@ class IntegrationService {
     if (processedData.salesData && processedData.salesData.length > 0) {
       const salesFilename = `${config.twoYears ? '2y_' : ''}sales_items_${timestamp}-online.csv`;
       
-      console.log(`📄 Gerando CSV com ${processedData.salesData.length} registros de vendas...`);
+      // 1) Deduplicação por itens já processados em processed-orders.json
+      // Normaliza order/item (remove aspas)
+      const normalize = (v) => String(v || '').replace(/"/g, '');
+      const uniqueItemIds = processedData.salesData
+        .map(o => `${normalize(o.order)}_${normalize(o.item)}`)
+        .filter(Boolean);
+
+      let filteredSalesData = processedData.salesData;
+      try {
+        const status = await this.vtexOrdersService.getProcessedItemsStatus(uniqueItemIds);
+        if (status?.processed?.length) {
+          const processedSet = new Set(status.processed);
+          filteredSalesData = processedData.salesData.filter(o => !processedSet.has(`${normalize(o.order)}_${normalize(o.item)}`));
+          console.log(`⏭️ Itens já processados ignorados: ${processedData.salesData.length - filteredSalesData.length}`);
+        }
+      } catch (e) {
+        console.warn('⚠️ Falha ao consultar processed-orders.json, seguindo sem filtro:', e.message);
+      }
+
+      if (!filteredSalesData.length) {
+        console.log('ℹ️ Nenhum item novo para CSV após deduplicação. Pulando geração.');
+        return results;
+      }
+
+      console.log(`📄 Gerando CSV com ${filteredSalesData.length} registros de vendas...`);
       
-      const salesResult = await this.vtexOrdersService.generateCsvFromOrders(processedData.salesData, {
+      const salesResult = await this.vtexOrdersService.generateCsvFromOrders(filteredSalesData, {
         filename: salesFilename
       });
       
@@ -407,6 +448,19 @@ class IntegrationService {
       
       if (salesResult.success) {
         console.log(`✅ CSV de vendas gerado: ${salesResult.filename}`);
+
+        // 2) Persistir itens processados para futuras deduplicações
+        try {
+          const syncTs = new Date().toISOString();
+          const processedItems = filteredSalesData.map(o => ({
+            orderId: normalize(o.order),
+            itemId: normalize(o.item),
+            uniqueItemId: `${normalize(o.order)}_${normalize(o.item)}`
+          }));
+          await this.vtexOrdersService.saveProcessedOrders(processedItems, syncTs);
+        } catch (persistErr) {
+          console.warn('⚠️ Não foi possível salvar processed-orders após geração do CSV:', persistErr.message);
+        }
       } else {
         console.error(`❌ Erro ao gerar CSV de vendas: ${salesResult.error}`);
       }
