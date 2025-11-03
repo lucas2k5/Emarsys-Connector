@@ -93,11 +93,35 @@ router.post('/sync-products', async (req, res) => {
 // Inicia sincronização de pedidos em background
 router.post('/cron-orders', async (req, res) => {
   try {
-    const { maxOrders = 0, dateFrom, dateTo, startDate, toDate } = req.body;
+   const { 
+      maxOrders = 0, 
+      dateFrom, 
+      dateTo, 
+      startDate, 
+      toDate, 
+      brazilianDate, 
+      startTime, 
+      endTime 
+    } = req.body;
     
-    // Suporta tanto dateFrom/dateTo quanto startDate/toDate
-    const finalStartDate = startDate || dateFrom;
-    const finalToDate = toDate || dateTo;
+    let finalStartDate = startDate || dateFrom;
+    let finalToDate = toDate || dateTo;
+    
+    // Processar data brasileira se fornecida
+    if (brazilianDate) {
+      const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
+      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime || '00:00', endTime || '23:59');
+      finalStartDate = range.startUTC;
+      finalToDate = range.endUTC;
+      
+      logHelpers.logOrders('info', '📅 [Background] Data brasileira processada (cron-orders)', {
+        brazilianDate,
+        startTime: startTime,
+        endTime: endTime,
+        convertedStartUTC: finalStartDate,
+        convertedEndUTC: finalToDate
+      });
+    }
     
     console.log(`🚀 [Background] Iniciando cron sync de pedidos (SQLite): maxOrders=${maxOrders}`);
     
@@ -111,7 +135,14 @@ router.post('/cron-orders', async (req, res) => {
       status: 'starting',
       progress: 0,
       startTime: new Date().toISOString(),
-      config: { maxOrders, dateFrom: finalStartDate, dateTo: finalToDate }
+      config: { 
+        maxOrders, 
+        dateFrom: finalStartDate, 
+        dateTo: finalToDate,
+        brazilianDate,
+        startTime,
+        endTime
+      }
     });
     
     // Executar sincronização de orders diretamente em background usando ordersSyncService
@@ -157,7 +188,14 @@ router.post('/cron-orders', async (req, res) => {
       jobId,
       message: 'Sincronização de pedidos (cron) iniciada em background',
       checkStatus: `/api/background/status/${jobId}`,
-      config: { maxOrders, dateFrom: finalStartDate, dateTo: finalToDate }
+      config: { 
+        maxOrders, 
+        dateFrom: finalStartDate, 
+        dateTo: finalToDate,
+        brazilianDate,
+        startTime,
+        endTime
+      }
     });
     
   } catch (error) {

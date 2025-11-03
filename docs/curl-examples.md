@@ -1,5 +1,176 @@
 # Exemplos de CURL para EMS Orders
 
+## 📚 Índice
+
+- [Nova Rota: `/cron-orders` (SQLite)](#-nova-rota-extração-de-pedidos-com-sqlite-cron-orders)
+- [Rotas de Background Jobs](#-rotas-de-background-jobs)
+- [Rota Original: `/orders-extract-all` (Mantida Intacta)](#-rota-original-extração-de-pedidos-mantida-intacta)
+- [Endpoints EMS Orders](#endpoint-existente-para-inserir-pedidos)
+- [Reprocessamento](#reprocessar-planilhas-não-enviadas)
+
+---
+
+## 🆕 Nova Rota: Extração de Pedidos com SQLite (`/cron-orders`)
+
+**Endpoint:** `POST /api/background/cron-orders`
+
+Esta rota usa o novo serviço `ordersSyncService` que armazena pedidos no SQLite local. Recomendada para uso em produção e cron jobs.
+
+**Características:**
+- ✅ Armazena pedidos no SQLite local
+- ✅ Processa automaticamente (busca VTEX → SQLite → CSV → Emarsys)
+- ✅ Marca pedidos como sincronizados no SQLite
+- ✅ Usada automaticamente pelo cron job configurado
+
+### Extração Manual por Data Brasileira (Recomendado)
+
+Esta é a forma recomendada para execução manual, similar ao formato da rota original:
+
+```bash
+curl --location 'http://localhost:3000/api/background/cron-orders' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data '{
+    "brazilianDate": "2025-10-23",
+    "startTime": "00:01",
+    "endTime": "06:00"
+  }'
+```
+
+**Exemplo com URL encoding (alternativa):**
+```bash
+curl --location 'http://localhost:3000/api/background/cron-orders' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data '{"brazilianDate":"2025-10-23","startTime":"00:01","endTime":"06:00"}'
+```
+
+### Extração Manual por Período UTC
+
+```bash
+curl --location 'http://localhost:3000/api/background/cron-orders' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data '{
+    "startDate": "2025-10-23T03:01:00Z",
+    "toDate": "2025-10-23T09:00:00Z",
+    "maxOrders": 100
+  }'
+```
+
+### Extração com Limite de Pedidos
+
+```bash
+curl --location 'http://localhost:3000/api/background/cron-orders' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data '{
+    "brazilianDate": "2025-10-23",
+    "startTime": "00:01",
+    "endTime": "06:00",
+    "maxOrders": 50
+  }'
+```
+
+**Resposta esperada:**
+```json
+{
+  "success": true,
+  "jobId": "cron-orders-1729680000000-abc123",
+  "message": "Sincronização de pedidos (cron) iniciada em background",
+  "checkStatus": "/api/background/status/cron-orders-1729680000000-abc123",
+  "config": {
+    "maxOrders": 50,
+    "dateFrom": "2025-10-23T03:01:00Z",
+    "dateTo": "2025-10-23T09:00:00Z"
+  }
+}
+```
+
+### Verificar Status do Job
+
+Após executar a extração, você receberá um `jobId`. Use-o para verificar o status:
+
+```bash
+# Substitua {jobId} pelo ID retornado na resposta
+curl --location 'http://localhost:3000/api/background/status/cron-orders-1729680000000-abc123' \
+  --header 'Accept: application/json'
+```
+
+**Status possíveis:**
+- `starting`: Job iniciando
+- `running`: Job em execução
+- `completed`: Job concluído com sucesso
+- `failed`: Job falhou
+
+**Resposta esperada:**
+```json
+{
+  "success": true,
+  "job": {
+    "id": "cron-orders-1729680000000-abc123",
+    "type": "cron-orders",
+    "status": "completed",
+    "progress": 100,
+    "startTime": "2025-10-23T10:00:00.000Z",
+    "endTime": "2025-10-23T10:05:00.000Z",
+    "duration": 300,
+    "durationFormatted": "5m 0s",
+    "result": {
+      "success": true,
+      "totalOrders": 45,
+      "transformedOrders": 42,
+      "csvResult": {
+        "success": true,
+        "filename": "ems-sl-pcdly-2025-10-23T10-05-00-2025-10-23.csv",
+        "emarsysSent": true
+      }
+    }
+  }
+}
+```
+
+## 📝 Rotas de Background Jobs
+
+### Listar Todos os Jobs
+
+```bash
+curl --location 'http://localhost:3000/api/background/jobs' \
+  --header 'Accept: application/json'
+```
+
+### Verificar Status de um Job Específico
+
+```bash
+curl --location 'http://localhost:3000/api/background/status/{jobId}' \
+  --header 'Accept: application/json'
+```
+
+## 📝 Rota Original: Extração de Pedidos (Mantida Intacta)
+
+### Rota `/api/integration/orders-extract-all` (Serviços Originais)
+
+Esta rota continua usando os serviços originais (`vtexOrdersService`) e está mantida para compatibilidade.
+
+**GET (Query Parameters):**
+```bash
+curl --location 'http://localhost:3000/api/integration/orders-extract-all/?brazilianDate=2025-10-23&startTime=00%3A01&endTime=06%3A00' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json'
+```
+
+**POST (Body JSON):**
+```bash
+curl --location 'http://localhost:3000/api/integration/orders-extract-all' \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json' \
+  --data '{
+    "brazilianDate": "2025-10-23",
+    "startTime": "00:01",
+    "endTime": "06:00"
+  }'
+```
+
 ## Endpoint Existente para Inserir Pedidos
 
 ### Inserir Pedido Individual (endpoint existente)
