@@ -276,20 +276,6 @@ class VtexProductService {
   }
 
   /**
-   * Busca SKU específico por ID
-   * @param {number} skuId - ID do SKU
-   * @returns {Promise<Object>} Dados do SKU
-   */
-  async skuById(skuId) {
-    try {
-      const response = await this.client.get(`/api/catalog_system/pvt/sku/stockkeepingunitbyid/${skuId}`);
-      return { success: true, data: response.data };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
    * Busca e armazena todos os productIds e SKUs da API privada da VTEX
    * @returns {Promise<Object>} Objeto com productIds e SKUs
    */
@@ -655,116 +641,6 @@ class VtexProductService {
   }
 
   /**
-   * Extrai categoria do nome do produto
-   * @param {string} productName - Nome do produto
-   * @returns {string} Categoria extraída
-   */
-  extractCategoryFromName(productName) {
-    if (!productName || typeof productName !== 'string') {
-      return '';
-    }
-    
-    const name = productName.toLowerCase();
-    
-    // Mapeamento de palavras-chave para categorias
-    const categoryMap = {
-      'sandália': 'Sandália',
-      'sandal': 'Sandália',
-      'sapato': 'Sapato',
-      'sapato': 'Sapato',
-      'tênis': 'Tênis',
-      'tenis': 'Tênis',
-      'chinelo': 'Chinelo',
-      'bota': 'Bota',
-      'coturno': 'Coturno',
-      'sapatilha': 'Sapatilha',
-      'mocassim': 'Mocassim',
-      'oxford': 'Oxford',
-      'sneaker': 'Sneaker',
-      'esportivo': 'Esportivo',
-      'social': 'Social',
-      'casual': 'Casual'
-    };
-    
-    // Procura por palavras-chave no nome
-    for (const [keyword, category] of Object.entries(categoryMap)) {
-      if (name.includes(keyword)) {
-        return category;
-      }
-    }
-    
-    return '';
-  }
-
-  /**
-   * Busca nome do produto na API pública usando o productId
-   * @param {number} productId - ID do produto
-   * @returns {Promise<string>} Nome do produto
-   */
-  async fetchProductNameByProductId(productId) {
-    try {
-      // Busca na API pública usando o productId
-      const url = `https://www.piccadilly.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
-      const response = await axios.get(url, {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 5000,
-        validateStatus: function (status) {
-          return status < 500;
-        }
-      });
-
-      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-        return response.data[0].productName || '';
-      }
-      
-      return '';
-    } catch (error) {
-      console.warn(`⚠️ Erro ao buscar nome do produto para productId ${productId}:`, error.message);
-      return '';
-    }
-  }
-
-  /**
-   * Busca nome do produto usando busca por termo (fallback)
-   * @param {string} searchTerm - Termo de busca
-   * @returns {Promise<string>} Nome do produto
-   */
-  async fetchProductNameBySearch(searchTerm) {
-    try {
-      const url = `https://www.piccadilly.com.br/api/catalog_system/pub/products/search?q=${encodeURIComponent(searchTerm)}&_from=0&_to=9`;
-      const response = await axios.get(url, {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 5000,
-        validateStatus: function (status) {
-          return status < 500;
-        }
-      });
-
-      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-        // Procura por um produto que contenha o termo de busca
-        for (const product of response.data) {
-          if (product.productName && product.productName.toLowerCase().includes(searchTerm.toLowerCase())) {
-            return product.productName;
-          }
-        }
-        // Se não encontrou exato, retorna o primeiro
-        return response.data[0].productName || '';
-      }
-      
-      return '';
-    } catch (error) {
-      console.warn(`⚠️ Erro ao buscar produto por termo "${searchTerm}":`, error.message);
-      return '';
-    }
-  }
-
-  /**
    * Busca dados completos do produto na API privada da VTEX
    * @param {number} productId - ID do produto
    * @returns {Promise<Object>} Dados completos do produto
@@ -813,8 +689,10 @@ class VtexProductService {
       if (productDetails) {
         // Extrai nome do produto exatamente como a VTEX retorna
         productName = productDetails.Name || productDetails.name;
-        productDescription = productDetails.Description || productDetails.description || '';
-        productCategory = productDetails.CategoryName || productDetails.categoryName || '';
+        productDescription = productDetails.Description;
+        productCategory = productDetails.CategoryName;
+        // Flag de atividade do produto vinda da API privada
+        var productIsActive = productDetails.IsActive === true || productDetails.isActive === true;
         
         console.log(`✅ Produto ${productId}: Dados encontrados na API privada`);
         console.log(`   Nome: "${productName}"`);
@@ -824,17 +702,13 @@ class VtexProductService {
         console.log(`⚠️ Produto ${productId}: Dados não encontrados na API privada`);
       }
       
-      // Se não encontrou categoria na API privada, tenta extrair do nome
-      if (!productCategory) {
-        extractedCategory = this.extractCategoryFromName(productName);
-        if (extractedCategory) {
-          console.log(`✅ Produto ${productId}: Categoria extraída "${extractedCategory}" do nome "${productName}"`);
-        } else {
-          console.log(`⚠️ Produto ${productId}: Nenhuma categoria extraída do nome "${productName}"`);
-        }
-      } else {
+      // Usa somente a categoria vinda da API privada quando disponível
+      if (productCategory) {
         extractedCategory = productCategory;
         console.log(`✅ Produto ${productId}: Categoria obtida da API privada: "${extractedCategory}"`);
+      } else {
+        extractedCategory = 'inativo';
+        console.log(`⚠️ Produto ${productId}: Categoria não disponível na API privada`);
       }
     } catch (error) {
       console.warn(`⚠️ Erro ao buscar dados do produto ${productId}:`, error.message);
@@ -842,6 +716,7 @@ class VtexProductService {
     }
     
     // Constrói o objeto produto no formato esperado pela planilha
+    const forceInactiveByCategory = typeof extractedCategory === 'string' && extractedCategory.toLowerCase().includes('inativo');
     const product = {
       productId: productId,
       productName: productName,
@@ -877,7 +752,8 @@ class VtexProductService {
             commertialOffer: {
               Price: 0, // Vazio já que não temos preço da API privada
               ListPrice: 0,
-              IsAvailable: sku.IsActive || false,
+              // available deve respeitar a atividade do produto, do SKU e a categoria inativa
+              IsAvailable: (typeof productIsActive === 'boolean' ? productIsActive : false) && (sku.IsActive === true) && !forceInactiveByCategory,
               AvailableQuantity: 0 // Vazio já que não temos estoque da API privada
             }
           }],
