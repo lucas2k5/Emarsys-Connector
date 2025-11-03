@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+README.md
+*.md
+logs
+data
+exports
+.cursor
+.vscode
+.idea
+

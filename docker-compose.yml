@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: emarsys-connector
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=${PORT:-3000}
+      - HOST=${HOST:-0.0.0.0}
+      - VTEX_BASE_URL=${VTEX_BASE_URL}
+      - VTEX_APP_KEY=${VTEX_APP_KEY}
+      - VTEX_APP_TOKEN=${VTEX_APP_TOKEN}
+      - VTEX_ORDERS_URL=${VTEX_ORDERS_URL:-/_v/orders/list}
+      - DEBUG=${DEBUG:-false}
+      - ENABLE_EMARSYS_UPLOAD=${ENABLE_EMARSYS_UPLOAD:-true}
+      - SQLITE_DB_PATH=/app/data/orders.db
+    volumes:
+      - ./data:/app/data
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - sqlite_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  sqlite_data:
+    driver: local
+

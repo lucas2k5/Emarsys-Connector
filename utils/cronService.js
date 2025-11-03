@@ -122,19 +122,18 @@ class CronService {
       logHelpers.logOrders('info', '🔗 [CRON] Período atual calculado', { period });
       logHelpers.logOrders('info', '🔗 [CRON] Próximo período calculado', { nextExecution });
       
-      // MUDANÇA: Usar rota de background job ao invés da rota síncrona para evitar timeout 504
-      const url = `${this.baseUrl}/api/background/orders-extract-all`;
+      // NOVA ROTA: Usar /cron-orders que usa ordersSyncService (SQLite)
+      const url = `${this.baseUrl}/api/background/cron-orders`;
       const payload = period
-        ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 }
-        : { per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 };
+        ? { startDate: period.startDate, toDate: period.toDate, maxOrders: 100 }
+        : { maxOrders: 100 };
 
-      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON (background job)', {
+      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON (cron-orders com SQLite)', {
         endpoint: url,
         payload,
         cronExpression: this.ordersSyncCron,
-        mode: 'background-job',
-        batchingEnabled: true,
-        daysPerBatch: 1,
+        mode: 'cron-orders-sqlite',
+        service: 'ordersSyncService',
         maxOrders: 100
       });
       

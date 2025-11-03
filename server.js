@@ -14,6 +14,15 @@ const { httpLogger } = require('./utils/httpLogger');
 const SystemMonitor = require('./services/systemMonitor');
 const ResourceMonitor = require('./middleware/resourceMonitor');
 
+// Inicializar SQLite database
+const { getDatabase } = require('./database/sqlite');
+const db = getDatabase();
+db.init().then(() => {
+  console.log('✅ SQLite database initialized successfully');
+}).catch((error) => {
+  console.error('❌ Failed to initialize SQLite database:', error);
+});
+
 const emarsysRoutes = require('./routes/emarsys');
 const vtexProductRoutes = require('./routes/vtexProducts');
 const emarsysSalesRoutes = require('./routes/emarsysSales');

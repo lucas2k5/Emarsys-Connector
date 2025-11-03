@@ -910,30 +910,71 @@ router.get('/orders-extract-all', async (req, res) => {
             const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
               
             if (emsRecord && emsRecord.isSync === false) {
-                  console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
+                  console.log(`✅ Pedido ${orderId} já existe no SQLite com isSync=false - pulando processamento`);
                   hookResults.alreadySynced++;
               } else {
-                // Registro não existe na EMS, pode processar
-                console.log(`🆕 Pedido ${orderId} não existe na EMS - processando...`);
+                // Registro não existe no SQLite, pode processar
+                console.log(`🆕 Pedido ${orderId} não existe no SQLite - processando...`);
                 
-                // Após sincronização na EMS, enviar para o hook
-                const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
-                if (sendResult.success) {
-                  if (sendResult.skipped) {
-                    console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
+                // Salvar diretamente no SQLite
+                try {
+                  const { getDatabase } = require('../database/sqlite');
+                  const db = getDatabase();
+                  await db.init();
+                  
+                  // orderDetail já foi buscado anteriormente (linha 900)
+                  // Transformar para formato SQLite
+                  const formattedOrders = [];
+                  if (orderDetail.items && Array.isArray(orderDetail.items)) {
+                    for (const item of orderDetail.items) {
+                      formattedOrders.push({
+                        order: orderId,
+                        item: item.id || item.sku || item.productId,
+                        email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
+                        quantity: item.quantity || 1,
+                        price: item.price || item.sellingPrice || 0,
+                        timestamp: orderDetail.creationDate || orderDetail.invoiceCreatedDate || new Date().toISOString(),
+                        isSync: false,
+                        order_status: orderDetail.status || orderDetail.orderStatus || null,
+                        s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
+                        s_store_id: 'piccadilly',
+                        s_sales_channel: orderDetail.salesChannel || 'ecommerce',
+                        s_discount: orderDetail.discountValue || item.discount || '0'
+                      });
+                    }
                   } else {
-                    console.log(`✅ Pedido ${orderId} enviado com sucesso para o hook`);
+                    formattedOrders.push({
+                      order: orderId,
+                      item: orderId,
+                      email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
+                      quantity: orderDetail.totalItems || 1,
+                      price: orderDetail.totalValue || orderDetail.value || 0,
+                      timestamp: orderDetail.creationDate || orderDetail.invoiceCreatedDate || new Date().toISOString(),
+                      isSync: false,
+                      order_status: orderDetail.status || orderDetail.orderStatus || null,
+                      s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
+                      s_store_id: 'piccadilly',
+                      s_sales_channel: orderDetail.salesChannel || 'ecommerce',
+                      s_discount: orderDetail.discountValue || '0'
+                    });
                   }
-                  hookResults.success++;
-                } else {
-                  console.error(`❌ Falha ao enviar pedido ${orderId} para hook:`, sendResult.error);
+                  
+                  // Salvar no SQLite
+                  if (formattedOrders.length > 0) {
+                    const insertResult = db.insertBatch(formattedOrders);
+                    console.log(`✅ Pedido ${orderId} salvo no SQLite (${insertResult.inserted || 0} inseridos, ${insertResult.updated || 0} atualizados)`);
+                    hookResults.success++;
+                  } else {
+                    console.warn(`⚠️ Pedido ${orderId} sem itens para salvar`);
+                    hookResults.failed++;
+                  }
+                } catch (dbError) {
+                  console.error(`❌ Falha ao salvar pedido ${orderId} no SQLite:`, dbError.message);
                   hookResults.failed++;
                   hookResults.errors.push({ 
                     orderId, 
-                    step: 'hook_send', 
-                    status: sendResult.status, 
-                    error: sendResult.error, 
-                    data: sendResult.data 
+                    step: 'sqlite_save', 
+                    error: dbError.message
                   });
                 }
             }

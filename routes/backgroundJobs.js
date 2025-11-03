@@ -88,7 +88,89 @@ router.post('/sync-products', async (req, res) => {
   }
 });
 
+// POST /api/background/cron-orders
+// Nova rota para cron jobs usando ordersSyncService (SQLite)
+// Inicia sincronização de pedidos em background
+router.post('/cron-orders', async (req, res) => {
+  try {
+    const { maxOrders = 0, dateFrom, dateTo, startDate, toDate } = req.body;
+    
+    // Suporta tanto dateFrom/dateTo quanto startDate/toDate
+    const finalStartDate = startDate || dateFrom;
+    const finalToDate = toDate || dateTo;
+    
+    console.log(`🚀 [Background] Iniciando cron sync de pedidos (SQLite): maxOrders=${maxOrders}`);
+    
+    // Gerar ID único para o job
+    const jobId = `cron-orders-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Inicializar status do job
+    jobStatus.set(jobId, {
+      id: jobId,
+      type: 'cron-orders',
+      status: 'starting',
+      progress: 0,
+      startTime: new Date().toISOString(),
+      config: { maxOrders, dateFrom: finalStartDate, dateTo: finalToDate }
+    });
+    
+    // Executar sincronização de orders diretamente em background usando ordersSyncService
+    setImmediate(async () => {
+      try {
+        const OrdersSyncService = require('../services/ordersSyncService');
+        const ordersSyncService = new OrdersSyncService();
+        const result = await ordersSyncService.syncOrders({ 
+          maxOrders, 
+          dataInicial: finalStartDate, 
+          dataFinal: finalToDate 
+        });
+        
+        // Atualizar status do job
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'completed',
+          progress: 100,
+          endTime: new Date().toISOString(),
+          result
+        });
+      } catch (error) {
+        console.error(`❌ Erro no cron sync de orders ${jobId}:`, error);
+        jobStatus.set(jobId, {
+          ...jobStatus.get(jobId),
+          status: 'failed',
+          progress: 0,
+          endTime: new Date().toISOString(),
+          error: error.message
+        });
+      }
+    });
+    
+    // Atualizar status para running
+    jobStatus.set(jobId, {
+      ...jobStatus.get(jobId),
+      status: 'running',
+      progress: 5
+    });
+    
+    res.json({
+      success: true,
+      jobId,
+      message: 'Sincronização de pedidos (cron) iniciada em background',
+      checkStatus: `/api/background/status/${jobId}`,
+      config: { maxOrders, dateFrom: finalStartDate, dateTo: finalToDate }
+    });
+    
+  } catch (error) {
+    console.error(`❌ [Background] Erro ao iniciar cron sync de pedidos: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // POST /api/background/sync-orders
+// Rota original mantida intacta (usa serviços antigos)
 // Inicia sincronização de pedidos em background
 router.post('/sync-orders', async (req, res) => {
   try {
@@ -109,7 +191,7 @@ router.post('/sync-orders', async (req, res) => {
       config: { maxOrders, dateFrom, dateTo }
     });
     
-    // Executar sincronização de orders diretamente em background
+    // Executar sincronização de orders diretamente em background (serviços originais)
     setImmediate(async () => {
       try {
         const VtexOrdersService = require('../services/vtexOrdersService');
