@@ -28,6 +28,7 @@ nano .env  # ou use seu editor preferido
 ```
 
 **Variáveis essenciais no `.env`:**
+
 ```bash
 # VTEX API
 VTEX_APP_KEY=your-app-key
@@ -179,6 +180,7 @@ Os seguintes volumes são criados para persistência:
 ### Localização do Banco de Dados
 
 O banco SQLite está localizado em:
+
 - **No container**: `/app/data/orders.db`
 - **Volume Docker**: `sqlite_data` (gerenciado pelo Docker)
 
@@ -212,6 +214,7 @@ docker-compose ps
 ```
 
 **Saída esperada:**
+
 ```
 NAME                COMMAND             STATUS          PORTS
 app                 "npm start"         Up 2 minutes    0.0.0.0:3000->3000/tcp
@@ -332,12 +335,14 @@ Nunca commite o arquivo `.env` no Git. Ele já está no `.gitignore`.
 ### Firewall
 
 Em produção, configure firewall para permitir apenas:
+
 - Porta 3000 (aplicação)
 - Porta 22 (SSH, se necessário)
 
 ### SSL/TLS
 
 Para produção, configure HTTPS usando:
+
 - Nginx como reverse proxy
 - Certificados SSL (Let's Encrypt)
 - Ou use um load balancer com SSL termination
@@ -353,4 +358,3 @@ Para produção, configure HTTPS usando:
 - [Docker Documentation](https://docs.docker.com/)
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
 - [SQLite Documentation](https://www.sqlite.org/docs.html)
-

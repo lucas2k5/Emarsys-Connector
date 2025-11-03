@@ -153,14 +153,21 @@ class RetryService {
 
   /**
    * Retry para sincronização de pedidos
+   * Usa a nova rota /api/background/cron-orders (com SQLite)
    */
   async retrySyncOrders(retryItem) {
     const axios = require('axios');
     
     try {
+      // Usar a mesma lógica de baseUrl do cronService
+      const isProduction = process.env.NODE_ENV === 'production';
+      const baseUrl = isProduction && process.env.BASE_URL 
+        ? process.env.BASE_URL 
+        : `http://localhost:${process.env.PORT || 3000}`;
+      
       const response = await axios({
         method: 'POST',
-        url: 'http://localhost:3000/api/cron/sync-orders',
+        url: `${baseUrl}/api/background/cron-orders`, // NOVA ROTA com SQLite
         data: retryItem.payload,
         timeout: 120000
       });

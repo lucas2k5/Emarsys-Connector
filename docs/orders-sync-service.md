@@ -24,6 +24,7 @@ services/ordersSyncService.js
 ### `syncOrders(options)`
 
 Executa sincronização completa de pedidos:
+
 1. Busca pedidos da VTEX
 2. Salva no SQLite
 3. Transforma para formato Emarsys
@@ -32,12 +33,14 @@ Executa sincronização completa de pedidos:
 6. Marca como sincronizado
 
 **Parâmetros:**
+
 - `orders` (Array, opcional): Pedidos já fornecidos
 - `dataInicial` (String, opcional): Data inicial em ISO UTC
 - `dataFinal` (String, opcional): Data final em ISO UTC
 - `maxOrders` (Number, opcional): Limite de pedidos
 
 **Retorno:**
+
 ```javascript
 {
   success: true,
@@ -55,6 +58,7 @@ Executa sincronização completa de pedidos:
 Busca todos os pedidos de um período da VTEX.
 
 **Parâmetros:**
+
 - `startDate` (String): Data inicial em ISO UTC
 - `toDate` (String): Data final em ISO UTC
 - `useBatching` (Boolean): Se deve usar processamento em lotes
@@ -64,6 +68,7 @@ Busca todos os pedidos de um período da VTEX.
 Busca pedidos em lotes menores para evitar limite de páginas da VTEX.
 
 **Parâmetros:**
+
 - `startDate` (String): Data inicial em ISO UTC
 - `toDate` (String): Data final em ISO UTC
 - `daysPerBatch` (Number, padrão: 7): Dias por lote
@@ -73,9 +78,11 @@ Busca pedidos em lotes menores para evitar limite de páginas da VTEX.
 Salva pedidos da VTEX no SQLite.
 
 **Parâmetros:**
+
 - `orders` (Array): Array de pedidos da VTEX
 
 **Retorno:**
+
 ```javascript
 {
   success: true,
@@ -90,6 +97,7 @@ Salva pedidos da VTEX no SQLite.
 Busca pedidos pendentes de sincronização do SQLite.
 
 **Parâmetros:**
+
 - `options.startDate` (String, opcional): Data inicial
 - `options.endDate` (String, opcional): Data final
 
@@ -98,6 +106,7 @@ Busca pedidos pendentes de sincronização do SQLite.
 Marca pedidos como sincronizados no SQLite.
 
 **Parâmetros:**
+
 - `orders` (Array): Array de objetos `{order, item}`
 
 ## 🔄 Fluxo de Sincronização
@@ -168,13 +177,9 @@ Rota original mantida intacta que usa os serviços antigos (`vtexOrdersService`)
 ## 📝 Notas Importantes
 
 1. **Separação de Responsabilidades**: O `OrdersSyncService` é usado apenas pela nova rota `/cron-orders`. A rota `/sync-orders` continua usando os serviços originais.
-
 2. **Persistência**: Todos os dados são armazenados no SQLite (`data/orders.db`), não na entidade VTEX `emsOrdersV2`.
-
 3. **Controle de Sincronização**: O campo `isSync` no SQLite controla quais pedidos já foram enviados para Emarsys.
-
 4. **Rollback**: Os serviços originais (`emsOrdersService` e `vtexOrdersService`) estão intactos e podem ser usados para rollback se necessário.
-
 5. **Migrations**: As migrations do SQLite são executadas automaticamente na inicialização.
 
 ## 🔍 Troubleshooting
@@ -182,16 +187,17 @@ Rota original mantida intacta que usa os serviços antigos (`vtexOrdersService`)
 ### Pedidos não estão sendo sincronizados
 
 1. Verifique se o banco SQLite está inicializado:
+
    ```bash
    docker-compose exec app ls -la data/orders.db
    ```
-
 2. Verifique pedidos pendentes:
+
    ```bash
    curl -X GET http://localhost:3000/api/background/status/{jobId}
    ```
-
 3. Verifique logs:
+
    ```bash
    docker-compose logs -f app
    ```
@@ -199,13 +205,14 @@ Rota original mantida intacta que usa os serviços antigos (`vtexOrdersService`)
 ### Erro ao buscar pedidos da VTEX
 
 1. Verifique credenciais VTEX no `.env`:
+
    ```bash
    VTEX_APP_KEY=...
    VTEX_APP_TOKEN=...
    VTEX_BASE_URL=...
    ```
-
 2. Verifique se a API VTEX está acessível:
+
    ```bash
    curl -X GET "https://{vtex-base-url}/api/oms/pvt/orders" \
      -H "X-VTEX-API-AppKey: ..." \
@@ -223,4 +230,3 @@ Rota original mantida intacta que usa os serviços antigos (`vtexOrdersService`)
 - [Docker Setup Guide](./docker-setup.md)
 - [CURL Examples](./curl-examples.md)
 - [Database Schema](../database/migrations/001_create_orders_table.sql)
-

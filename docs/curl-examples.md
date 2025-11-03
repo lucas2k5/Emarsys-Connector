@@ -17,6 +17,7 @@
 Esta rota usa o novo serviço `ordersSyncService` que armazena pedidos no SQLite local. Recomendada para uso em produção e cron jobs.
 
 **Características:**
+
 - ✅ Armazena pedidos no SQLite local
 - ✅ Processa automaticamente (busca VTEX → SQLite → CSV → Emarsys)
 - ✅ Marca pedidos como sincronizados no SQLite
@@ -38,6 +39,7 @@ curl --location 'http://localhost:3000/api/background/cron-orders' \
 ```
 
 **Exemplo com URL encoding (alternativa):**
+
 ```bash
 curl --location 'http://localhost:3000/api/background/cron-orders' \
   --header 'Content-Type: application/json' \
@@ -73,6 +75,7 @@ curl --location 'http://localhost:3000/api/background/cron-orders' \
 ```
 
 **Resposta esperada:**
+
 ```json
 {
   "success": true,
@@ -98,12 +101,14 @@ curl --location 'http://localhost:3000/api/background/status/cron-orders-1729680
 ```
 
 **Status possíveis:**
+
 - `starting`: Job iniciando
 - `running`: Job em execução
 - `completed`: Job concluído com sucesso
 - `failed`: Job falhou
 
 **Resposta esperada:**
+
 ```json
 {
   "success": true,
@@ -153,6 +158,7 @@ curl --location 'http://localhost:3000/api/background/status/{jobId}' \
 Esta rota continua usando os serviços originais (`vtexOrdersService`) e está mantida para compatibilidade.
 
 **GET (Query Parameters):**
+
 ```bash
 curl --location 'http://localhost:3000/api/integration/orders-extract-all/?brazilianDate=2025-10-23&startTime=00%3A01&endTime=06%3A00' \
   --header 'Content-Type: application/json' \
@@ -160,6 +166,7 @@ curl --location 'http://localhost:3000/api/integration/orders-extract-all/?brazi
 ```
 
 **POST (Body JSON):**
+
 ```bash
 curl --location 'http://localhost:3000/api/integration/orders-extract-all' \
   --header 'Content-Type: application/json' \
@@ -174,6 +181,7 @@ curl --location 'http://localhost:3000/api/integration/orders-extract-all' \
 ## Endpoint Existente para Inserir Pedidos
 
 ### Inserir Pedido Individual (endpoint existente)
+
 ```bash
 curl --location 'https://ems--piccadilly.myvtex.com/_v/orders' \
 --header 'Content-Type: application/json' \
@@ -203,6 +211,7 @@ curl --location 'https://ems--piccadilly.myvtex.com/_v/orders' \
 ## Reprocessar Planilhas Não Enviadas
 
 ### 1. Reprocessar Pedidos Não Enviados
+
 ```bash
 curl -X POST http://localhost:3000/api/ems-orders/reprocess-unsent \
   -H "Content-Type: application/json" \
@@ -210,6 +219,7 @@ curl -X POST http://localhost:3000/api/ems-orders/reprocess-unsent \
 ```
 
 ### 2. Processar Pedidos Pendentes
+
 ```bash
 curl -X POST http://localhost:3000/api/ems-orders/process-pending \
   -H "Content-Type: application/json" \
@@ -217,12 +227,14 @@ curl -X POST http://localhost:3000/api/ems-orders/process-pending \
 ```
 
 ### 3. Listar Pedidos Pendentes
+
 ```bash
 curl -X GET http://localhost:3000/api/ems-orders/pending \
   -H "Content-Type: application/json"
 ```
 
 ### 4. Buscar Pedidos Pendentes por Período (registros já existem na base)
+
 ```bash
 curl -X POST http://localhost:3000/api/ems-orders/fetch-and-store \
   -H "Content-Type: application/json" \
@@ -233,6 +245,7 @@ curl -X POST http://localhost:3000/api/ems-orders/fetch-and-store \
 ```
 
 **Resposta esperada:**
+
 ```json
 {
   "success": true,
@@ -248,6 +261,7 @@ curl -X POST http://localhost:3000/api/ems-orders/fetch-and-store \
 ```
 
 ### 5. Obter Estatísticas dos Pedidos
+
 ```bash
 curl -X GET http://localhost:3000/api/ems-orders/stats \
   -H "Content-Type: application/json"
@@ -256,16 +270,19 @@ curl -X GET http://localhost:3000/api/ems-orders/stats \
 ## Fluxo Recomendado para Reprocessamento
 
 ### Passo 1: Verificar Pedidos Pendentes
+
 ```bash
 curl -X GET http://localhost:3000/api/ems-orders/pending
 ```
 
 ### Passo 2: Reprocessar Pedidos Não Enviados
+
 ```bash
 curl -X POST http://localhost:3000/api/ems-orders/reprocess-unsent
 ```
 
 ### Passo 3: Verificar Estatísticas
+
 ```bash
 curl -X GET http://localhost:3000/api/ems-orders/stats
 ```
@@ -273,6 +290,7 @@ curl -X GET http://localhost:3000/api/ems-orders/stats
 ## Respostas Esperadas
 
 ### Reprocessamento Bem-sucedido
+
 ```json
 {
   "success": true,
@@ -284,6 +302,7 @@ curl -X GET http://localhost:3000/api/ems-orders/stats
 ```
 
 ### Lista de Pedidos Pendentes
+
 ```json
 {
   "success": true,
@@ -298,6 +317,7 @@ curl -X GET http://localhost:3000/api/ems-orders/stats
 ```
 
 ### Estatísticas
+
 ```json
 {
   "success": true,
@@ -317,6 +337,7 @@ curl -X GET http://localhost:3000/api/ems-orders/stats
 ## Configurações Importantes
 
 ### Variáveis de Ambiente
+
 ```bash
 # Desabilitar limpeza automática de orders (recomendado)
 ENABLE_ORDER_CLEANUP=false
@@ -351,7 +372,7 @@ Se esses endpoints não existirem, o sistema fará fallback para a API de data e
 3. **Controle de Sincronização**: O sistema usa apenas o campo `isSync` para controlar quais pedidos foram enviados
 4. **Preservação de Dados**: Com `ENABLE_ORDER_CLEANUP=false`, os pedidos ficam fixos na base para histórico
 5. **Reprocessamento**: Pedidos com `isSync=false` são automaticamente reprocessados na próxima execução
-6. **Fluxo Simplificado**: 
+6. **Fluxo Simplificado**:
    - Busca pedidos com `isSync=false`
    - Envia para Emarsys
    - Marca como `isSync=true` após sucesso
