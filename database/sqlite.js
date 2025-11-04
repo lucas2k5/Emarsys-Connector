@@ -112,14 +112,16 @@ class SQLiteDatabase {
         throw new Error('order e item são obrigatórios');
       }
 
-      // Verificar se já existe
+      // Verificar se já existe usando order, item e order_status (mesma constraint UNIQUE do banco)
+      // Normaliza NULL para string vazia para comparação consistente
+      const normalizedStatus = order_status || null;
       const existing = this.db.prepare(`
         SELECT id FROM orders 
-        WHERE order = ? AND item = ? AND (order_status = ? OR (order_status IS NULL AND ? IS NULL))
-      `).get(order, item, order_status || null, order_status || null);
+        WHERE "order" = ? AND item = ? AND (order_status = ? OR (order_status IS NULL AND ? IS NULL))
+      `).get(order, item, normalizedStatus, normalizedStatus);
 
       if (existing) {
-        // Atualizar registro existente
+        // Atualizar registro existente (já existe registro com order, item e order_status)
         const stmt = this.db.prepare(`
           UPDATE orders SET
             email = ?,
@@ -152,31 +154,78 @@ class SQLiteDatabase {
 
         return { success: true, id: existing.id, action: 'updated' };
       } else {
-        // Inserir novo registro
+        // Inserir novo registro (não existe registro com esta combinação de order, item e order_status)
         const stmt = this.db.prepare(`
           INSERT INTO orders (
-            order, item, email, quantity, price, timestamp,
+            "order", item, email, quantity, price, timestamp,
             isSync, order_status, s_channel_source, s_store_id,
             s_sales_channel, s_discount
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
-        const result = stmt.run(
-          order,
-          item,
-          email || null,
-          quantity || null,
-          price || null,
-          timestamp || null,
-          isSync ? 1 : 0,
-          order_status || null,
-          s_channel_source || null,
-          s_store_id || null,
-          s_sales_channel || null,
-          s_discount || null
-        );
+        try {
+          const result = stmt.run(
+            order,
+            item,
+            email || null,
+            quantity || null,
+            price || null,
+            timestamp || null,
+            isSync ? 1 : 0,
+            order_status || null,
+            s_channel_source || null,
+            s_store_id || null,
+            s_sales_channel || null,
+            s_discount || null
+          );
 
-        return { success: true, id: result.lastInsertRowid, action: 'inserted' };
+          return { success: true, id: result.lastInsertRowid, action: 'inserted' };
+        } catch (insertError) {
+          // Se houver erro de constraint UNIQUE (mesmo que raro), tenta atualizar
+          if (insertError.message && insertError.message.includes('UNIQUE constraint')) {
+            console.warn(`⚠️ Constraint UNIQUE violada para order=${order}, item=${item}, order_status=${normalizedStatus || 'NULL'}. Tentando atualizar...`);
+            // Tenta buscar novamente e atualizar
+            const retryExisting = this.db.prepare(`
+              SELECT id FROM orders 
+              WHERE "order" = ? AND item = ? AND (order_status = ? OR (order_status IS NULL AND ? IS NULL))
+            `).get(order, item, normalizedStatus, normalizedStatus);
+            
+            if (retryExisting) {
+              const updateStmt = this.db.prepare(`
+                UPDATE orders SET
+                  email = ?,
+                  quantity = ?,
+                  price = ?,
+                  timestamp = ?,
+                  isSync = ?,
+                  order_status = ?,
+                  s_channel_source = ?,
+                  s_store_id = ?,
+                  s_sales_channel = ?,
+                  s_discount = ?,
+                  updated_at = datetime('now')
+                WHERE id = ?
+              `);
+              
+              updateStmt.run(
+                email || null,
+                quantity || null,
+                price || null,
+                timestamp || null,
+                isSync ? 1 : 0,
+                order_status || null,
+                s_channel_source || null,
+                s_store_id || null,
+                s_sales_channel || null,
+                s_discount || null,
+                retryExisting.id
+              );
+              
+              return { success: true, id: retryExisting.id, action: 'updated' };
+            }
+          }
+          throw insertError;
+        }
       }
     } catch (error) {
       console.error('❌ Erro ao fazer upsert de pedido:', error);
@@ -199,13 +248,13 @@ class SQLiteDatabase {
       if (order_status) {
         stmt = this.db.prepare(`
           SELECT * FROM orders 
-          WHERE order = ? AND item = ? AND order_status = ?
+          WHERE "order" = ? AND item = ? AND order_status = ?
         `);
         params = [order, item, order_status];
       } else {
         stmt = this.db.prepare(`
           SELECT * FROM orders 
-          WHERE order = ? AND item = ?
+          WHERE "order" = ? AND item = ?
           ORDER BY created_at DESC
           LIMIT 1
         `);
@@ -366,7 +415,7 @@ class SQLiteDatabase {
       const stmt = this.db.prepare(`
         UPDATE orders 
         SET isSync = 1, updated_at = datetime('now')
-        WHERE order = ? AND item = ?
+        WHERE "order" = ? AND item = ?
       `);
 
       const result = stmt.run(order, item);
@@ -453,6 +502,76 @@ class SQLiteDatabase {
     } catch (error) {
       console.error('❌ Erro ao obter estatísticas:', error);
       return { total: 0, pending: 0, synced: 0 };
+    }
+  }
+
+  /**
+   * Limpa todos os registros da tabela orders
+   * @param {boolean} onlyPending - Se true, limpa apenas pedidos pendentes (isSync = 0)
+   * @returns {Object} Resultado da operação
+   */
+  clearOrders(onlyPending = false) {
+    try {
+      if (!this.db) {
+        throw new Error('Banco de dados não inicializado');
+      }
+      
+      if (onlyPending) {
+        const result = this.db.prepare('DELETE FROM orders WHERE isSync = 0').run();
+        console.log(`✅ ${result.changes} pedidos pendentes removidos`);
+        return {
+          success: true,
+          deleted: result.changes,
+          message: 'Pedidos pendentes removidos'
+        };
+      } else {
+        const result = this.db.prepare('DELETE FROM orders').run();
+        console.log(`✅ ${result.changes} registros removidos`);
+        return {
+          success: true,
+          deleted: result.changes,
+          message: 'Todos os registros removidos'
+        };
+      }
+    } catch (error) {
+      console.error('❌ Erro ao limpar orders:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Remove o arquivo do banco de dados (limpeza completa)
+   * @returns {Promise<Object>} Resultado da operação
+   */
+  async dropDatabase() {
+    try {
+      if (this.db) {
+        this.db.close();
+        this.db = null;
+      }
+      
+      if (await fs.pathExists(this.dbPath)) {
+        await fs.remove(this.dbPath);
+        console.log(`✅ Banco de dados removido: ${this.dbPath}`);
+        return {
+          success: true,
+          message: 'Banco de dados removido com sucesso'
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Arquivo do banco não encontrado'
+        };
+      }
+    } catch (error) {
+      console.error('❌ Erro ao remover banco:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 }

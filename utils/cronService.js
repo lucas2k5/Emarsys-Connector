@@ -27,15 +27,39 @@ class CronService {
    * Inicia todos os cron jobs
    */
   startAll() {
-    this.setupProductsSync();
-    this.setupOrdersSync();
-    console.log('🕐 Todos os cron jobs foram configurados e iniciados');
+    let configuredCount = 0;
+    
+    if (this.productsSyncCron) {
+      this.setupProductsSync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] PRODUCTS_SYNC_CRON não definido - cron de produtos desabilitado');
+    }
+    
+    if (this.ordersSyncCron) {
+      this.setupOrdersSync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] ORDERS_SYNC_CRON não definido - cron de orders desabilitado');
+    }
+    
+    if (configuredCount > 0) {
+      console.log(`🕐 ${configuredCount} cron job(s) configurado(s) e iniciado(s)`);
+    } else {
+      console.log('ℹ️ [CRON] Nenhum cron job configurado (variáveis de ambiente não definidas)');
+    }
   }
 
   /**
    * Configura o cron para sincronização de produtos
    */
   setupProductsSync() {
+    // Validar se a expressão cron está definida
+    if (!this.productsSyncCron) {
+      console.warn('⚠️ [CRON] PRODUCTS_SYNC_CRON não definido, pulando configuração de produtos');
+      return;
+    }
+    
     // Cron expression configurável via variável de ambiente
     const job = new cron.CronJob(this.productsSyncCron, async () => {
       const serviceName = 'products-sync';
@@ -87,6 +111,12 @@ class CronService {
    * Usa a rota de background job para evitar timeout de 504
    */
   setupOrdersSync() {
+    // Validar se a expressão cron está definida
+    if (!this.ordersSyncCron) {
+      console.warn('⚠️ [CRON] ORDERS_SYNC_CRON não definido, pulando configuração de orders');
+      return;
+    }
+    
     // Cron expression configurável via variável de ambiente
     const job = new cron.CronJob(this.ordersSyncCron, async () => {
       const serviceName = 'orders-sync';

@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order TEXT NOT NULL,
+    "order" TEXT NOT NULL,
     item TEXT NOT NULL,
     email TEXT,
     quantity REAL,
@@ -17,11 +17,11 @@ CREATE TABLE IF NOT EXISTS orders (
     s_discount TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(order, item, order_status)
+    UNIQUE("order", item, order_status)
 );
 
 -- Índices para melhor performance
-CREATE INDEX IF NOT EXISTS idx_orders_order ON orders(order);
+CREATE INDEX IF NOT EXISTS idx_orders_order ON orders("order");
 CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item);
 CREATE INDEX IF NOT EXISTS idx_orders_isSync ON orders(isSync);
 CREATE INDEX IF NOT EXISTS idx_orders_timestamp ON orders(timestamp);

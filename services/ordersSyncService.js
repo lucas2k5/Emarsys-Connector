@@ -258,47 +258,196 @@ class OrdersSyncService {
   }
 
   /**
-   * Transforma pedido da VTEX para formato SQLite
-   * @param {Object} order - Pedido da VTEX
-   * @returns {Array} Array de pedidos formatados para SQLite
+   * Formata CPF com pontos e traço (ex: 43926321806 -> 439.263.218-06)
+   * @param {string} cpf - CPF sem formatação
+   * @returns {string} CPF formatado
    */
-  transformOrderToSQLite(order) {
+  formatCPF(cpf) {
+    const cleanCPF = cpf.replace(/\D+/g, '');
+    if (cleanCPF.length !== 11) {
+      return cpf; // Retorna original se não for CPF válido
+    }
+    return `${cleanCPF.slice(0, 3)}.${cleanCPF.slice(3, 6)}.${cleanCPF.slice(6, 9)}-${cleanCPF.slice(9, 11)}`;
+  }
+
+  /**
+   * Busca email do cliente na CL (Customer List) via CPF/documento
+   * Tenta primeiro sem formatação, depois com formatação (pontos e traço)
+   * @param {string} document - CPF/documento do cliente
+   * @returns {Promise<Object|null>} Dados do cliente com email ou null
+   */
+  async getCustomerEmailByDocument(document) {
+    try {
+      if (!document) {
+        console.log('⚠️ Documento vazio para buscar email na CL');
+        return null;
+      }
+
+      // Limpar e formatar documento (remover caracteres especiais)
+      const cleanDocument = document.replace(/\D+/g, '');
+      if (cleanDocument.length < 11) {
+        console.log('⚠️ Documento inválido (muito curto):', document);
+        return null;
+      }
+
+      const baseUrl = process.env.VTEX_BASE_URL || 'https://piccadilly.myvtex.com';
+      const url = `${baseUrl}/api/dataentities/CL/search`;
+      
+      const headers = {
+        'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+        'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN,
+        'Accept': 'application/vnd.vtex.ds.v10+json'
+      };
+
+      // Função auxiliar para fazer a busca
+      const searchByDocument = async (docToSearch) => {
+        const params = {
+          _where: `document=${docToSearch}`,
+          _fields: 'email,id,document,gender,isNewsletterOptIn',
+          _size: 1
+        };
+
+        const response = await axios.get(url, {
+          params,
+          headers,
+          timeout: 10000
+        });
+
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+          const customer = response.data[0];
+          const email = customer.email;
+          
+          if (email && email.includes('@') && !email.includes('@ct.vtex.com.br')) {
+            return {
+              id: customer.id,
+              email: email,
+              document: customer.document,
+              gender: customer.gender || '',
+              isNewsletterOptIn: customer.isNewsletterOptIn
+            };
+          }
+        }
+        return null;
+      };
+
+      // Primeira tentativa: buscar sem formatação
+      console.log(`🔍 Buscando email na CL via CPF: ${cleanDocument}`);
+      let result = await searchByDocument(cleanDocument);
+
+      if (result) {
+        console.log(`✅ Email encontrado na CL via CPF: ${result.email} (ID: ${result.id})`);
+        return result;
+      }
+
+      // Segunda tentativa: buscar com formatação (pontos e traço)
+      if (cleanDocument.length === 11) {
+        const formattedDocument = this.formatCPF(cleanDocument);
+        console.log(`🔍 Buscando email na CL via CPF formatado: ${formattedDocument}`);
+        result = await searchByDocument(formattedDocument);
+
+        if (result) {
+          console.log(`✅ Email encontrado na CL via CPF formatado: ${result.email} (ID: ${result.id})`);
+          return result;
+        }
+      }
+
+      console.log(`❌ Nenhum registro encontrado na CL para CPF: ${cleanDocument} (tentativas: sem formatação e com formatação)`);
+      return null;
+
+    } catch (error) {
+      if (error?.response?.status === 404) {
+        console.log(`❌ Cliente não encontrado na CL para CPF: ${document}`);
+        return null;
+      }
+      console.error(`❌ Erro ao buscar email na CL via CPF ${document}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Calcula desconto individual de um item usando priceTags
+   * @param {Object} item - Item do pedido
+   * @returns {string} Valor do desconto formatado
+   */
+  calculateItemDiscount(item) {
+    let totalDiscount = 0;
+
+    if (item.priceTags && Array.isArray(item.priceTags)) {
+      // Somar todos os descontos do item (valores negativos nos priceTags)
+      item.priceTags.forEach((priceTag) => {
+        if (priceTag.value < 0) { // Descontos são valores negativos
+          totalDiscount += Math.abs(priceTag.value); // Converter para positivo
+        }
+      });
+
+      // Converter de centavos para valor decimal
+      const discountValue = totalDiscount / 100;
+      return discountValue.toFixed(2);
+    }
+
+    return '0.00';
+  }
+
+  transformOrderToSQLite(order, email = null) {
     const formattedOrders = [];
     const orderId = order.orderId || order.id;
     if (!orderId) return formattedOrders;
     
-    if (order.items && Array.isArray(order.items)) {
+    // Usa o email fornecido (que vem da consulta por CPF) ou tenta extrair do pedido
+    let finalEmail = email;
+    if (!finalEmail) {
+      finalEmail = order.clientProfileData?.email || order.customerEmail || null;
+      // Validar se não é hash ou email inválido
+      if (finalEmail && (finalEmail.includes('@ct.vtex.com.br') || !finalEmail.includes('@') || finalEmail.includes('@piccadilly.com.br'))) {
+        finalEmail = null; // Descartar email hash ou inválido
+      }
+    }
+    
+    if (order.items && Array.isArray(order.items) && order.items.length > 0) {
+      // Processar cada item individualmente
       for (const item of order.items) {
+        // Prioriza refId, que é o identificador correto do item
+        // Se não tiver refId, tenta id, sku ou productId como fallback
+        const itemId = item.refId;
+        
+        // Se ainda não tiver itemId válido, pula este item
+        if (!itemId || itemId === orderId) {
+          console.warn(`⚠️ Pedido ${orderId}: item sem refId válido, pulando item:`, item);
+          continue;
+        }
+        
+        // Usar preço correto: price (preço de venda com desconto) ao invés de listPrice
+        let itemPrice = item.price || item.sellingPrice || item.priceDefinition?.calculatedSellingPrice || 0;
+        const itemListPrice = item.listPrice || item.price || 0;
+        
+        // Converter de centavos para reais se necessário (VTEX geralmente retorna em centavos)
+        // Se o preço for muito grande (>1000) ou muito pequeno (<1), provavelmente está em centavos
+        if (itemPrice > 1000 || (itemPrice > 0 && itemPrice < 1 && itemPrice !== 0)) {
+          itemPrice = itemPrice / 100;
+        }
+        
+        // Calcular desconto individual do item
+        const itemDiscount = this.calculateItemDiscount(item);
+        
         formattedOrders.push({
           order: orderId,
-          item: item.id || item.sku || item.productId || item.refId,
-          email: order.clientProfileData?.email || order.customerEmail || null,
-          quantity: item.quantity || 1,
-          price: item.price || item.sellingPrice || item.priceDefinition?.calculatedSellingPrice || 0,
-          timestamp: order.creationDate || order.invoiceCreatedDate || new Date().toISOString(),
+          item: itemId,
+          email: finalEmail,
+          quantity: item.quantity,
+          price: itemPrice.toFixed(2),
+          timestamp: order.creationDate,
           isSync: false,
           order_status: order.status || order.orderStatus || null,
           s_channel_source: order.salesChannel || order.channel || 'web',
           s_store_id: 'piccadilly',
           s_sales_channel: order.salesChannel || 'ecommerce',
-          s_discount: order.discountValue || item.discount || '0'
+          s_discount: itemDiscount // Desconto individual calculado do item
         });
       }
     } else {
-      formattedOrders.push({
-        order: orderId,
-        item: orderId,
-        email: order.clientProfileData?.email || order.customerEmail || null,
-        quantity: order.totalItems || 1,
-        price: order.totalValue || order.value || 0,
-        timestamp: order.creationDate || order.invoiceCreatedDate || new Date().toISOString(),
-        isSync: false,
-        order_status: order.status || order.orderStatus || null,
-        s_channel_source: order.salesChannel || order.channel || 'web',
-        s_store_id: 'piccadilly',
-        s_sales_channel: order.salesChannel || 'ecommerce',
-        s_discount: order.discountValue || '0'
-      });
+      // Se não há itens, não criar registro placeholder com orderId como item
+      // Isso causa problemas depois. Melhor não salvar nada se não tiver itens válidos
+      console.warn(`⚠️ Pedido ${orderId}: sem itens válidos, não será salvo no banco`);
     }
     
     return formattedOrders;
@@ -306,6 +455,7 @@ class OrdersSyncService {
 
   /**
    * Salva pedidos da VTEX no SQLite
+   * Busca detalhes completos de cada pedido para garantir refId correto
    * @param {Array} orders - Array de pedidos da VTEX
    * @returns {Promise<Object>} Resultado da operação
    */
@@ -314,9 +464,64 @@ class OrdersSyncService {
       await this.initDatabase();
       
       const formattedOrders = [];
+      
+      // Buscar detalhes completos de cada pedido (similar ao sendOrderToHook)
       for (const order of orders) {
-        const transformed = this.transformOrderToSQLite(order);
-        formattedOrders.push(...transformed);
+        const orderId = order.orderId;
+        if (!orderId) continue;
+        
+        try {
+          // Busca detalhes completos do pedido para garantir que temos refId correto
+          const orderDetail = await this.getOrderById(orderId);
+          
+          if (!orderDetail) {
+            console.warn(`⚠️ Não foi possível obter detalhes do pedido ${orderId}`);
+            // Fallback: tenta usar o pedido original mesmo sem detalhes
+            const transformed = this.transformOrderToSQLite(order);
+            formattedOrders.push(...transformed);
+            continue;
+          }
+          
+          // Buscar email via CPF se não tiver email válido no pedido
+          let email = null;
+          
+          // Tenta obter email do pedido diretamente
+          if (orderDetail?.clientProfileData?.email || orderDetail?.customerEmail) {
+            const orderEmail = orderDetail.clientProfileData?.email || orderDetail.customerEmail;
+            // Validar se não é email hash ou inválido
+            if (orderEmail && orderEmail.includes('@') && !orderEmail.includes('@ct.vtex.com.br') && !orderEmail.includes('@piccadilly.com.br') && orderEmail !== 'piccadilly@piccadilly.com.br') {
+              email = orderEmail;
+            }
+          }
+          
+          // Se não encontrou email válido, buscar via CPF na CL
+          if (!email && orderDetail?.clientProfileData?.document) {
+            const document = orderDetail.clientProfileData.document;
+            console.log(`🔍 Buscando email na CL via CPF para pedido ${orderId}: ${document}`);
+            const customerData = await this.getCustomerEmailByDocument(document);
+            if (customerData && customerData.email) {
+              email = customerData.email;
+              console.log(`✅ Email encontrado na CL via CPF para pedido ${orderId}: ${email}`);
+            }
+          }
+          
+          // Transforma usando os detalhes completos do pedido e o email encontrado
+          const transformed = this.transformOrderToSQLite(orderDetail, email);
+          formattedOrders.push(...transformed);
+          
+          // Rate limit para não sobrecarregar a API
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+        } catch (error) {
+          console.error(`❌ Erro ao buscar detalhes do pedido ${orderId}:`, error.message);
+          // Fallback: tenta usar o pedido original mesmo sem detalhes
+          try {
+            const transformed = this.transformOrderToSQLite(order);
+            formattedOrders.push(...transformed);
+          } catch (fallbackError) {
+            console.error(`❌ Erro ao processar pedido ${orderId} (fallback):`, fallbackError.message);
+          }
+        }
       }
       
       if (formattedOrders.length > 0) {
@@ -345,10 +550,8 @@ class OrdersSyncService {
     try {
       await this.initDatabase();
       
-      if (options.startDate && options.endDate) {
-        return this.db.findByPeriod(options.startDate, options.endDate);
-      }
-      
+      // SEMPRE usar listPendingSync para garantir que apenas pedidos pendentes (isSync = 0) sejam retornados
+      // Mesmo se período for especificado, filtra por isSync = 0
       return this.db.listPendingSync(options);
     } catch (error) {
       console.error('❌ Erro ao buscar pedidos pendentes:', error);
@@ -393,12 +596,12 @@ class OrdersSyncService {
   }
 
   /**
-   * Transforma dados dos pedidos do SQLite para o formato da Emarsys
-   * @param {Array} orders - Array de pedidos do SQLite
-   * @param {boolean} checkDuplicates - Se deve verificar duplicatas
-   * @returns {Promise<Object>} Dados transformados
+   * Transforma dados dos pedidos para o formato da Emarsys (versão idêntica ao vtexOrdersService)
+   * @param {Array} orders - Array de pedidos da VTEX
+   * @param {boolean} checkDuplicates - Se deve verificar duplicatas (padrão: true)
+   * @returns {Promise<Object>} Array com dados no formato da Emarsys
    */
-  async transformOrdersForEmarsys(orders, checkDuplicates = true) {
+  async transformOrdersForEmarsysNew(orders, checkDuplicates = true) {
     const emarsysData = [];
     let skippedMarketplace = 0;
     let skippedDuplicates = 0;
@@ -407,87 +610,133 @@ class OrdersSyncService {
     const processedOrders = [];
     const errorOrders = [];
     
+    console.log(`[PROD-DEBUG] ========================================`);
+    console.log(`[PROD-DEBUG] ENTRADA transformOrdersForEmarsysNew:`);
+    console.log(`[PROD-DEBUG] - orders.length: ${orders?.length || 0}`);
+    console.log(`[PROD-DEBUG] - orders é array: ${Array.isArray(orders)}`);
+    console.log(`[PROD-DEBUG] - checkDuplicates: ${checkDuplicates}`);
+    if (orders && orders.length > 0) {
+      console.log(`[PROD-DEBUG] - Primeiro pedido (amostra):`, JSON.stringify(orders[0]).substring(0, 300));
+    }
+    console.log(`[PROD-DEBUG] ========================================`);
+    
     console.log(`🔄 Iniciando transformação de ${orders.length} pedidos para Emarsys...`);
     
-    // Verifica duplicatas usando SQLite
+    // Verifica duplicatas se solicitado
     let processedItemIds = new Set();
     if (checkDuplicates) {
+      // Cria identificadores únicos para cada item (orderId + item)
       const uniqueItemIds = orders.map(order => `${order.order}_${order.item}`).filter(Boolean);
-      
-      // Verifica quais já foram processados (isSync=true)
+      // Para ordersSyncService, usa verificação de duplicatas via SQLite
       await this.initDatabase();
       const allOrders = this.db.listAllOrders({ limit: 10000 });
       const syncedOrders = allOrders
         .filter(o => o.isSync === true || o.isSync === 1)
         .map(o => `${o.order}_${o.item}`);
-      
       processedItemIds = new Set(syncedOrders);
       
       if (processedItemIds.size > 0) {
-        console.log(`⏭️ Pulando ${processedItemIds.size} itens já sincronizados`);
+        console.log(`⏭️ Pulando ${processedItemIds.size} itens já processados`);
       }
     }
     
     for (const order of orders) {
       try {
         const orderId = order.order;
+        
+        // Cria identificador único para o item do pedido (orderId + item)
         const uniqueItemId = `${orderId}_${order.item}`;
         
+        // Verifica se já foi processado (controle de duplicatas por item)
         if (checkDuplicates && processedItemIds.has(uniqueItemId)) {
+          console.log(`⏭️ Pulando item já processado: ${uniqueItemId}`);
           skippedDuplicates++;
+          skippedOrders.push({
+            orderId,
+            itemId: order.item,
+            uniqueItemId,
+            reason: 'already_processed',
+            originalOrder: order
+          });
           continue;
         }
         
         // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
         const orderIdPattern = /^\d{13}-01$/;
         if (!orderIdPattern.test(orderId)) {
+          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
           skippedMarketplace++;
-          continue;
-        }
-
-        // Validações de campos obrigatórios
-        const email = order.email;
-        const item = order.item;
-        const quantity = order.quantity;
-        const price = order.price;
-        
-        if (!email || !item || !quantity || !price) {
-          errorOrders.push({
+          skippedOrders.push({
             orderId,
-            reason: 'missing_required_fields',
-            missingFields: {
-              email: !email,
-              item: !item,
-              quantity: !quantity,
-              price: !price
-            }
+            reason: 'marketplace_order_pattern',
+            pattern: orderId,
+            originalOrder: order
           });
           continue;
         }
 
-        // Verifica se o pedido está cancelado
+        // Validações de campos obrigatórios - com fallbacks
+        const email = order.email || order.customer_email || order.clientEmail;
+        const item = order.item || order.sku || order.productId || `ITEM_${orderId}`;
+        const quantity = order.quantity || order.totalItems || 1;
+        const price = order.price || order.totalValue || order.value || '0';
+        
+        const missingFields = [];
+        if (!email) missingFields.push('email');
+        if (!item) missingFields.push('item');
+        if (!quantity) missingFields.push('quantity');
+        if (!price) missingFields.push('price');
+
+        if (missingFields.length > 0) {
+          console.warn(`⚠️ Pedido ${orderId} com campos faltando: ${missingFields.join(', ')}`);
+          errorOrders.push({
+            orderId,
+            reason: 'missing_required_fields',
+            missingFields,
+            originalOrder: order
+          });
+          
+          // Salva log de erro (se método existir)
+          if (this.saveErrorLog) {
+            await this.saveErrorLog({
+              type: 'missing_fields',
+              orderId,
+              missingFields,
+              order: order
+            });
+          }
+        }
+
+        // Verifica se o pedido está cancelado para aplicar valores negativos
+        // Inclui status: canceled, payment-pending, refunded, returned
         const canceledStatuses = ['canceled', 'refunded', 'returned'];
         const isCanceled = canceledStatuses.includes(order.order_status) || canceledStatuses.includes(order.status);
         
+        // Para pedidos cancelados, aplica valores negativos
         let finalQuantity = quantity;
         let finalPrice = price;
+        // Usa s_discount do SQLite (campo correto), com fallback para discount
         let discount = order.s_discount || order.discount || '0';
         
         if (isCanceled) {
+          // Converte para número, aplica negativo e volta para string
           finalQuantity = typeof finalQuantity === 'string' ? `-${Math.abs(parseFloat(finalQuantity))}` : -Math.abs(finalQuantity);
           finalPrice = `-${Math.abs(parseFloat(finalPrice)).toFixed(2)}`;
           discount = parseFloat(discount) === 0 ? '-0.00' : `-${Math.abs(parseFloat(discount)).toFixed(2)}`;
           canceledOrders++;
+          
+          console.log(`🔄 Pedido cancelado detectado: ${orderId} (status: ${order.order_status || order.status}) - aplicando valores negativos (qty: ${finalQuantity}, price: ${finalPrice}, discount: ${discount})`);
         }
         
+        // Cria o registro de venda com os campos mapeados
         const saleRecord = {
           order: orderId,
           item: item,
           email: email,
           quantity: finalQuantity,
-          timestamp: order.timestamp || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+          timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
-          s_channel_source: order.s_channel_source || 'web',
+          s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'piccadilly',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
           s_discount: discount
@@ -502,17 +751,61 @@ class OrdersSyncService {
         });
 
       } catch (error) {
-        console.error(`❌ Erro ao processar pedido ${order.order}:`, error?.message);
+        console.error(`❌ Erro ao processar pedido ${order.order}:`, error?.data || error.message);
         errorOrders.push({
           orderId: order.order,
           reason: 'processing_error',
-          error: error.message
+          error: error.message,
+          originalOrder: order
         });
+
+        // Salva log de erro (se método existir)
+        if (this.saveErrorLog) {
+          await this.saveErrorLog({
+            type: 'processing_error',
+            orderId: order.order,
+            error: error.message,
+            stack: error.stack,
+            order: order
+          });
+        }
       }
     }
 
+    // Salva estatísticas detalhadas (se método existir)
+    const stats = {
+      totalInput: orders.length,
+      totalProcessed: emarsysData.length,
+      skippedMarketplace,
+      skippedDuplicates,
+      canceledOrders,
+      errorCount: errorOrders.length,
+      successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
+    };
+
+    if (this.saveSyncStats) {
+      await this.saveSyncStats({
+        phase: 'transformation',
+        ...stats,
+        skippedOrders: skippedOrders.length > 0 ? skippedOrders.slice(0, 10) : [], // Primeiros 10 para não sobrecarregar
+        errorOrders: errorOrders.length > 0 ? errorOrders.slice(0, 10) : []
+      });
+    }
+
     console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados, ${errorOrders.length} com erro`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
+    
+    if (skippedMarketplace > 0) {
+      console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
+    }
+    
+    if (skippedDuplicates > 0) {
+      console.log(`⏭️ ${skippedDuplicates} pedidos duplicados foram pulados`);
+    }
+    
+    if (canceledOrders > 0) {
+      console.log(`🔄 ${canceledOrders} pedidos cancelados processados com valores negativos`);
+    }
     
     return {
       emarsysData,
@@ -524,7 +817,7 @@ class OrdersSyncService {
         skippedDuplicates,
         canceledOrders,
         errorCount: errorOrders.length,
-        successRate: orders.length > 0 ? ((emarsysData.length / orders.length) * 100).toFixed(2) + '%' : '0%'
+        successRate: ((emarsysData.length / orders.length) * 100).toFixed(2) + '%'
       }
     };
   }
@@ -667,7 +960,7 @@ class OrdersSyncService {
       } else if (!order.email.includes('@')) {
         errors.push(`Linha ${lineNum}: email deve ser um email válido`);
       }
-      if (quantity === null || quantity === undefined || isNaN(parseFloat(order.quantity))) {
+      if (order.quantity === null || order.quantity === undefined || isNaN(parseFloat(order.quantity))) {
         errors.push(`Linha ${lineNum}: quantity deve ser um número válido`);
       }
       if (!order.timestamp) {
@@ -717,12 +1010,16 @@ class OrdersSyncService {
       'price', 's_channel_source', 's_store_id', 's_sales_channel', 's_discount'
     ];
 
-    // Remove duplicatas
+    // Remove duplicatas usando order, item e order_status (chave única do banco)
     const uniqueOrders = new Map();
     for (const order of orders) {
-      const uniqueKey = `${order.order}_${order.item}`;
+      // Usa order, item e order_status como chave única (mesma constraint do banco)
+      const orderStatus = order.order_status || order.status;
+      const uniqueKey = `${order.order}_${order.item}_${orderStatus}`;
       if (!uniqueOrders.has(uniqueKey)) {
         uniqueOrders.set(uniqueKey, order);
+      } else {
+        console.log(`⚠️ Duplicata detectada no CSV: ${uniqueKey} - removendo`);
       }
     }
 
@@ -834,21 +1131,90 @@ class OrdersSyncService {
       const saveResult = await this.saveOrdersToSQLite(orders);
       console.log(`✅ ${saveResult.inserted || 0} inseridos, ${saveResult.updated || 0} atualizados no SQLite`);
 
-      // Buscar pedidos salvos do SQLite para processar
-      const dbOrders = options.dataInicial && options.dataFinal 
-        ? await this.getPendingSyncOrders({ startDate: options.dataInicial, endDate: options.dataFinal })
-        : await this.getPendingSyncOrders();
+      // Buscar detalhes completos dos pedidos que foram salvos (para obter email)
+      // Se não tiver email, vamos buscar os detalhes da VTEX
+      console.log('🔍 Verificando se pedidos salvos têm email...');
+      let dbOrders = await this.getPendingSyncOrders(
+        options.dataInicial && options.dataFinal 
+          ? { startDate: options.dataInicial, endDate: options.dataFinal }
+          : {}
+      );
+      
+      // Se pedidos salvos não têm email, buscar detalhes da VTEX e email via CPF na CL
+      const ordersWithoutEmail = dbOrders.filter(o => !o.email);
+      if (ordersWithoutEmail.length > 0) {
+        console.log(`📧 ${ordersWithoutEmail.length} pedidos sem email, buscando detalhes da VTEX e email via CPF na CL...`);
+        for (const dbOrder of ordersWithoutEmail.slice(0, 50)) { // Limitar a 50 para não sobrecarregar
+          try {
+            // 1. Buscar detalhes completos do pedido
+            const orderDetail = await this.getOrderById(dbOrder.order);
+            
+            let email = null;
+            
+            // 2. Tentar obter email do pedido diretamente
+            if (orderDetail?.clientProfileData?.email || orderDetail?.customerEmail) {
+              email = orderDetail.clientProfileData?.email || orderDetail.customerEmail;
+              // Validar se não é email hash
+              if (email && (email.includes('@ct.vtex.com.br') || !email.includes('@'))) {
+                email = null; // Descartar email hash
+              }
+            }
+            
+            // 3. Se não encontrou email válido, buscar via CPF na CL
+            if (!email && orderDetail?.clientProfileData?.document) {
+              const document = orderDetail.clientProfileData.document;
+              console.log(`🔍 Buscando email na CL via CPF: ${document}`);
+              const customerData = await this.getCustomerEmailByDocument(document);
+              if (customerData && customerData.email) {
+                email = customerData.email;
+                console.log(`✅ Email encontrado na CL via CPF para pedido ${dbOrder.order}: ${email}`);
+              }
+            }
+            
+            // 4. Atualizar email no SQLite se encontrou
+            if (email && email.includes('@') && !email.includes('@ct.vtex.com.br')) {
+              await this.db.init();
+              const stmt = this.db.db.prepare('UPDATE orders SET email = ? WHERE "order" = ? AND item = ?');
+              stmt.run(email, dbOrder.order, dbOrder.item);
+              console.log(`✅ Email atualizado para pedido ${dbOrder.order}: ${email}`);
+            } else {
+              console.warn(`⚠️ Email não encontrado para pedido ${dbOrder.order}`);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 300)); // Rate limit
+          } catch (error) {
+            console.warn(`⚠️ Erro ao buscar email do pedido ${dbOrder.order}:`, error.message);
+          }
+        }
+        
+        // Buscar novamente os pedidos atualizados
+        dbOrders = await this.getPendingSyncOrders(
+          options.dataInicial && options.dataFinal 
+            ? { startDate: options.dataInicial, endDate: options.dataFinal }
+            : {}
+        );
+      }
       
       // Transformar para formato Emarsys
-      const transformedOrders = await this.transformOrdersForEmarsys(dbOrders);
+      const transformedOrders = await this.transformOrdersForEmarsysNew(dbOrders);
       
-      // Gerar CSV e enviar
-      const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
-        ...options,
-        autoSend: true,
-        startDate: options.dataInicial,
-        endDate: options.dataFinal
-      });
+      // Gerar CSV apenas se houver dados transformados
+      let csvResult = null;
+      if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
+        csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
+          ...options,
+          autoSend: true,
+          startDate: options.dataInicial,
+          endDate: options.dataFinal
+        });
+      } else {
+        console.warn('⚠️ Nenhum pedido válido para gerar CSV. Verifique os logs acima para detalhes dos erros.');
+        csvResult = {
+          success: false,
+          error: 'Nenhum pedido válido após transformação',
+          stats: transformedOrders.stats
+        };
+      }
 
       const duration = Date.now() - startTime;
       

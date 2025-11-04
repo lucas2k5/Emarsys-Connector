@@ -10,6 +10,30 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+/**
+ * Calcula desconto individual de um item usando priceTags
+ * @param {Object} item - Item do pedido
+ * @returns {string} Valor do desconto formatado
+ */
+function calculateItemDiscount(item) {
+  let totalDiscount = 0;
+
+  if (item.priceTags && Array.isArray(item.priceTags)) {
+    // Somar todos os descontos do item (valores negativos nos priceTags)
+    item.priceTags.forEach((priceTag) => {
+      if (priceTag.value < 0) { // Descontos são valores negativos
+        totalDiscount += Math.abs(priceTag.value); // Converter para positivo
+      }
+    });
+
+    // Converter de centavos para valor decimal
+    const discountValue = totalDiscount / 100;
+    return discountValue.toFixed(2);
+  }
+
+  return '0.00';
+}
+
 // Simple in-memory job manager (non-persistent)
 const jobs = new Map();
 function createJob(type) {
@@ -927,9 +951,15 @@ router.get('/orders-extract-all', async (req, res) => {
                   const formattedOrders = [];
                   if (orderDetail.items && Array.isArray(orderDetail.items)) {
                     for (const item of orderDetail.items) {
+                      // Prioriza refId, que é o identificador correto do item
+                      const itemRefId = item.refId;
+                      
+                      // Calcular desconto individual do item usando priceTags
+                      const itemDiscount = calculateItemDiscount(item);
+                      
                       formattedOrders.push({
                         order: orderId,
-                        item: item.id || item.sku || item.productId,
+                        item: itemRefId,
                         email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
                         quantity: item.quantity || 1,
                         price: item.price || item.sellingPrice || 0,
@@ -939,24 +969,13 @@ router.get('/orders-extract-all', async (req, res) => {
                         s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
                         s_store_id: 'piccadilly',
                         s_sales_channel: orderDetail.salesChannel || 'ecommerce',
-                        s_discount: orderDetail.discountValue || item.discount || '0'
+                        s_discount: itemDiscount // Desconto calculado dos priceTags
                       });
                     }
                   } else {
-                    formattedOrders.push({
-                      order: orderId,
-                      item: orderId,
-                      email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
-                      quantity: orderDetail.totalItems || 1,
-                      price: orderDetail.totalValue || orderDetail.value || 0,
-                      timestamp: orderDetail.creationDate || orderDetail.invoiceCreatedDate || new Date().toISOString(),
-                      isSync: false,
-                      order_status: orderDetail.status || orderDetail.orderStatus || null,
-                      s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
-                      s_store_id: 'piccadilly',
-                      s_sales_channel: orderDetail.salesChannel || 'ecommerce',
-                      s_discount: orderDetail.discountValue || '0'
-                    });
+                    // Se não há itens, não deve criar um registro com item igual ao orderId
+                    // Isso é um erro de dados - loga mas não cria registro inválido
+                    console.warn(`⚠️ Pedido ${orderId} não possui itens - pulando criação de registro`);
                   }
                   
                   // Salvar no SQLite

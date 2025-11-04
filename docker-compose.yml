@@ -17,6 +17,10 @@ services:
       - DEBUG=${DEBUG:-false}
       - ENABLE_EMARSYS_UPLOAD=${ENABLE_EMARSYS_UPLOAD:-true}
       - SQLITE_DB_PATH=/app/data/orders.db
+      # Variáveis opcionais para cron jobs (se não definidas, os crons serão desabilitados)
+      # - PRODUCTS_SYNC_CRON=${PRODUCTS_SYNC_CRON}
+      # - ORDERS_SYNC_CRON=${ORDERS_SYNC_CRON}
+      # - CRON_TIMEZONE=${CRON_TIMEZONE:-America/Sao_Paulo}
     volumes:
       - ./data:/app/data
       - ./exports:/app/exports
