@@ -1235,8 +1235,9 @@ class VtexOrdersService {
           continue;
         }
         
-        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
-        const orderIdPattern = /^\d{13}-01$/;
+        // Valida se o orderId segue o padrão: 13 dígitos + "-" + 2 dígitos (ex: "-01", "-02", "-03")
+        // Pedidos que começam com números e terminam com sufixo numérico não são de marketplace
+        const orderIdPattern = /^\d{13}-\d{2}$/;
         if (!orderIdPattern.test(orderId)) {
           console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
           skippedMarketplace++;
