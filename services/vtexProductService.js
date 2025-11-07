@@ -117,42 +117,83 @@ class VtexProductService {
       return [];
     }
     
-    const productIds = Object.keys(productData).map(id => parseInt(id));
+    // Filtrar produtos que têm SKUs válidos (ignorar produtos com array vazio)
+    const allProductIds = Object.keys(productData);
+    let productsWithSkus = 0;
+    let productsWithoutSkus = 0;
+    
+    const productIds = allProductIds
+      .map(id => parseInt(id))
+      .filter(id => {
+        const skus = productData[id]?.skus || [];
+        if (skus.length === 0) {
+          productsWithoutSkus++;
+          console.log(`⏭️ Ignorando produto ${id}: sem SKUs na API privada`);
+          return false;
+        }
+        productsWithSkus++;
+        return true;
+      });
+    
+    console.log(`📊 Estatísticas da API privada:`);
+    console.log(`   ✅ Produtos com SKUs: ${productsWithSkus}`);
+    console.log(`   ⏭️ Produtos ignorados (sem SKUs): ${productsWithoutSkus}`);
+    console.log(`   📋 Total a processar: ${productIds.length}`);
     
     if (limit) {
       productIds.splice(limit);
+      console.log(`📋 Aplicando limite: ${limit} produtos`);
     }
     
-    console.log(`📋 Encontrados ${productIds.length} productIds, buscando detalhes...`);
-    
     const products = [];
-    const batchSize = 20;
+    const batchSize = 10; // Reduzido para melhor controle
+    let processedCount = 0;
+    let successCount = 0;
+    let failureCount = 0;
     
     for (let i = 0; i < productIds.length; i += batchSize) {
       const batch = productIds.slice(i, i + batchSize);
-      console.log(`🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
+      console.log(`\n🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
       
       const batchPromises = batch.map(async (productId) => {
         try {
-          const productDetails = await this.fetchProductDetails(productId);
-          console.log(`✅ Produto ${productId} processado com sucesso`);
-          console.log('🔍 Produto ${productId}:', productDetails);
-          return productDetails;
+          const skuIds = productData[productId]?.skus || [];
+          const productDetails = await this.fetchProductDetails(productId, skuIds);
+          
+          if (productDetails) {
+            successCount++;
+            console.log(`   ✅ Produto ${productId}: processado com sucesso`);
+            return productDetails;
+          } else {
+            failureCount++;
+            console.log(`   ⚠️ Produto ${productId}: não foi possível obter detalhes`);
+            return null;
+          }
         } catch (error) {
-          console.error(`❌ Erro no produto ${productId}:`, error.message);
+          failureCount++;
+          console.error(`   ❌ Produto ${productId}: erro - ${error.message}`);
           return null;
         }
       });
       
       const batchResults = await Promise.all(batchPromises);
       products.push(...batchResults.filter(p => p !== null));
+      processedCount += batch.length;
       
+      console.log(`   📊 Progresso: ${processedCount}/${productIds.length} (Sucesso: ${successCount}, Falha: ${failureCount})`);
+      
+      // Aguarda entre lotes
       if (i + batchSize < productIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 25));
+        console.log(`   ⏳ Aguardando 500ms antes do próximo lote...`);
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
     
-    console.log(`✅ Total de produtos processados: ${products.length}`);
+    console.log(`\n✅ Processamento concluído!`);
+    console.log(`   📦 Produtos válidos: ${products.length}`);
+    console.log(`   ✅ Sucesso: ${successCount}`);
+    console.log(`   ❌ Falha: ${failureCount}`);
+    
     return products;
   }
 
@@ -641,6 +682,30 @@ class VtexProductService {
   }
 
   /**
+   * Busca detalhes de um SKU específico via API privada
+   * @param {number} skuId - ID do SKU
+   * @returns {Promise<Object>} Detalhes do SKU
+   */
+  async fetchSkuDetailsFromPrivateApi(skuId) {
+    try {
+      const url = `/api/catalog/pvt/stockkeepingunit/${skuId}`;
+      const response = await this.client.get(url);
+      
+      if (response.data && response.data.Id) {
+        return response.data;
+      }
+      
+      return null;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        // SKU não existe
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Busca dados completos do produto na API privada da VTEX
    * @param {number} productId - ID do produto
    * @returns {Promise<Object>} Dados completos do produto
@@ -664,101 +729,104 @@ class VtexProductService {
   /**
    * Constrói um objeto produto a partir de SKUs da API privada
    * @param {number} productId - ID do produto
-   * @param {Array} skus - Array de SKUs
+   * @param {Array} skus - Array de SKUs com detalhes
+   * @param {Object} productDetails - Dados do produto da API privada (opcional)
    * @returns {Promise<Object>} Objeto produto estruturado
    */
-  async buildProductFromSkus(productId, skus) {
+  async buildProductFromSkus(productId, skus, productDetails = null) {
     if (!skus || skus.length === 0) {
       return null;
     }
 
-    // Pega o primeiro SKU como base para dados do produto
-    const firstSku = skus[0];
-    
-    // Tenta buscar dados completos do produto na API privada
-    let productName = '';
-    let extractedCategory = '';
-    let productDescription = '';
-    let productCategory = '';
-    let productDetails = null;
-    
-    try {
-      // Busca dados completos na API privada da VTEX
+    // Se não recebeu productDetails, busca agora
+    if (!productDetails) {
       productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
-      
-      if (productDetails) {
-        // Extrai nome do produto exatamente como a VTEX retorna
-        productName = productDetails.Name || productDetails.name;
-        productDescription = productDetails.Description;
-        productCategory = productDetails.CategoryName;
-        // Flag de atividade do produto vinda da API privada
-        var productIsActive = productDetails.IsActive === true || productDetails.isActive === true;
-        
-        console.log(`✅ Produto ${productId}: Dados encontrados na API privada`);
-        console.log(`   Nome: "${productName}"`);
-        console.log(`   Categoria: "${productCategory}"`);
-        console.log(`   Descrição: "${productDescription.substring(0, 100)}..."`);
-      } else {
-        console.log(`⚠️ Produto ${productId}: Dados não encontrados na API privada`);
-      }
-      
-      // Usa somente a categoria vinda da API privada quando disponível
-      if (productCategory) {
-        extractedCategory = productCategory;
-        console.log(`✅ Produto ${productId}: Categoria obtida da API privada: "${extractedCategory}"`);
-      } else {
-        extractedCategory = 'inativo';
-        console.log(`⚠️ Produto ${productId}: Categoria não disponível na API privada`);
-      }
-    } catch (error) {
-      console.warn(`⚠️ Erro ao buscar dados do produto ${productId}:`, error.message);
-      productName = '';
     }
     
+    // Extrai dados do produto
+    let productName = '';
+    let productDescription = '';
+    let productCategory = '';
+    let productIsActive = false;
+    let productLinkId = '';
+    let extractedCategory = 'inativo'; // Padrão: inativo
+    
+    if (productDetails) {
+      productName = productDetails.Name || productDetails.name || '';
+      productDescription = productDetails.Description || '';
+      productCategory = productDetails.CategoryName || '';
+      productIsActive = productDetails.IsActive === true || productDetails.isActive === true;
+      productLinkId = productDetails.LinkId || productId.toString();
+      
+      // Validação de categoria conforme overview.md
+      // Se não tem CategoryName ou é vazio, usar "inativo"
+      if (productCategory && productCategory.trim() !== '') {
+        extractedCategory = productCategory.trim();
+      } else {
+        // Sem categoria = inativo
+        extractedCategory = 'inativo';
+      }
+      
+      console.log(`         ✓ Nome: "${productName}"`);
+      console.log(`         ✓ Categoria: "${extractedCategory}"`);
+      console.log(`         ✓ Ativo: ${productIsActive}`);
+    } else {
+      console.log(`         ⚠️ Sem dados do produto na API privada`);
+      productLinkId = productId.toString();
+    }
+    
+    // Verifica se a categoria indica produto inativo
+    const isCategoryInactive = extractedCategory.toLowerCase().includes('inativo');
+    
+    // Pega o primeiro SKU como base para alguns campos
+    const firstSku = skus[0];
+    
     // Constrói o objeto produto no formato esperado pela planilha
-    const forceInactiveByCategory = typeof extractedCategory === 'string' && extractedCategory.toLowerCase().includes('inativo');
     const product = {
       productId: productId,
       productName: productName,
-      description: productDescription, // Descrição real da API privada
-      link: `https://www.piccadilly.com.br/${productDetails.LinkId}/p`,
-      category: extractedCategory || 'inativa', // Categoria da API privada ou 'inativa' quando ausente
-      categories: extractedCategory ? [extractedCategory] : ['inativa'],
-      releaseDate: firstSku.DateUpdated || '',
-      price: 0, // Vazio já que não temos preço da API privada
+      description: productDescription,
+      link: `https://www.piccadilly.com.br/${productLinkId}/p`,
+      category: extractedCategory,
+      categories: [extractedCategory],
+      releaseDate: firstSku.DateUpdated || firstSku.CreationDate || '',
+      price: 0, // API privada não retorna preço
       listPrice: 0,
       images: [],
       // Constrói os items (SKUs) no formato esperado
       items: skus.map(sku => {
-        // Validação robusta do RefId com múltiplos fallbacks
+        // Validação robusta do RefId
         let refId = '';
         
-        if (sku.RefId && sku.RefId.trim() !== '') {
+        if (sku.RefId && typeof sku.RefId === 'string' && sku.RefId.trim() !== '') {
           refId = sku.RefId.trim();
         } else if (sku.Id) {
           refId = `SKU-${sku.Id}`;
-        } else if (sku.SkuId) {
-          refId = `SKU-${sku.SkuId}`;
+          console.warn(`         ⚠️ SKU ${sku.Id}: usando ID como RefId fallback`);
         } else {
-          refId = `PROD-${productId}-${Math.random().toString(36).substr(2, 8)}`;
-          console.warn(`⚠️ Produto ${productId}: RefId gerado automaticamente: ${refId}`);
+          refId = `PROD-${productId}-UNKNOWN`;
+          console.warn(`         ⚠️ SKU sem ID: RefId gerado automaticamente`);
         }
+        
+        // Determina disponibilidade
+        // Produto deve estar ativo E SKU deve estar ativo E categoria não pode ser "inativo"
+        const skuIsActive = sku.IsActive === true || sku.ActivateIfPossible === true;
+        const isAvailable = productIsActive && skuIsActive && !isCategoryInactive;
         
         return {
           referenceId: [{ Value: refId }],
-          ean: '', // Vazio já que não temos da API privada
+          ean: sku.EAN || '',
           images: [],
           sellers: [{
             commertialOffer: {
-              Price: 0, // Vazio já que não temos preço da API privada
+              Price: 0,
               ListPrice: 0,
-              // available deve respeitar a atividade do produto, do SKU e a categoria inativa
-              IsAvailable: (typeof productIsActive === 'boolean' ? productIsActive : false) && (sku.IsActive === true) && !forceInactiveByCategory,
-              AvailableQuantity: 0 // Vazio já que não temos estoque da API privada
+              IsAvailable: isAvailable,
+              AvailableQuantity: isAvailable ? 0 : 0 // API privada não retorna estoque
             }
           }],
-          Tamanho: sku.Name || '', // Nome do SKU como tamanho
-          releaseDate: sku.DateUpdated || ''
+          Tamanho: sku.Name || '',
+          releaseDate: sku.DateUpdated || sku.CreationDate || ''
         };
       })
     };
@@ -769,83 +837,94 @@ class VtexProductService {
   /**
    * Busca detalhes de um produto específico
    * @param {number} productId - ID do produto
+   * @param {Array} skuIds - Array de IDs dos SKUs do produto (da API privada)
    * @param {number} retryCount - Contador de tentativas
    * @returns {Promise<Object>} Detalhes do produto
    */
-  async fetchProductDetails(productId, retryCount = 0) {
+  async fetchProductDetails(productId, skuIds = [], retryCount = 0) {
     const maxRetries = 2;
     const baseDelay = 1000; // 1 segundo base
     
     try {
-      // Primeira tentativa: API pública (produtos ativos)
+      // PASSO 1: Tentar API pública primeiro (produtos ativos com dados completos)
       const url = `https://www.piccadilly.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
       const response = await axios.get(url, {
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
-        timeout: 6000,
+        timeout: 8000,
         validateStatus: function (status) {
           return status < 500;
         }
       });
 
+      // Se encontrou na API pública, retorna (produto ativo)
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-        console.log(`✅ Produto ${productId} encontrado na API pública (ativo)`);
-        return response.data[0];
+        const product = response.data[0];
+        console.log(`      ✓ API pública: produto ativo encontrado`);
+        return product;
       }
 
-      // Segunda tentativa: API privada (produtos inativos)
-      console.log(`⚠️ Produto ${productId} não encontrado na API pública, tentando API privada...`);
-      const skus = await this.fetchSkusByProductId(productId);
+      // PASSO 2: API pública não retornou dados, tentar API privada (produtos inativos)
+      console.log(`      ℹ️ API pública: sem dados, buscando na API privada...`);
       
-      if (skus && skus.length > 0) {
-        // Valida se pelo menos um SKU tem RefId válido
-        const hasValidRefId = skus.some(sku => sku.RefId && sku.RefId.trim() !== '');
-        
-        if (!hasValidRefId && retryCount < maxRetries) {
-          // Se não há RefId válido, tenta novamente com delay
-          const delay = baseDelay * Math.pow(2, retryCount);
-          console.log(`⚠️ Produto ${productId}: SKUs sem RefId válido, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
-          
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return await this.fetchProductDetails(productId, retryCount + 1);
-        }
-        
-        console.log(`✅ Produto ${productId} encontrado na API privada (${skus.length} SKUs inativos)`);
-        return await this.buildProductFromSkus(productId, skus);
+      // Busca detalhes do produto pela API privada
+      const productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
+      
+      if (!productDetails) {
+        console.log(`      ❌ API privada: produto não encontrado`);
+        return null;
       }
-
-      console.log(`❌ Produto ${productId} não encontrado em nenhuma API`);
-      return null;
+      
+      console.log(`      ✓ API privada: dados do produto encontrados`);
+      
+      // Busca SKUs individuais para obter detalhes completos
+      const skusDetails = [];
+      
+      if (skuIds && skuIds.length > 0) {
+        console.log(`      🔍 Buscando detalhes de ${skuIds.length} SKUs...`);
+        
+        // Busca detalhes de cada SKU
+        for (const skuId of skuIds) {
+          try {
+            const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
+            if (skuDetail && skuDetail.RefId) {
+              skusDetails.push(skuDetail);
+            } else {
+              console.log(`         ⚠️ SKU ${skuId}: sem RefId válido`);
+            }
+          } catch (skuError) {
+            console.log(`         ⚠️ SKU ${skuId}: erro ao buscar detalhes`);
+          }
+        }
+      }
+      
+      if (skusDetails.length === 0) {
+        console.log(`      ❌ Nenhum SKU com dados válidos encontrado`);
+        return null;
+      }
+      
+      console.log(`      ✓ ${skusDetails.length} SKUs válidos encontrados`);
+      
+      // Constrói objeto produto a partir dos dados da API privada
+      return await this.buildProductFromSkus(productId, skusDetails, productDetails);
 
     } catch (error) {
-      console.error(`❌ Erro ao buscar produto ${productId}:`, error.message);
+      console.error(`      ❌ Erro ao buscar produto ${productId}:`, error.message);
       
       // Retry em caso de erro de rede/timeout
       if (retryCount < maxRetries && (
         error.code === 'ECONNRESET' || 
         error.code === 'ETIMEDOUT' || 
+        error.code === 'ECONNABORTED' ||
         error.response?.status >= 500
       )) {
         const delay = baseDelay * Math.pow(2, retryCount);
-        console.log(`🔄 Produto ${productId}: Erro de rede, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
+        console.log(`      🔄 Retry ${retryCount + 1}/${maxRetries} em ${delay}ms...`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return await this.fetchProductDetails(productId, retryCount + 1);
-      }
-      
-      // Em caso de erro na API pública, tenta API privada como fallback
-      try {
-        console.log(`🔄 Tentando API privada como fallback para produto ${productId}...`);
-        const skus = await this.fetchSkusByProductId(productId);
-        
-        if (skus && skus.length > 0) {
-          console.log(`✅ Produto ${productId} encontrado na API privada (fallback)`);
-          return await this.buildProductFromSkus(productId, skus);
-        }
-      } catch (fallbackError) {
-        console.error(`❌ Erro no fallback para produto ${productId}:`, fallbackError.message);
+        return await this.fetchProductDetails(productId, skuIds, retryCount + 1);
       }
       
       return null;
