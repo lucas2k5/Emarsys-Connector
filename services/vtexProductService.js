@@ -103,6 +103,101 @@ class VtexProductService {
   }
 
   /**
+   * Busca todos os produtos da API da VTEX - STEP1
+   * @param {number} limit - Limite de produtos
+   * @returns {Promise<Array>} Array de produtos
+   */
+  async getAllProductsFromApi(limit = null) {
+    console.log('🔍 Buscando produtos da API da VTEX...');
+    
+    const productData = await this.getProductIdsAndSkusFromPrivateApi();
+    
+    if (!productData || Object.keys(productData).length === 0) {
+      console.log('⚠️ Nenhum produto encontrado na API');
+      return [];
+    }
+    
+    // Filtrar produtos que têm SKUs válidos (ignorar produtos com array vazio)
+    const allProductIds = Object.keys(productData);
+    let productsWithSkus = 0;
+    let productsWithoutSkus = 0;
+    
+    const productIds = allProductIds
+      .map(id => parseInt(id))
+      .filter(id => {
+        const skus = productData[id]?.skus || [];
+        if (skus.length === 0) {
+          productsWithoutSkus++;
+          console.log(`⏭️ Ignorando produto ${id}: sem SKUs na API privada`);
+          return false;
+        }
+        productsWithSkus++;
+        return true;
+      });
+    
+    console.log(`📊 Estatísticas da API privada:`);
+    console.log(`   ✅ Produtos com SKUs: ${productsWithSkus}`);
+    console.log(`   ⏭️ Produtos ignorados (sem SKUs): ${productsWithoutSkus}`);
+    console.log(`   📋 Total a processar: ${productIds.length}`);
+    
+    if (limit) {
+      productIds.splice(limit);
+      console.log(`📋 Aplicando limite: ${limit} produtos`);
+    }
+    
+    const products = [];
+    const batchSize = 10; // Reduzido para melhor controle
+    let processedCount = 0;
+    let successCount = 0;
+    let failureCount = 0;
+    
+    for (let i = 0; i < productIds.length; i += batchSize) {
+      const batch = productIds.slice(i, i + batchSize);
+      console.log(`\n🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
+      
+      const batchPromises = batch.map(async (productId) => {
+        try {
+          const skuIds = productData[productId]?.skus || [];
+          const productDetails = await this.fetchProductDetails(productId, skuIds);
+          
+          if (productDetails) {
+            successCount++;
+            console.log(`   ✅ Produto ${productId}: processado com sucesso`);
+            return productDetails;
+          } else {
+            failureCount++;
+            console.log(`   ⚠️ Produto ${productId}: não foi possível obter detalhes`);
+            return null;
+          }
+        } catch (error) {
+          failureCount++;
+          console.error(`   ❌ Produto ${productId}: erro - ${error.message}`);
+          return null;
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      products.push(...batchResults.filter(p => p !== null));
+      processedCount += batch.length;
+      
+      console.log(`   📊 Progresso: ${processedCount}/${productIds.length} (Sucesso: ${successCount}, Falha: ${failureCount})`);
+      
+      // Aguarda entre lotes
+      if (i + batchSize < productIds.length) {
+        console.log(`   ⏳ Aguardando 500ms antes do próximo lote...`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    console.log(`\n✅ Processamento concluído!`);
+    console.log(`   📦 Produtos válidos: ${products.length}`);
+    console.log(`   ✅ Sucesso: ${successCount}`);
+    console.log(`   ❌ Falha: ${failureCount}`);
+    
+    return products;
+  }
+
+  /**
    * Valida as configurações SFTP
    */
   _validateSftpConfig() {
@@ -222,38 +317,6 @@ class VtexProductService {
   }
 
   /**
-   * Busca SKU específico por ID
-   * @param {number} skuId - ID do SKU
-   * @returns {Promise<Object>} Dados do SKU
-   */
-  async skuById(skuId) {
-    try {
-      const response = await this.client.get(`/api/catalog_system/pvt/sku/stockkeepingunitbyid/${skuId}`);
-      return { success: true, data: response.data };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Busca item específico por ID
-   * @param {number} itemId - ID do item
-   * @returns {Promise<Object>} Dados do item
-   */
-  searchItem(itemId) {
-    return this.client.get('/api/catalog_system/pub/products/search?fq=skuId:' + itemId, {
-      validateStatus: function (status) {
-        return status < 500;
-      }
-    })
-      .then(res => res.data)
-      .catch(function (error) {
-        console.error(`Erro ao buscar item ${itemId}:`, error);
-        throw error;
-      });
-  }
-
-  /**
    * Busca e armazena todos os productIds e SKUs da API privada da VTEX
    * @returns {Promise<Object>} Objeto com productIds e SKUs
    */
@@ -360,22 +423,6 @@ class VtexProductService {
       console.error('❌ Erro na API privada:', error.message);
       throw error;
     }
-  }
-
-  /**
-   * Busca productIds através da API privada da VTEX
-   * @param {number} limit - Limite de productIds a retornar
-   * @returns {Promise<Array>} Array de productIds
-   */
-  async getProductIdsFromPrivateApi(limit = null) {
-    const productData = await this.getProductIdsAndSkusFromPrivateApi();
-    const productIds = Object.keys(productData).map(id => parseInt(id));
-    
-    if (limit) {
-      return productIds.slice(0, limit);
-    }
-    
-    return productIds;
   }
 
   /**
@@ -579,31 +626,307 @@ class VtexProductService {
   }
 
   /**
+   * Busca SKUs de um produto via API privada (para produtos inativos)
+   * @param {number} productId - ID do produto
+   * @param {number} retryCount - Contador de tentativas
+   * @returns {Promise<Array>} Array de SKUs
+   */
+  async fetchSkusByProductId(productId, retryCount = 0) {
+    const maxRetries = 3;
+    const baseDelay = 2000; // 2 segundos base
+    
+    try {
+      const response = await this.client.get(`/api/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`);
+      const skus = response.data || [];
+      
+      // Valida se os SKUs têm RefId válido
+      const validSkus = skus.filter(sku => sku && sku.RefId && sku.RefId.trim() !== '');
+      
+      if (validSkus.length === 0 && skus.length > 0 && retryCount < maxRetries) {
+        // Se não há SKUs válidos mas existem SKUs, tenta novamente com delay maior
+        const delay = baseDelay * Math.pow(2, retryCount); // Backoff exponencial
+        console.log(`⚠️ Produto ${productId}: SKUs sem RefId válido, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return await this.fetchSkusByProductId(productId, retryCount + 1);
+      }
+      
+      if (validSkus.length === 0 && skus.length > 0) {
+        console.warn(`⚠️ Produto ${productId}: Todos os SKUs sem RefId válido após ${maxRetries} tentativas`);
+        // Retorna os SKUs mesmo sem RefId válido, mas com fallback
+        return skus.map(sku => ({
+          ...sku,
+          RefId: sku.RefId || `SKU-${sku.Id || 'UNKNOWN'}` // Fallback para ID do SKU
+        }));
+      }
+      
+      return validSkus;
+    } catch (error) {
+      console.error(`❌ Erro ao buscar SKUs do produto ${productId}:`, error.message);
+      
+      // Retry em caso de erro de rede/timeout
+      if (retryCount < maxRetries && (
+        error.code === 'ECONNRESET' || 
+        error.code === 'ETIMEDOUT' || 
+        error.response?.status >= 500
+      )) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        console.log(`🔄 Produto ${productId}: Erro de rede, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return await this.fetchSkusByProductId(productId, retryCount + 1);
+      }
+      
+      return [];
+    }
+  }
+
+  /**
+   * Busca detalhes de um SKU específico via API privada
+   * @param {number} skuId - ID do SKU
+   * @returns {Promise<Object>} Detalhes do SKU
+   */
+  async fetchSkuDetailsFromPrivateApi(skuId) {
+    try {
+      const url = `/api/catalog/pvt/stockkeepingunit/${skuId}`;
+      const response = await this.client.get(url);
+      
+      if (response.data && response.data.Id) {
+        return response.data;
+      }
+      
+      return null;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        // SKU não existe
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Busca dados completos do produto na API privada da VTEX
+   * @param {number} productId - ID do produto
+   * @returns {Promise<Object>} Dados completos do produto
+   */
+  async fetchProductDetailsFromPrivateApi(productId) {
+    try {
+      const url = `https://piccadilly.vtexcommercestable.com.br/api/catalog/pvt/product/${productId}`;
+      const response = await this.client.get(url);
+      
+      if (response.data) {
+        return response.data;
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn(`⚠️ Erro ao buscar detalhes do produto ${productId} na API privada:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Constrói um objeto produto a partir de SKUs da API privada
+   * @param {number} productId - ID do produto
+   * @param {Array} skus - Array de SKUs com detalhes
+   * @param {Object} productDetails - Dados do produto da API privada (opcional)
+   * @returns {Promise<Object>} Objeto produto estruturado
+   */
+  async buildProductFromSkus(productId, skus, productDetails = null) {
+    if (!skus || skus.length === 0) {
+      return null;
+    }
+
+    // Se não recebeu productDetails, busca agora
+    if (!productDetails) {
+      productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
+    }
+    
+    // Extrai dados do produto
+    let productName = '';
+    let productDescription = '';
+    let productCategory = '';
+    let productIsActive = false;
+    let productLinkId = '';
+    let extractedCategory = 'inativo'; // Padrão: inativo
+    
+    if (productDetails) {
+      productName = productDetails.Name || productDetails.name || '';
+      productDescription = productDetails.Description || '';
+      productCategory = productDetails.CategoryName || '';
+      productIsActive = productDetails.IsActive === true || productDetails.isActive === true;
+      productLinkId = productDetails.LinkId || productId.toString();
+      
+      // Validação de categoria conforme overview.md
+      // Se não tem CategoryName ou é vazio, usar "inativo"
+      if (productCategory && productCategory.trim() !== '') {
+        extractedCategory = productCategory.trim();
+      } else {
+        // Sem categoria = inativo
+        extractedCategory = 'inativo';
+      }
+      
+      console.log(`         ✓ Nome: "${productName}"`);
+      console.log(`         ✓ Categoria: "${extractedCategory}"`);
+      console.log(`         ✓ Ativo: ${productIsActive}`);
+    } else {
+      console.log(`         ⚠️ Sem dados do produto na API privada`);
+      productLinkId = productId.toString();
+    }
+    
+    // Verifica se a categoria indica produto inativo
+    const isCategoryInactive = extractedCategory.toLowerCase().includes('inativo');
+    
+    // Pega o primeiro SKU como base para alguns campos
+    const firstSku = skus[0];
+    
+    // Constrói o objeto produto no formato esperado pela planilha
+    const product = {
+      productId: productId,
+      productName: productName,
+      description: productDescription,
+      link: `https://www.piccadilly.com.br/${productLinkId}/p`,
+      category: extractedCategory,
+      categories: [extractedCategory],
+      releaseDate: firstSku.DateUpdated || firstSku.CreationDate || '',
+      price: 0, // API privada não retorna preço
+      listPrice: 0,
+      images: [],
+      // Constrói os items (SKUs) no formato esperado
+      items: skus.map(sku => {
+        // Validação robusta do RefId
+        let refId = '';
+        
+        if (sku.RefId && typeof sku.RefId === 'string' && sku.RefId.trim() !== '') {
+          refId = sku.RefId.trim();
+        } else if (sku.Id) {
+          refId = `SKU-${sku.Id}`;
+          console.warn(`         ⚠️ SKU ${sku.Id}: usando ID como RefId fallback`);
+        } else {
+          refId = `PROD-${productId}-UNKNOWN`;
+          console.warn(`         ⚠️ SKU sem ID: RefId gerado automaticamente`);
+        }
+        
+        // Determina disponibilidade
+        // Produto deve estar ativo E SKU deve estar ativo E categoria não pode ser "inativo"
+        const skuIsActive = sku.IsActive === true || sku.ActivateIfPossible === true;
+        const isAvailable = productIsActive && skuIsActive && !isCategoryInactive;
+        
+        return {
+          referenceId: [{ Value: refId }],
+          ean: sku.EAN || '',
+          images: [],
+          sellers: [{
+            commertialOffer: {
+              Price: 0,
+              ListPrice: 0,
+              IsAvailable: isAvailable,
+              AvailableQuantity: isAvailable ? 0 : 0 // API privada não retorna estoque
+            }
+          }],
+          Tamanho: sku.Name || '',
+          releaseDate: sku.DateUpdated || sku.CreationDate || ''
+        };
+      })
+    };
+
+    return product;
+  }
+
+  /**
    * Busca detalhes de um produto específico
    * @param {number} productId - ID do produto
+   * @param {Array} skuIds - Array de IDs dos SKUs do produto (da API privada)
+   * @param {number} retryCount - Contador de tentativas
    * @returns {Promise<Object>} Detalhes do produto
    */
-  async fetchProductDetails(productId) {
+  async fetchProductDetails(productId, skuIds = [], retryCount = 0) {
+    const maxRetries = 2;
+    const baseDelay = 1000; // 1 segundo base
+    
     try {
+      // PASSO 1: Tentar API pública primeiro (produtos ativos com dados completos)
       const url = `https://www.piccadilly.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
       const response = await axios.get(url, {
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
-        timeout: 6000,
+        timeout: 8000,
         validateStatus: function (status) {
           return status < 500;
         }
       });
 
-      if (!response.data || !Array.isArray(response.data) || response.data.length === 0) {
-        return null;
+      // Se encontrou na API pública, retorna (produto ativo)
+      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+        const product = response.data[0];
+        console.log(`      ✓ API pública: produto ativo encontrado`);
+        return product;
       }
 
-      return response.data[0];
+      // PASSO 2: API pública não retornou dados, tentar API privada (produtos inativos)
+      console.log(`      ℹ️ API pública: sem dados, buscando na API privada...`);
+      
+      // Busca detalhes do produto pela API privada
+      const productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
+      
+      if (!productDetails) {
+        console.log(`      ❌ API privada: produto não encontrado`);
+        return null;
+      }
+      
+      console.log(`      ✓ API privada: dados do produto encontrados`);
+      
+      // Busca SKUs individuais para obter detalhes completos
+      const skusDetails = [];
+      
+      if (skuIds && skuIds.length > 0) {
+        console.log(`      🔍 Buscando detalhes de ${skuIds.length} SKUs...`);
+        
+        // Busca detalhes de cada SKU
+        for (const skuId of skuIds) {
+          try {
+            const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
+            if (skuDetail && skuDetail.RefId) {
+              skusDetails.push(skuDetail);
+            } else {
+              console.log(`         ⚠️ SKU ${skuId}: sem RefId válido`);
+            }
+          } catch (skuError) {
+            console.log(`         ⚠️ SKU ${skuId}: erro ao buscar detalhes`);
+          }
+        }
+      }
+      
+      if (skusDetails.length === 0) {
+        console.log(`      ❌ Nenhum SKU com dados válidos encontrado`);
+        return null;
+      }
+      
+      console.log(`      ✓ ${skusDetails.length} SKUs válidos encontrados`);
+      
+      // Constrói objeto produto a partir dos dados da API privada
+      return await this.buildProductFromSkus(productId, skusDetails, productDetails);
+
     } catch (error) {
-      console.error(`❌ Erro ao buscar produto ${productId}:`, error.message);
+      console.error(`      ❌ Erro ao buscar produto ${productId}:`, error.message);
+      
+      // Retry em caso de erro de rede/timeout
+      if (retryCount < maxRetries && (
+        error.code === 'ECONNRESET' || 
+        error.code === 'ETIMEDOUT' || 
+        error.code === 'ECONNABORTED' ||
+        error.response?.status >= 500
+      )) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        console.log(`      🔄 Retry ${retryCount + 1}/${maxRetries} em ${delay}ms...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return await this.fetchProductDetails(productId, skuIds, retryCount + 1);
+      }
+      
       return null;
     }
   }
@@ -817,71 +1140,7 @@ class VtexProductService {
     }
   }
 
-  /**
-   * Busca todos os produtos da API da VTEX com otimização de memória
-   * @param {number} limit - Limite de produtos
-   * @returns {Promise<Array>} Array de produtos
-   */
-  async getAllProductsFromApi(limit = null) {
-    console.log('🔍 Buscando produtos da API da VTEX com otimização de memória...');
-    
-    const productData = await this.getProductIdsAndSkusFromPrivateApi();
-    
-    if (!productData || Object.keys(productData).length === 0) {
-      console.log('⚠️ Nenhum produto encontrado na API');
-      return [];
-    }
-    
-    const productIds = Object.keys(productData).map(id => parseInt(id));
-    
-    if (limit) {
-      productIds.splice(limit);
-    }
-    
-    console.log(`📋 Encontrados ${productIds.length} productIds, buscando detalhes...`);
-    
-    const products = [];
-    const batchSize = 50; // Aumentado para 50 produtos por lote para acelerar processamento significativamente
-    
-    for (let i = 0; i < productIds.length; i += batchSize) {
-      const batch = productIds.slice(i, i + batchSize);
-      const currentBatch = Math.floor(i/batchSize) + 1;
-      const totalBatches = Math.ceil(productIds.length/batchSize);
-      
-      // Log apenas a cada 10 lotes (500 produtos) ou no início/fim para reduzir verbosidade
-      if (currentBatch % 10 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
-        const percentage = Math.round((i / productIds.length) * 100);
-        console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)} (${percentage}%)`);
-      }
-      
-      const batchPromises = batch.map(async (productId) => {
-        try {
-          const productDetails = await this.fetchProductDetails(productId);
-          return productDetails;
-        } catch (error) {
-          console.error(`❌ Erro no produto ${productId}:`, error.message);
-          return null;
-        }
-      });
-      
-      const batchResults = await Promise.all(batchPromises);
-      const validProducts = batchResults.filter(p => p !== null);
-      products.push(...validProducts);
-      
-      // Otimização de memória a cada 20 lotes (1000 produtos)
-      if (i > 0 && i % (batchSize * 20) === 0) {
-        this.memoryOptimizer.optimizeBatchProcessing(currentBatch, totalBatches, 20);
-      }
-      
-      // Delay mínimo apenas se necessário (removido ou reduzido para 5ms)
-      if (i + batchSize < productIds.length && currentBatch % 5 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 5)); // Delay mínimo apenas a cada 5 lotes (250 produtos)
-      }
-    }
-    
-    console.log(`✅ Total de produtos processados: ${products.length}`);
-    return products;
-  }
+  
 
   /**
    * Sincroniza produtos da VTEX
