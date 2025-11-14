@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { logHelpers } = require('../utils/logger');
+require('dotenv').config();
 
 /**
  * Script para limpar arquivos antigos da pasta exports/
@@ -12,6 +13,7 @@ class ExportsCleanup {
   constructor() {
     this.exportsDir = path.join(__dirname, '../exports');
     this.dryRun = process.argv.includes('--dry-run');
+    this.disabled = process.env.DISABLE_CLEANUP === 'true';
   }
 
   /**
@@ -108,6 +110,22 @@ class ExportsCleanup {
    * @returns {Promise<Object>}
    */
   async cleanup() {
+    // Verificar se a limpeza está desabilitada
+    if (this.disabled) {
+      console.log('⏸️  Limpeza de arquivos DESABILITADA via DISABLE_CLEANUP=true');
+      logHelpers.logInfo('Limpeza de arquivos desabilitada via variável de ambiente', {
+        DISABLE_CLEANUP: process.env.DISABLE_CLEANUP
+      });
+      return {
+        success: true,
+        disabled: true,
+        message: 'Limpeza desabilitada via DISABLE_CLEANUP=true',
+        filesScanned: 0,
+        filesDeleted: 0,
+        spaceFreed: 0
+      };
+    }
+    
     const startTime = Date.now();
     const result = {
       success: false,
