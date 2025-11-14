@@ -632,32 +632,6 @@ router.post('/generate-csv', async (req, res) => {
 });
 
 /**
- * @route GET /api/vtex/products/test-sftp
- * @desc Testa a conectividade SFTP com o Emarsys
- * @access Public
- */
-router.get('/test-sftp', async (req, res) => {
-  try {
-    console.log('🧪 Testando conectividade SFTP com Emarsys...');
-    
-    const result = await vtexProductService.testSftpConnectivity();
-    
-    res.json({
-      success: true,
-      message: 'Teste de conectividade SFTP concluído',
-      result: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
  * @route POST /api/vtex/products/generate-emarsys-csv
  * @desc Gera CSV específico para importação no Emarsys e faz upload via SFTP
  * @access Public

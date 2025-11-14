@@ -42,11 +42,22 @@ class VtexProductService {
     this.memoryOptimizer = new MemoryOptimizer();
     
     // Configurações SFTP para Emarsys
+    // Decodifica a senha se ela estiver URL-encoded, senão usa como está
+    let sftpPassword = process.env.SFTP_PASSWORD;
+    try {
+      // Tenta decodificar apenas se contiver caracteres encoded (%)
+      if (sftpPassword && sftpPassword.includes('%')) {
+        sftpPassword = decodeURIComponent(sftpPassword);
+      }
+    } catch (e) {
+      console.warn('⚠️ Não foi possível decodificar SFTP_PASSWORD, usando valor original');
+    }
+    
     this.sftpConfig = {
       host: process.env.SFTP_HOST,
       port: parseInt(process.env.SFTP_PORT),
       username: process.env.SFTP_USERNAME,
-      password: process.env.SFTP_PASSWORD,
+      password: sftpPassword,
       readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 90000, // 90 segundos para handshake
       keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 10000, // Keepalive a cada 10s
       keepaliveCountMax: parseInt(process.env.SFTP_KEEPALIVE_COUNT_MAX) || 10, // Até 10 keepalives falhos
@@ -977,6 +988,12 @@ class VtexProductService {
   async testSftpConnectivity() {
     return new Promise((resolve, reject) => {
       console.log('🌐 Testando conectividade SFTP com Emarsys...');
+      console.log('🔍 Debug - Configurações SFTP:');
+      console.log(`   Host: ${this.sftpConfig.host}`);
+      console.log(`   Port: ${this.sftpConfig.port}`);
+      console.log(`   Username: ${this.sftpConfig.username}`);
+      console.log(`   Password length: ${this.sftpConfig.password ? this.sftpConfig.password.length : 0} caracteres`);
+      console.log(`   Password starts with: ${this.sftpConfig.password ? this.sftpConfig.password.substring(0, 3) + '...' : 'N/A'}`);
 
       const conn = new Client();
 
@@ -1038,13 +1055,30 @@ class VtexProductService {
 
       conn.on('error', (err) => {
         console.error('❌ Erro de conexão SFTP:', err.message);
+        console.error('🔍 Detalhes do erro:', {
+          level: err.level,
+          description: err.description,
+          message: err.message
+        });
+        
+        // Se for erro de autenticação, fornece dica
+        if (err.message.includes('authentication')) {
+          console.error('💡 Dica: Verifique se a senha no .env está correta e igual à do FileZilla');
+          console.error('   Senha atual tem', this.sftpConfig.password?.length || 0, 'caracteres');
+        }
+        
         reject({
           success: false,
           error: err.message,
+          errorDetails: {
+            level: err.level,
+            description: err.description
+          },
           message: 'Falha na conectividade SFTP com Emarsys'
         });
       });
 
+      console.log('🔌 Tentando conectar...');
       conn.connect(this.sftpConfig);
     });
   }
