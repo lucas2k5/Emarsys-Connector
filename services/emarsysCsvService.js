@@ -238,12 +238,48 @@ class EmarsysCsvService {
           gzFilepath = path.join(outputDir, gzFilename);
           
           await fs.writeFile(gzFilepath, gzContent);
+          
+          // Aguardar um momento para garantir que o arquivo foi escrito no disco
+          await new Promise(r => setTimeout(r, 500));
+          
           gzStats = await fs.stat(gzFilepath);
           
           console.log(`✅ Arquivo .gz gerado: ${gzFilename}`);
           console.log(`   📁 Caminho: ${gzFilepath}`);
           console.log(`   📏 Tamanho: ${gzStats.size} bytes (${(gzStats.size / 1024).toFixed(2)} KB)`);
           console.log(`   📊 Taxa de compressão: ${((1 - gzStats.size / Buffer.byteLength(csvWithBom, 'utf8')) * 100).toFixed(1)}%`);
+          
+          // Validar integridade do arquivo .gz
+          try {
+            console.log('🔍 Validando integridade do arquivo .gz...');
+            const gunzip = promisify(zlib.gunzip);
+            const gzFileContent = await fs.readFile(gzFilepath);
+            const decompressed = await gunzip(gzFileContent);
+            
+            const originalSize = Buffer.byteLength(csvWithBom, 'utf8');
+            const decompressedSize = decompressed.length;
+            
+            if (decompressedSize !== originalSize) {
+              console.error(`❌ Tamanho descomprimido divergente: ${decompressedSize} vs ${originalSize}`);
+              throw new Error(`Arquivo .gz corrompido: tamanho divergente`);
+            }
+            
+            // Calcular hash para validação adicional
+            const crypto = require('crypto');
+            const originalHash = crypto.createHash('sha256').update(csvWithBom).digest('hex');
+            const decompressedHash = crypto.createHash('sha256').update(decompressed).digest('hex');
+            
+            if (originalHash !== decompressedHash) {
+              console.error(`❌ Hash divergente! Original: ${originalHash.substring(0, 16)}... vs Descomprimido: ${decompressedHash.substring(0, 16)}...`);
+              throw new Error(`Arquivo .gz corrompido: hash divergente`);
+            }
+            
+            console.log('✅ Arquivo .gz validado com sucesso (integridade OK)');
+            console.log(`   🔐 SHA256: ${originalHash.substring(0, 16)}...`);
+          } catch (validationError) {
+            console.error('❌ ERRO: Arquivo .gz está corrompido!', validationError.message);
+            throw new Error(`Arquivo .gz corrompido: ${validationError.message}`);
+          }
         } catch (gzError) {
           console.error('❌ Erro ao gerar arquivo .gz:', gzError.message);
         }
