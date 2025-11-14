@@ -42,14 +42,28 @@ class VtexProductService {
     this.memoryOptimizer = new MemoryOptimizer();
     
     // Configurações SFTP para Emarsys
+    // Decodifica a senha se ela estiver URL-encoded, senão usa como está
+    let sftpPassword = process.env.SFTP_PASSWORD;
+    try {
+      // Tenta decodificar apenas se contiver caracteres encoded (%)
+      if (sftpPassword && sftpPassword.includes('%')) {
+        sftpPassword = decodeURIComponent(sftpPassword);
+      }
+    } catch (e) {
+      console.warn('⚠️ Não foi possível decodificar SFTP_PASSWORD, usando valor original');
+    }
+    
     this.sftpConfig = {
       host: process.env.SFTP_HOST,
       port: parseInt(process.env.SFTP_PORT),
       username: process.env.SFTP_USERNAME,
-      password: process.env.SFTP_PASSWORD,
-      readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 60000, // Aumentado para 60 segundos
-      keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 15000,
-      keepaliveCountMax: parseInt(process.env.SFTP_KEEPALIVE_COUNT_MAX) || 5,
+      password: sftpPassword,
+      readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 90000, // 90 segundos para handshake
+      keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 10000, // Keepalive a cada 10s
+      keepaliveCountMax: parseInt(process.env.SFTP_KEEPALIVE_COUNT_MAX) || 10, // Até 10 keepalives falhos
+      // Configurações adicionais para estabilidade
+      strictVendor: false,
+      timeout: 180000, // 3 minutos timeout geral de conexão
       // Configurações para compatibilidade com servidores FTP/SFTP
       algorithms: {
         kex: [
@@ -974,6 +988,12 @@ class VtexProductService {
   async testSftpConnectivity() {
     return new Promise((resolve, reject) => {
       console.log('🌐 Testando conectividade SFTP com Emarsys...');
+      console.log('🔍 Debug - Configurações SFTP:');
+      console.log(`   Host: ${this.sftpConfig.host}`);
+      console.log(`   Port: ${this.sftpConfig.port}`);
+      console.log(`   Username: ${this.sftpConfig.username}`);
+      console.log(`   Password length: ${this.sftpConfig.password ? this.sftpConfig.password.length : 0} caracteres`);
+      console.log(`   Password starts with: ${this.sftpConfig.password ? this.sftpConfig.password.substring(0, 3) + '...' : 'N/A'}`);
 
       const conn = new Client();
 
@@ -1035,13 +1055,30 @@ class VtexProductService {
 
       conn.on('error', (err) => {
         console.error('❌ Erro de conexão SFTP:', err.message);
+        console.error('🔍 Detalhes do erro:', {
+          level: err.level,
+          description: err.description,
+          message: err.message
+        });
+        
+        // Se for erro de autenticação, fornece dica
+        if (err.message.includes('authentication')) {
+          console.error('💡 Dica: Verifique se a senha no .env está correta e igual à do FileZilla');
+          console.error('   Senha atual tem', this.sftpConfig.password?.length || 0, 'caracteres');
+        }
+        
         reject({
           success: false,
           error: err.message,
+          errorDetails: {
+            level: err.level,
+            description: err.description
+          },
           message: 'Falha na conectividade SFTP com Emarsys'
         });
       });
 
+      console.log('🔌 Tentando conectar...');
       conn.connect(this.sftpConfig);
     });
   }
@@ -1054,24 +1091,33 @@ class VtexProductService {
    */
   async uploadToEmarsys(localFilePath) {
     console.log('📤 Iniciando upload para Emarsys via SFTP...');
+    console.log(`   🌐 Host: ${this.sftpConfig.host}:${this.sftpConfig.port}`);
+    console.log(`   👤 Usuário: ${this.sftpConfig.username}`);
+    console.log(`   📂 Destino: ${this.sftpRemotePath}`);
+    
     const maxRetries = 3;
-    const baseDelayMs = 2000;
+    const baseDelayMs = 3000; // Aumentado para 3 segundos entre tentativas
     let attempt = 0;
 
     const tryOnce = () => new Promise((resolve, reject) => {
       const conn = new Client();
       let timedOut = false;
+      let connectionEstablished = false;
+      
       const overallTimeout = setTimeout(() => {
         timedOut = true;
-        console.error('❌ Timeout geral do upload atingido');
+        console.error('❌ Timeout geral do upload atingido (3 minutos)');
         try { conn.end(); } catch (_) {}
         reject(new Error('SFTP upload timeout'));
-      }, 120000); // 2 minutos por tentativa
+      }, 180000); // 3 minutos por tentativa (aumentado)
 
       const cleanup = () => clearTimeout(overallTimeout);
 
       conn.on('ready', () => {
-        console.log('✅ Conexão SFTP estabelecida');
+        connectionEstablished = true;
+        console.log('✅ Conexão SFTP estabelecida com sucesso');
+        console.log('   🔌 Iniciando sessão SFTP...');
+        
         conn.sftp((err, sftp) => {
           if (err) {
             cleanup();
@@ -1082,33 +1128,85 @@ class VtexProductService {
           }
 
           console.log('📤 Fazendo upload do arquivo...');
+          
+          // Obter tamanho do arquivo local para validação
+          const fileStats = require('fs').statSync(localFilePath);
+          const expectedSize = fileStats.size;
+          console.log(`📊 Tamanho do arquivo local: ${expectedSize} bytes (${(expectedSize / 1024).toFixed(2)} KB)`);
+          
           const readStream = fs.createReadStream(localFilePath);
-          const writeStream = sftp.createWriteStream(this.sftpRemotePath, { autoClose: true });
+          const writeStream = sftp.createWriteStream(this.sftpRemotePath, { 
+            autoClose: false, // Controlar fechamento manualmente
+            flags: 'w',
+            mode: 0o644
+          });
 
           let bytesSent = 0;
-          readStream.on('data', chunk => { bytesSent += chunk.length; });
+          let uploadFinished = false;
+          
+          readStream.on('data', chunk => { 
+            bytesSent += chunk.length;
+            if (bytesSent % 102400 === 0 || bytesSent === expectedSize) {
+              console.log(`   📤 Progresso: ${bytesSent}/${expectedSize} bytes (${((bytesSent/expectedSize)*100).toFixed(1)}%)`);
+            }
+          });
 
+          // Usar 'finish' ao invés de 'close' para garantir que todos os dados foram escritos
+          writeStream.on('finish', async () => {
+            if (!timedOut && !uploadFinished) {
+              uploadFinished = true;
+              
+              console.log(`📊 Bytes enviados: ${bytesSent}/${expectedSize}`);
+              
+              // Validar tamanho
+              if (bytesSent !== expectedSize) {
+                cleanup();
+                console.error(`❌ Tamanho divergente! Esperado: ${expectedSize}, Enviado: ${bytesSent}`);
+                conn.end();
+                reject(new Error(`Upload incompleto: ${bytesSent}/${expectedSize} bytes`));
+                return;
+              }
+              
+              // Aguardar um momento para garantir que o buffer foi completamente enviado
+              await new Promise(r => setTimeout(r, 1000));
+              
+              // Fechar o writeStream explicitamente
+              writeStream.close(() => {
+                cleanup();
+                console.log(`✅ Upload concluído e validado com sucesso (${bytesSent} bytes)`);
+                conn.end();
+                resolve({ success: true, remotePath: this.sftpRemotePath, localPath: localFilePath, bytesSent });
+              });
+            }
+          });
+          
           writeStream.on('close', () => {
-            if (!timedOut) {
-              cleanup();
-              console.log(`✅ Upload concluído com sucesso (${bytesSent} bytes)`);
-              conn.end();
-              resolve({ success: true, remotePath: this.sftpRemotePath, localPath: localFilePath, bytesSent });
+            // Apenas log, o resolve já foi feito no finish
+            if (!timedOut && uploadFinished) {
+              console.log('🔒 WriteStream fechado');
             }
           });
 
           writeStream.on('error', (err) => {
-            cleanup();
-            console.error('❌ Erro durante upload:', err.message);
-            conn.end();
-            reject(err);
+            if (!uploadFinished) {
+              cleanup();
+              console.error('❌ Erro durante upload (writeStream):', err.message);
+              conn.end();
+              reject(err);
+            }
           });
 
           readStream.on('error', (err) => {
-            cleanup();
-            console.error('❌ Erro no readStream:', err.message);
-            conn.end();
-            reject(err);
+            if (!uploadFinished) {
+              cleanup();
+              console.error('❌ Erro durante upload (readStream):', err.message);
+              conn.end();
+              reject(err);
+            }
+          });
+          
+          readStream.on('end', () => {
+            console.log('📖 ReadStream finalizado');
           });
 
           readStream.pipe(writeStream);
@@ -1117,11 +1215,35 @@ class VtexProductService {
 
       conn.on('error', (err) => {
         cleanup();
-        console.error('❌ Erro de conexão SFTP:', err.message);
+        const errorMsg = err.message || err.toString();
+        
+        // Log detalhado do erro
+        if (errorMsg.includes('ECONNRESET')) {
+          console.error('❌ Erro de conexão SFTP: Conexão foi resetada pelo servidor');
+        } else if (errorMsg.includes('Timed out')) {
+          console.error('❌ Erro de conexão SFTP: Timeout ao conectar (handshake)');
+        } else if (errorMsg.includes('ENOTFOUND')) {
+          console.error('❌ Erro de conexão SFTP: Host não encontrado');
+        } else if (errorMsg.includes('ECONNREFUSED')) {
+          console.error('❌ Erro de conexão SFTP: Conexão recusada');
+        } else if (errorMsg.includes('Authentication')) {
+          console.error('❌ Erro de conexão SFTP: Falha na autenticação');
+        } else {
+          console.error(`❌ Erro de conexão SFTP: ${errorMsg}`);
+        }
+        
         reject(err);
       });
-
-      conn.connect(this.sftpConfig);
+      
+      // Log antes de conectar
+      console.log('🔌 Conectando ao servidor SFTP...');
+      try {
+        conn.connect(this.sftpConfig);
+      } catch (connectError) {
+        cleanup();
+        console.error('❌ Erro ao tentar conectar:', connectError.message);
+        reject(connectError);
+      }
     });
 
     while (attempt < maxRetries) {
@@ -1249,9 +1371,19 @@ class VtexProductService {
               await this._waitUntilFileReady(csvResult.gzFilepath, { timeoutMs: 120000, intervalMs: 300, minSize: 10 });
               console.log('📤 Enviando arquivo .gz para SFTP...');
               gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
-              console.log('✅ Upload .gz concluído');
+              
+              // Validar resultado do upload
+              if (gzUploadResult && gzUploadResult.success) {
+                console.log('✅ Upload .gz concluído com sucesso');
+                console.log(`   📊 Bytes enviados: ${gzUploadResult.bytesSent}`);
+                console.log(`   📂 Caminho remoto: ${gzUploadResult.remotePath}`);
+              } else {
+                const errorMsg = gzUploadResult?.error || 'Erro desconhecido';
+                console.error(`❌ Upload .gz falhou: ${errorMsg}`);
+              }
             } catch (gzUploadError) {
               console.error('❌ Erro no upload .gz:', gzUploadError.message);
+              gzUploadResult = { success: false, error: gzUploadError.message };
             }
           }
         } else {

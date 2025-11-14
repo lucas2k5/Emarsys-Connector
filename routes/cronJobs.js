@@ -89,6 +89,89 @@ router.post('/products-csv', async (req, res) => {
 });
 
 /**
+ * @route POST /api/cron/cleanup-exports
+ * @desc Limpa arquivos antigos da pasta exports (semana anterior)
+ * @access Public
+ */
+router.post('/cleanup-exports', async (req, res) => {
+  try {
+    console.log('🕐 [Local Cron] Iniciando limpeza de exports...');
+    
+    const ExportsCleanup = require('../scripts/cleanup-old-exports');
+    const cleanup = new ExportsCleanup();
+    
+    const result = await cleanup.cleanup();
+    
+    if (result.success) {
+      res.json({
+        ...result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        ...result,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro ao executar cleanup-exports:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/cron/cleanup-month
+ * @desc Limpa arquivos de um mês específico (formato: YYYY-MM)
+ * @access Public
+ */
+router.post('/cleanup-month', async (req, res) => {
+  try {
+    const { yearMonth } = req.body;
+    
+    if (!yearMonth || !yearMonth.match(/^\d{4}-\d{2}$/)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Parâmetro yearMonth é obrigatório (formato: YYYY-MM)',
+        example: { yearMonth: '2025-10' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`🕐 [Local Cron] Limpando arquivos do mês: ${yearMonth}`);
+    
+    const ExportsCleanup = require('../scripts/cleanup-old-exports');
+    const cleanup = new ExportsCleanup();
+    
+    const result = await cleanup.cleanupByMonth(yearMonth);
+    
+    if (result.success) {
+      res.json({
+        ...result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        ...result,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro ao executar cleanup-month:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
  * @route GET /api/cron/status
  * @desc Obtém status dos cron jobs do Vercel
  * @access Public
@@ -100,7 +183,9 @@ router.get('/status', (req, res) => {
     endpoints: {
       'POST /api/cron/sync-orders': 'Sincronização de orders',
       'POST /api/cron/sync-products': 'Sincronização de produtos',
-      'POST /api/cron/products-csv': 'Geração de CSV de produtos'
+      'POST /api/cron/products-csv': 'Geração de CSV de produtos',
+      'POST /api/cron/cleanup-exports': 'Limpeza de arquivos antigos (semana anterior)',
+      'POST /api/cron/cleanup-month': 'Limpeza de arquivos de um mês específico'
     },
     timestamp: new Date().toISOString()
   });
