@@ -6,7 +6,6 @@ const OrderSyncHelper = require('../helpers/orderSyncHelper');
 
 /**
  * @route POST /api/ems-orders/fetch-and-store
- * @desc Busca pedidos da VTEX e armazena na emsOrdersV2
  * @access Public
  */
 router.post('/fetch-and-store', async (req, res) => {

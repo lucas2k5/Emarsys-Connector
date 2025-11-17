@@ -16,7 +16,7 @@ function encodeWhereClause(whereClause) {
 
 async function searchOrders(headers, customParams = {}) {
   const baseUrl = baseurlStable;
-  const entity = 'emsOrdersV2';
+  const entity = process.env.EMS_ORDERS_ENTITY_ID;
 
   const defaultParams = {
     _where: encodeWhereClause('(isSync=false)'), // Codifica caracteres especiais para funcionar corretamente

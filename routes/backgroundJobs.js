@@ -305,9 +305,8 @@ router.post('/orders-extract-all', async (req, res) => {
           progress: 80
         });
         
-        // ETAPA 2.5: Enviar pedidos para o hook ANTES de buscar do emsOrdersV2
         if (ordersList.length > 0) {
-          logHelpers.logOrders('info', '📤 [Background] Enviando pedidos para o hook emsOrdersV2', {
+          logHelpers.logOrders('info', '📤 [Background] Enviando pedidos para o hook', {
             jobId,
             totalToSend: ordersList.length
           });
@@ -361,7 +360,6 @@ router.post('/orders-extract-all', async (req, res) => {
             errors: hookResults.errors.slice(0, 5) // Log apenas os primeiros 5 erros
           });
           
-          // Aguardar 2 segundos para o hook processar e armazenar na emsOrdersV2
           logHelpers.logOrders('info', '⏳ [Background] Aguardando processamento do hook...', {
             jobId,
             waitTime: '2 segundos'

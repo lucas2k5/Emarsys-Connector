@@ -908,14 +908,11 @@ class VtexOrdersService {
 
   /**
    * [DEPRECATED] Salva controle de pedidos processados para evitar duplicatas
-   * Agora usa a entidade emsOrdersV2 para controle de sincronização
    * @param {Array} orderIds - Array de IDs dos pedidos processados
    * @param {string} syncTimestamp - Timestamp da sincronização
    * @returns {Object} Resultado da operação
    */
   async saveProcessedOrders(processedItems, syncTimestamp) {
-    console.log('⚠️ [DEPRECATED] saveProcessedOrders - Agora usa emsOrdersV2.isSync para controle de sincronização');
-    return { success: true, message: 'Deprecated - usando emsOrdersV2' };
     try {
       await this.ensureDataDirectory();
       
@@ -1871,9 +1868,7 @@ class VtexOrdersService {
               }
             }
             
-            // Marca pedidos como sincronizados na emsOrdersV2
             try {
-              console.log('📝 Marcando pedidos como sincronizados na emsOrdersV2...');
               console.log(`📊 Total de ${ordersToProcess.length} itens no CSV para marcar como sincronizados`);
               
               if (ordersToProcess.length > 0) {
@@ -2288,16 +2283,12 @@ class VtexOrdersService {
         totalOrders: orders.length,
         success: result.success
       });
-
-      // Após envio bem-sucedido, marca pedidos como sincronizados na emsOrdersV2
       if (result && result.success) {
         console.log('✅ Envio bem-sucedido, marcando pedidos como sincronizados...');
         
-        // Marca pedidos enviados como sincronizados na emsOrdersV2
         // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
           
-          // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
           const marketplaceValidator = require('../utils/marketplaceValidator');
           const filteredForSync = orders.filter(o => {
             const oid = o.order;
@@ -2309,7 +2300,7 @@ class VtexOrdersService {
 
           const skippedMarketplace = orders.length - filteredForSync.length;
           if (skippedMarketplace > 0) {
-            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
+            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync`);
           }
           
           
@@ -2669,8 +2660,6 @@ class VtexOrdersService {
         throw new Error(`Falha ao salvar pedidos: ${saveResult.error}`);
       }
       
-      // 3. Buscar dados formatados do endpoint /_v/orders/filter
-      console.log('🔄 Buscando dados formatados do emsOrdersV2');
       let formattedOrders = [];
       
       try {
@@ -2678,13 +2667,13 @@ class VtexOrdersService {
         
         // Extrai os orderIds para filtrar apenas os pedidos do período
         const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
-        console.log(`🔍 Buscando ${orderIds.length} pedidos formatados do emsOrdersV2...`);
+        console.log(`🔍 Buscando ${orderIds.length} pedidos formatados...`);
         
         // Busca pedidos em lotes usando o endpoint /_v/orders/filter
         const BATCH_SIZE = 50; // Busca em lotes de 50 para não sobrecarregar
         const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/filter`;
         
-        console.log(`[PROD-DEBUG] URL base do emsOrdersV2: ${formattedUrl}`);
+        console.log(`[PROD-DEBUG] URL base: ${formattedUrl}`);
         console.log(`[PROD-DEBUG] Total de pedidos a buscar: ${orderIds.length}`);
         console.log(`[PROD-DEBUG] Primeiros 5 orderIds:`, orderIds.slice(0, 5));
         
@@ -2843,7 +2832,7 @@ class VtexOrdersService {
           console.log(`[PROD-DEBUG] Resumo do lote ${batchNum}: ${batchItemsFound} itens encontrados, ${batchEmptyResponses} vazios, ${batchErrors} erros`);
         }
         
-        console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length} pedidos do emsOrdersV2`);
+        console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length}`);
         console.log(`[PROD-DEBUG] formattedOrders.length: ${formattedOrders.length}, é array: ${Array.isArray(formattedOrders)}`);
         
         // Filtro adicional: verifica se o pedido está no período especificado
@@ -2872,7 +2861,6 @@ class VtexOrdersService {
       }
       
       console.log(`[PROD-DEBUG] ========================================`);
-      console.log(`[PROD-DEBUG] RESULTADO FINAL DA BUSCA emsOrdersV2:`);
       console.log(`[PROD-DEBUG] - Pedidos da VTEX OMS: ${orders.length}`);
       console.log(`[PROD-DEBUG] - Itens formatados encontrados: ${formattedOrders.length}`);
       console.log(`[PROD-DEBUG] - Tipo de formattedOrders: ${Array.isArray(formattedOrders) ? 'array' : typeof formattedOrders}`);
@@ -2883,9 +2871,8 @@ class VtexOrdersService {
      
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
-      // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync será feito após envio
       if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
-        console.log('ℹ️ Registros já existem na emsOrdersV2 - controle de isSync será feito após envio para Emarsys');
+        console.log('ℹ️ Registros já existem - controle de isSync será feito após envio para Emarsys');
       }
       
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
