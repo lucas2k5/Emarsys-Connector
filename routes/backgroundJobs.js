@@ -88,11 +88,64 @@ router.post('/sync-products', async (req, res) => {
   }
 });
 
-// POST /api/background/cron-orders
+// POST/GET /api/background/cron-orders
 // Nova rota para cron jobs usando ordersSyncService (SQLite)
 // Inicia sincronização de pedidos em background
-router.post('/cron-orders', async (req, res) => {
+// Aceita parâmetros tanto no body (POST) quanto na query string (GET)
+async function handleCronOrders(req, res) {
+  // LOG ABSOLUTO NO INÍCIO - ANTES DE QUALQUER COISA
+  process.stderr.write('🔴 [Background] FUNÇÃO handleCronOrders CHAMADA!\n');
+  process.stderr.write(`🔴 [Background] URL: ${req.url}\n`);
+  process.stderr.write(`🔴 [Background] Query: ${JSON.stringify(req.query)}\n`);
+  
   try {
+   // Log imediato para debug - FORÇAR SAÍDA
+   console.error('📥 [Background] ========== INÍCIO handleCronOrders ==========');
+   console.error('📥 [Background] Requisição recebida (cron-orders):', {
+     method: req.method,
+     url: req.url,
+     originalUrl: req.originalUrl,
+     query: req.query,
+     body: req.body,
+     queryKeys: Object.keys(req.query || {}),
+     bodyKeys: Object.keys(req.body || {}),
+     queryString: req.url.split('?')[1] || 'N/A'
+   });
+   
+   // Aceita parâmetros do body (POST) ou query string (GET)
+   // Se req.query estiver vazio mas houver query string na URL, tentar parsear manualmente
+   let queryParams = req.query;
+   console.error('🔍 [Background] req.query inicial:', {
+     query: req.query,
+     queryKeys: Object.keys(req.query || {}),
+     url: req.url,
+     originalUrl: req.originalUrl,
+     hasQueryString: req.url.includes('?')
+   });
+   
+   if (Object.keys(req.query || {}).length === 0 && req.url.includes('?')) {
+     const url = require('url');
+     // Tentar com req.url e req.originalUrl
+     const urlToParse = req.originalUrl || req.url;
+     const parsedUrl = url.parse(urlToParse, true);
+     queryParams = parsedUrl.query || {};
+     console.error('⚠️ [Background] req.query estava vazio, parseando manualmente:', {
+       queryString: req.url.split('?')[1],
+       originalUrl: req.originalUrl,
+       parsedQuery: queryParams,
+       parsedKeys: Object.keys(queryParams)
+     });
+   }
+   
+   // Prioriza query string se body estiver vazio, caso contrário prioriza body
+   const params = Object.keys(req.body || {}).length > 0 
+     ? { ...queryParams, ...req.body }  // Body tem prioridade se não estiver vazio
+     : { ...queryParams };               // Query string se body estiver vazio
+   
+   console.error('📥 [Background] Parâmetros mesclados (cron-orders):', {
+     params,
+     paramsKeys: Object.keys(params)
+   });
    const { 
       maxOrders = 0, 
       dateFrom, 
@@ -102,28 +155,210 @@ router.post('/cron-orders', async (req, res) => {
       brazilianDate, 
       startTime, 
       endTime 
-    } = req.body;
+    } = params;
     
-    let finalStartDate = startDate || dateFrom;
-    let finalToDate = toDate || dateTo;
+    console.error('🔍 [Background] Parâmetros extraídos:', {
+      maxOrders,
+      dateFrom,
+      dateTo,
+      startDate,
+      toDate,
+      brazilianDate,
+      startTime,
+      endTime,
+      hasBrazilianDate: !!brazilianDate,
+      hasStartTime: !!startTime,
+      hasEndTime: !!endTime
+    });
     
-    // Processar data brasileira se fornecida
+    // Converter maxOrders para número se vier da query string
+    const maxOrdersNum = parseInt(maxOrders, 10) || 0;
+    
+    let finalStartDate = null;
+    let finalToDate = null;
+    const missingParams = [];
+    
+    // Validação: verificar qual formato de data foi fornecido
     if (brazilianDate) {
+      console.log('✅ [Background] brazilianDate encontrado:', brazilianDate);
+      // Se brazilianDate foi fornecido, startTime e endTime são obrigatórios
+      if (!startTime) {
+        missingParams.push('startTime');
+      }
+      if (!endTime) {
+        missingParams.push('endTime');
+      }
+      
+      if (missingParams.length > 0) {
+        console.error('❌ [Background] Parâmetros obrigatórios faltando para brazilianDate:', {
+          brazilianDate,
+          missingParams,
+          receivedParams: { brazilianDate, startTime, endTime }
+        });
+        return res.status(400).json({
+          success: false,
+          error: `Parâmetros obrigatórios faltando: ${missingParams.join(', ')}`,
+          message: `Quando usar brazilianDate, os parâmetros startTime e endTime são obrigatórios`,
+          receivedParams: {
+            brazilianDate,
+            startTime: startTime || null,
+            endTime: endTime || null
+          },
+          requiredParams: {
+            brazilianDate: 'Data no formato YYYY-MM-DD',
+            startTime: 'Horário inicial no formato HH:MM (ex: 15:00)',
+            endTime: 'Horário final no formato HH:MM (ex: 15:25)'
+          }
+        });
+      }
+      
+      // Processar data brasileira
       const { getBrazilianTimeRangeInUTC } = require('../utils/dateUtils');
-      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime || '00:00', endTime || '23:59');
+      console.log('📅 [Background] Processando data brasileira:', {
+        brazilianDate,
+        startTime,
+        endTime
+      });
+      const range = getBrazilianTimeRangeInUTC(brazilianDate, startTime, endTime);
       finalStartDate = range.startUTC;
       finalToDate = range.endUTC;
       
-      logHelpers.logOrders('info', '📅 [Background] Data brasileira processada (cron-orders)', {
+      console.log('✅ [Background] Data brasileira convertida:', {
         brazilianDate,
-        startTime: startTime,
-        endTime: endTime,
+        startTime,
+        endTime,
         convertedStartUTC: finalStartDate,
         convertedEndUTC: finalToDate
       });
+      
+      logHelpers.logOrders('info', '📅 [Background] Data brasileira processada (cron-orders)', {
+        brazilianDate,
+        startTime,
+        endTime,
+        convertedStartUTC: finalStartDate,
+        convertedEndUTC: finalToDate
+      });
+    } else {
+      // Se brazilianDate não foi fornecido, startDate/toDate são obrigatórios
+      finalStartDate = startDate || dateFrom;
+      finalToDate = toDate || dateTo;
+      
+      if (!finalStartDate) {
+        missingParams.push('startDate ou dateFrom');
+      }
+      if (!finalToDate) {
+        missingParams.push('toDate ou dateTo');
+      }
+      
+      if (missingParams.length > 0) {
+        console.error('❌ [Background] Datas não definidas:', {
+          startDate,
+          toDate,
+          dateFrom,
+          dateTo,
+          missingParams
+        });
+        return res.status(400).json({
+          success: false,
+          error: `Parâmetros obrigatórios faltando: ${missingParams.join(', ')}`,
+          message: 'Forneça brazilianDate + startTime + endTime OU startDate/toDate (ou dateFrom/dateTo)',
+          receivedParams: {
+            brazilianDate: brazilianDate || null,
+            startTime: startTime || null,
+            endTime: endTime || null,
+            startDate: startDate || null,
+            toDate: toDate || null,
+            dateFrom: dateFrom || null,
+            dateTo: dateTo || null
+          },
+          requiredParams: {
+            option1: {
+              brazilianDate: 'Data no formato YYYY-MM-DD',
+              startTime: 'Horário inicial no formato HH:MM',
+              endTime: 'Horário final no formato HH:MM'
+            },
+            option2: {
+              startDate: 'Data inicial em formato ISO UTC (ex: 2025-11-18T15:00:00Z)',
+              toDate: 'Data final em formato ISO UTC (ex: 2025-11-18T15:25:00Z)'
+            }
+          }
+        });
+      }
+      
+      console.log('✅ [Background] Usando datas UTC fornecidas:', {
+        startDate: finalStartDate,
+        toDate: finalToDate
+      });
     }
     
-    console.log(`🚀 [Background] Iniciando cron sync de pedidos (SQLite): maxOrders=${maxOrders}`);
+    // Validação final: garantir que as datas foram definidas
+    console.log('🔍 [Background] Verificando datas finais antes da validação:', {
+      finalStartDate,
+      finalToDate,
+      isStartDateNull: !finalStartDate,
+      isEndDateNull: !finalToDate,
+      willFailValidation: !finalStartDate || !finalToDate
+    });
+    
+    if (!finalStartDate || !finalToDate) {
+      console.error('❌ [Background] ERRO CRÍTICO: Datas não foram definidas após processamento:', {
+        brazilianDate,
+        startTime,
+        endTime,
+        startDate,
+        toDate,
+        dateFrom,
+        dateTo,
+        finalStartDate,
+        finalToDate,
+        params: {
+          maxOrders,
+          dateFrom,
+          dateTo,
+          startDate,
+          toDate,
+          brazilianDate,
+          startTime,
+          endTime
+        }
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Datas não foram definidas após processamento',
+        message: 'Erro interno: as datas não foram processadas corretamente. Verifique os logs do servidor.',
+        debug: {
+          receivedParams: {
+            brazilianDate: brazilianDate || null,
+            startTime: startTime || null,
+            endTime: endTime || null,
+            startDate: startDate || null,
+            toDate: toDate || null,
+            dateFrom: dateFrom || null,
+            dateTo: dateTo || null
+          },
+          processedDates: {
+            finalStartDate: finalStartDate || null,
+            finalToDate: finalToDate || null
+          }
+        }
+      });
+    } else {
+      console.error('✅ [Background] Validação passou - datas definidas:', {
+        finalStartDate,
+        finalToDate
+      });
+    }
+    
+    console.error('🚀 [Background] ANTES DO LOG FINAL - Verificando variáveis:', {
+      maxOrdersNum,
+      finalStartDate,
+      finalToDate,
+      brazilianDate,
+      startTime,
+      endTime
+    });
+    
+    console.log(`🚀 [Background] Iniciando cron sync de pedidos (SQLite): maxOrders=${maxOrdersNum}, dataInicial=${finalStartDate}, dataFinal=${finalToDate}`);
     
     // Gerar ID único para o job
     const jobId = `cron-orders-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -136,7 +371,7 @@ router.post('/cron-orders', async (req, res) => {
       progress: 0,
       startTime: new Date().toISOString(),
       config: { 
-        maxOrders, 
+        maxOrders: maxOrdersNum, 
         dateFrom: finalStartDate, 
         dateTo: finalToDate,
         brazilianDate,
@@ -148,12 +383,25 @@ router.post('/cron-orders', async (req, res) => {
     // Executar sincronização de orders diretamente em background usando ordersSyncService
     setImmediate(async () => {
       try {
+        console.log('🔍 [Background] Chamando ordersSyncService.syncOrders com:', {
+          maxOrders: maxOrdersNum,
+          dataInicial: finalStartDate,
+          dataFinal: finalToDate,
+          brazilianDate,
+          startTime,
+          endTime
+        });
         const OrdersSyncService = require('../services/ordersSyncService');
         const ordersSyncService = new OrdersSyncService();
         const result = await ordersSyncService.syncOrders({ 
-          maxOrders, 
+          maxOrders: maxOrdersNum, 
           dataInicial: finalStartDate, 
           dataFinal: finalToDate 
+        });
+        console.log('✅ [Background] Resultado do syncOrders:', {
+          success: result.success,
+          totalOrders: result.totalOrders,
+          message: result.message
         });
         
         // Atualizar status do job
@@ -189,7 +437,7 @@ router.post('/cron-orders', async (req, res) => {
       message: 'Sincronização de pedidos (cron) iniciada em background',
       checkStatus: `/api/background/status/${jobId}`,
       config: { 
-        maxOrders, 
+        maxOrders: maxOrdersNum, 
         dateFrom: finalStartDate, 
         dateTo: finalToDate,
         brazilianDate,
@@ -205,7 +453,11 @@ router.post('/cron-orders', async (req, res) => {
       error: error.message
     });
   }
-});
+}
+
+// Registrar a rota para ambos POST e GET
+router.post('/cron-orders', handleCronOrders);
+router.get('/cron-orders', handleCronOrders);
 
 // POST /api/background/sync-orders
 // Rota original mantida intacta (usa serviços antigos)

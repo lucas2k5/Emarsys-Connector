@@ -14,9 +14,31 @@ class CronService {
       : `http://localhost:${process.env.PORT || 3000}`;
     
     // Configurações de cron jobs via variáveis de ambiente
-    this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON;
-    this.ordersSyncCron = process.env.ORDERS_SYNC_CRON;
+    // Trim para remover espaços em branco e validar se não está vazio
+    const productsSyncCronRaw = process.env.PRODUCTS_SYNC_CRON;
+    const ordersSyncCronRaw = process.env.ORDERS_SYNC_CRON;
+    
+    this.productsSyncCron = productsSyncCronRaw && productsSyncCronRaw.trim() 
+      ? productsSyncCronRaw.trim() 
+      : null;
+    this.ordersSyncCron = ordersSyncCronRaw && ordersSyncCronRaw.trim() 
+      ? ordersSyncCronRaw.trim() 
+      : null;
+    
     this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
+    
+    // Debug: Log das variáveis lidas (sem mostrar valores completos por segurança)
+    if (this.productsSyncCron) {
+      console.log(`✅ [CRON] PRODUCTS_SYNC_CRON carregado: ${this.productsSyncCron.substring(0, 20)}...`);
+    } else {
+      console.log(`⚠️ [CRON] PRODUCTS_SYNC_CRON não encontrado ou vazio. Valor raw: "${productsSyncCronRaw}"`);
+    }
+    
+    if (this.ordersSyncCron) {
+      console.log(`✅ [CRON] ORDERS_SYNC_CRON carregado: ${this.ordersSyncCron.substring(0, 20)}...`);
+    } else {
+      console.log(`⚠️ [CRON] ORDERS_SYNC_CRON não encontrado ou vazio. Valor raw: "${ordersSyncCronRaw}"`);
+    }
     
     // Configurações de timeout otimizadas
     this.productsTimeout = parseInt(process.env.PRODUCTS_TIMEOUT_MS) || 600000; // 10 minutos

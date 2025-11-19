@@ -64,126 +64,89 @@ function getJob(id) {
 }
 
 /**
- * Busca pedidos não sincronizados na EMS via API externa
+ * Busca pedidos não sincronizados no SQLite local
  * @returns {Promise<Array>} Array de pedidos com isSync=false
  */
 async function fetchUnsyncedEmsOrders() {
   try {
-    console.log('🌐 Fazendo requisição para API externa de pedidos EMS...');
+    console.log('🔍 Buscando pedidos não sincronizados no SQLite local...');
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/list';
-    const params = {
-      '_where': '(isSync%3Dfalse)', // URL encoded: (isSync=false)
-      'page': 1,
-      'pageSize': 1000
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Cookie': 'VtexWorkspace=master%3A-'
-    };
-    
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const orders = Array.isArray(response.data) ? response.data : [];
-    console.log(`✅ ${orders.length} pedidos não sincronizados encontrados via API externa`);
+    const orders = db.listPendingSync({ limit: 1000 });
+    console.log(`✅ ${orders.length} pedidos não sincronizados encontrados no SQLite local`);
     
     return orders;
     
   } catch (error) {
-    console.error('❌ Erro ao buscar pedidos não sincronizados na EMS:', error?.response?.data || error.message);
+    console.error('❌ Erro ao buscar pedidos não sincronizados no SQLite:', error?.message || error);
     return []; // Retorna array vazio em caso de erro
   }
 }
 
 /**
- * Busca um registro específico na EMS por order e isSync
+ * Busca registros no SQLite local por order e isSync
  * @param {string} orderId - ID do pedido
  * @param {boolean} isSync - Status de sincronização
- * @returns {Promise<Object|null>} Registro encontrado ou null
+ * @returns {Promise<Object|null>} Primeiro registro encontrado ou null
  */
 async function fetchEmsOrderByFilter(orderId, isSync = false) {
   try {
-    console.log(`🔍 Buscando registro na EMS: order=${orderId}, isSync=${isSync}`);
+    console.log(`🔍 Buscando registro no SQLite: order=${orderId}, isSync=${isSync}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId,
-      'isSync': isSync.toString()
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const orders = db.findOrdersByOrderId(orderId, isSync);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para ${orderId}`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (orders && orders.length > 0) {
+      console.log(`✅ Registro encontrado no SQLite para ${orderId} com isSync=${isSync}`);
+      return orders[0]; // Retorna o primeiro registro encontrado
     } else {
-      console.log(`\x1b[41m\x1b[30mℹ️ Nenhum registro encontrado na EMS para ${orderId} com isSync=${isSync}\x1b[0m`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para ${orderId} com isSync=${isSync}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS para ${orderId}:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite para ${orderId}:`, error?.message || error);
     return null;
   }
 }
 
 /**
- * Busca um registro específico na EMS por order (independente do isSync)
+ * Busca registros no SQLite local por order (independente do isSync)
  * @param {string} orderId - ID do pedido
- * @returns {Promise<Object|null>} Registro encontrado ou null
+ * @returns {Promise<Object|null>} Primeiro registro encontrado ou null
  */
 async function fetchEmsOrderByOrderId(orderId) {
   try {
-    console.log(`🔍 Buscando registro na EMS por order: ${orderId}`);
+    console.log(`🔍 Buscando registro no SQLite por order: ${orderId}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId
-      // Não especifica isSync para buscar independente do status
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const orders = db.findOrdersByOrderId(orderId);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para ${orderId} (isSync: ${data.data[0].isSync})`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (orders && orders.length > 0) {
+      console.log(`✅ Registro encontrado no SQLite para ${orderId} (isSync: ${orders[0].isSync})`);
+      return orders[0]; // Retorna o primeiro registro encontrado
     } else {
-      console.log(`ℹ️ Nenhum registro encontrado na EMS para ${orderId}`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para ${orderId}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS para ${orderId}:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite para ${orderId}:`, error?.message || error);
     return null;
   }
 }
 
 /**
- * Busca registros na EMS por múltiplos filtros (order, item, order_status)
+ * Busca registro no SQLite local por múltiplos filtros (order, item, order_status)
  * @param {string} orderId - ID do pedido
  * @param {string} item - Item do pedido
  * @param {string} orderStatus - Status do pedido
@@ -191,37 +154,24 @@ async function fetchEmsOrderByOrderId(orderId) {
  */
 async function fetchEmsOrderByFilters(orderId, item, orderStatus) {
   try {
-    console.log(`🔍 Buscando registro na EMS por filtros: order=${orderId}, item=${item}, order_status=${orderStatus}`);
+    console.log(`🔍 Buscando registro no SQLite por filtros: order=${orderId}, item=${item}, order_status=${orderStatus}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId,
-      'item': item,
-      'order_status': orderStatus
-      // Não especifica isSync para buscar independente do status
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const order = db.findOrder(orderId, item, orderStatus);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus} (isSync: ${data.data[0].isSync})`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (order) {
+      console.log(`✅ Registro encontrado no SQLite para order=${orderId}, item=${item}, order_status=${orderStatus} (isSync: ${order.isSync})`);
+      return order;
     } else {
-      console.log(`ℹ️ Nenhum registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus}`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para order=${orderId}, item=${item}, order_status=${orderStatus}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS por filtros:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite por filtros:`, error?.message || error);
     return null;
   }
 }

@@ -279,6 +279,46 @@ class SQLiteDatabase {
   }
 
   /**
+   * Busca todos os registros de um pedido por orderId
+   * @param {string} orderId - ID do pedido
+   * @param {boolean} isSync - Filtrar por isSync (opcional)
+   * @returns {Array} Array de registros encontrados
+   */
+  findOrdersByOrderId(orderId, isSync = null) {
+    try {
+      let stmt;
+      let params;
+
+      if (isSync !== null) {
+        stmt = this.db.prepare(`
+          SELECT * FROM orders 
+          WHERE "order" = ? AND isSync = ?
+          ORDER BY created_at DESC
+        `);
+        params = [orderId, isSync ? 1 : 0];
+      } else {
+        stmt = this.db.prepare(`
+          SELECT * FROM orders 
+          WHERE "order" = ?
+          ORDER BY created_at DESC
+        `);
+        params = [orderId];
+      }
+
+      const results = stmt.all(...params);
+      
+      // Converter isSync de número para boolean
+      return results.map(row => ({
+        ...row,
+        isSync: row.isSync === 1
+      }));
+    } catch (error) {
+      console.error('❌ Erro ao buscar pedidos por orderId:', error);
+      return [];
+    }
+  }
+
+  /**
    * Lista pedidos pendentes de sincronização (isSync = false)
    * @param {Object} options - Opções de filtro (limit, offset, startDate, endDate)
    * @returns {Array} Array de pedidos pendentes

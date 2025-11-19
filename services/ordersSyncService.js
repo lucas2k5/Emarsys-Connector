@@ -107,11 +107,49 @@ class OrdersSyncService {
       params.f_status = options.f_status;
     }
     
+    // Log detalhado para debug de datas (com conversão para horário de São Paulo)
+    const moment = require('moment-timezone');
+    const startSP = moment(startDateISO).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+    const endSP = moment(endDateISO).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+    
+    console.log('🔍 [OrdersSyncService] DEBUG FILTRO DE DATAS:');
+    console.log(`   📅 Data inicial UTC: ${startDateISO} → 🇧🇷 São Paulo: ${startSP}`);
+    console.log(`   📅 Data final UTC: ${endDateISO} → 🇧🇷 São Paulo: ${endSP}`);
+    console.log(`   🔍 Filtro aplicado: ${params.f_creationDate}`);
+    console.log('🔍 [OrdersSyncService] searchOrdersByPeriod debug:', {
+      startDateISO,
+      endDateISO,
+      page,
+      options,
+      params
+    });
+    console.log(`   📄 Página: ${page}`);
+    
     try {
+      console.log('🔍 [OrdersSyncService] Fazendo requisição para VTEX OMS:', { url, params });
       const res = await this.client.get(url, { params });
+      
+      // Log da resposta para debug
+      console.log('🔍 [OrdersSyncService] Resposta da VTEX OMS:', {
+        status: res.status,
+        dataLength: res.data?.list?.length || 0,
+        hasData: !!res.data,
+        hasList: !!res.data?.list
+      });
+      
+      if (res.data && res.data.list && res.data.list.length > 0) {
+        const firstOrder = res.data.list[0];
+        const lastOrder = res.data.list[res.data.list.length - 1];
+        console.log(`   ✅ ${res.data.list.length} pedidos encontrados`);
+        console.log(`   📅 Primeiro pedido: ${firstOrder.orderId} - ${firstOrder.creationDate}`);
+        console.log(`   📅 Último pedido: ${lastOrder.orderId} - ${lastOrder.creationDate}`);
+      } else {
+        console.log('   ⚠️ Nenhum pedido encontrado na resposta da VTEX');
+      }
+      
       return res.data;
     } catch (error) {
-      console.error('Erro ao buscar pedidos (OMS):', error?.response?.data || error.message);
+      console.error('❌ [OrdersSyncService] Erro ao buscar pedidos (OMS):', error?.response?.data || error.message);
       throw error;
     }
   }
@@ -840,23 +878,37 @@ class OrdersSyncService {
         };
       }
 
-      // Gera nome do arquivo
+      // Gera nome do arquivo seguindo o padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-default.csv
       let timestamp = getBrazilianTimestampForFilename();
       let period = options.period || 'default';
       
+      // Se brazilianDate foi fornecido, usa ele com o horário atual
       if (options.brazilianDate) {
         const brazilianDate = options.brazilianDate;
-        const currentTime = new Date().toLocaleTimeString('pt-BR', {
+        // Obtém horário atual no fuso de Brasília
+        const now = new Date();
+        const brazilianTime = new Intl.DateTimeFormat('pt-BR', {
           timeZone: 'America/Sao_Paulo',
           hour12: false,
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit'
-        }).replace(/:/g, '-');
+        }).formatToParts(now);
+        
+        const parts = {};
+        brazilianTime.forEach(part => {
+          parts[part.type] = part.value;
+        });
+        
+        // Formata como HH-MM-SS
+        const currentTime = `${parts.hour}-${parts.minute}-${parts.second}`;
         timestamp = `${brazilianDate}T${currentTime}`;
       }
       
-      const sanitizedPeriod = period.replace(/[<>:"/\\|?*]/g, '-');
+      // Sempre usa 'default' como período se não especificado
+      const sanitizedPeriod = (period || 'default').replace(/[<>:"/\\|?*]/g, '-');
+      
+      // Padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-default.csv
       let filename = options.filename || `ems-sl-pcdly-${timestamp}-${sanitizedPeriod}.csv`;
       if (!filename.endsWith('.csv')) {
         filename += '.csv';
@@ -1101,6 +1153,14 @@ class OrdersSyncService {
   async syncOrders(options = {}) {
     try {
       console.log('🔄 Iniciando sincronização completa de pedidos...');
+      console.log('📋 [OrdersSyncService] Opções recebidas:', {
+        hasOrders: !!(options.orders && Array.isArray(options.orders)),
+        ordersCount: options.orders?.length || 0,
+        dataInicial: options.dataInicial,
+        dataFinal: options.dataFinal,
+        maxOrders: options.maxOrders,
+        allOptions: Object.keys(options)
+      });
       const startTime = Date.now();
       
       let orders = [];
@@ -1112,6 +1172,14 @@ class OrdersSyncService {
       } else if (options.dataInicial && options.dataFinal) {
         console.log(`📅 Buscando pedidos por período: ${options.dataInicial} até ${options.dataFinal}`);
         orders = await this.getAllOrdersInPeriod(options.dataInicial, options.dataFinal, false);
+      } else {
+        console.warn('⚠️ [OrdersSyncService] Nenhuma opção de busca válida fornecida:', {
+          hasOrders: !!(options.orders && Array.isArray(options.orders)),
+          hasDataInicial: !!options.dataInicial,
+          hasDataFinal: !!options.dataFinal,
+          dataInicial: options.dataInicial,
+          dataFinal: options.dataFinal
+        });
       }
       
       if (!orders || orders.length === 0) {
