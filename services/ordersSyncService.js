@@ -442,7 +442,58 @@ class OrdersSyncService {
     }
     
     if (order.items && Array.isArray(order.items) && order.items.length > 0) {
+      // Contar itens válidos (com refId válido)
+      const validItemsCount = order.items.filter(item => {
+        const itemId = item.refId;
+        return itemId && itemId !== orderId;
+      }).length;
+      
+      // Calcular desconto total e frete a partir dos totals do pedido
+      let totalDiscountValue = 0;
+      let totalShippingValue = 0;
+      
+      if (order.totals && Array.isArray(order.totals)) {
+        const discountsTotal = order.totals.find(t => t.id === 'Discounts');
+        const shippingTotal = order.totals.find(t => t.id === 'Shipping');
+        
+        // Log dos valores brutos dos totals
+        console.log(`[TOTALS RAW] Pedido ${orderId}:`, {
+          discountsRaw: discountsTotal?.value,
+          shippingRaw: shippingTotal?.value,
+          allTotals: order.totals.map(t => ({ id: t.id, value: t.value, name: t.name }))
+        });
+        
+        if (discountsTotal && discountsTotal.value !== undefined && discountsTotal.value !== null) {
+          // Desconto vem como valor negativo em centavos, então pegamos o valor absoluto
+          // e convertemos para reais dividindo por 100
+          totalDiscountValue = Math.abs(discountsTotal.value) / 100;
+        }
+        
+        if (shippingTotal && shippingTotal.value !== undefined && shippingTotal.value !== null) {
+          // Frete vem em centavos, então convertemos para reais dividindo por 100
+          totalShippingValue = shippingTotal.value / 100;
+        }
+      }
+      
+      // Calcular desconto rateado por item (apenas desconto total, sem frete) / número de itens válidos
+      // Usar cálculo preciso para evitar dízimas e garantir que a soma seja exatamente o desconto total
+      const baseDiscountPerItem = validItemsCount > 0 
+        ? totalDiscountValue / validItemsCount 
+        : 0;
+      
+      // Calcular frete rateado por item (frete total / número de itens válidos)
+      // Usar cálculo base para depois ajustar o último item e garantir soma exata
+      const baseShippingPerItem = validItemsCount > 0 
+        ? totalShippingValue / validItemsCount 
+        : 0;
+      
+      // Log detalhado para debug
+      console.log(`[CALCULO DESCONTO] Pedido ${orderId}: desconto=${totalDiscountValue.toFixed(2)}, frete=${totalShippingValue.toFixed(2)}, itens=${validItemsCount}, desconto_rateado_base=${baseDiscountPerItem.toFixed(4)}, frete_rateado_base=${baseShippingPerItem.toFixed(4)}`);
+      
       // Processar cada item individualmente
+      let itemIndex = 0;
+      let totalDistributedDiscount = 0;
+      let totalDistributedShipping = 0;
       for (const item of order.items) {
         // Prioriza refId, que é o identificador correto do item
         // Se não tiver refId, tenta id, sku ou productId como fallback
@@ -454,9 +505,11 @@ class OrdersSyncService {
           continue;
         }
         
-        // Usar preço correto: price (preço de venda com desconto) ao invés de listPrice
-        let itemPrice = item.price || item.sellingPrice || item.priceDefinition?.calculatedSellingPrice || 0;
-        const itemListPrice = item.listPrice || item.price || 0;
+        // Incrementar contador de itens válidos processados
+        itemIndex++;
+        
+        // Usar sellingPrice (preço de venda com desconto) e somar o frete rateado
+        let itemPrice = item.sellingPrice || item.price;
         
         // Converter de centavos para reais se necessário (VTEX geralmente retorna em centavos)
         // Se o preço for muito grande (>1000) ou muito pequeno (<1), provavelmente está em centavos
@@ -464,9 +517,34 @@ class OrdersSyncService {
           itemPrice = itemPrice / 100;
         }
         
-        // Calcular desconto individual do item
-        const itemDiscount = this.calculateItemDiscount(item);
+        // Calcular frete rateado para este item
+        // No último item, ajustar para garantir que a soma seja exatamente o frete total
+        let itemShipping;
+        if (itemIndex === validItemsCount) {
+          // Último item: usar o que falta para completar o frete total exato
+          itemShipping = totalShippingValue - totalDistributedShipping;
+        } else {
+          // Outros itens: usar o rateio base arredondado
+          itemShipping = parseFloat(baseShippingPerItem.toFixed(2));
+          totalDistributedShipping += itemShipping;
+        }
         
+        // Somar o frete rateado ao sellingPrice
+        itemPrice = itemPrice + itemShipping;
+        
+        // Calcular desconto rateado para este item
+        // No último item, ajustar para garantir que a soma seja exatamente o desconto total
+        let itemDiscount;
+        if (itemIndex === validItemsCount) {
+          // Último item: usar o que falta para completar o desconto total exato
+          itemDiscount = (totalDiscountValue - totalDistributedDiscount).toFixed(2);
+        } else {
+          // Outros itens: usar o rateio base arredondado
+          itemDiscount = baseDiscountPerItem.toFixed(2);
+          totalDistributedDiscount += parseFloat(itemDiscount);
+        }
+        
+        console.log(`[ITEM] Pedido ${orderId}, Item ${itemId}: preço=${itemPrice.toFixed(2)}, desconto_rateado=${itemDiscount}`)
         formattedOrders.push({
           order: orderId,
           item: itemId,
@@ -479,7 +557,7 @@ class OrdersSyncService {
           s_channel_source: order.salesChannel || order.channel || 'web',
           s_store_id: 'piccadilly',
           s_sales_channel: order.salesChannel || 'ecommerce',
-          s_discount: itemDiscount // Desconto individual calculado do item
+          s_discount: itemDiscount // Desconto rateado (apenas desconto total, sem frete) / número de itens
         });
       }
     } else {
@@ -714,7 +792,19 @@ class OrdersSyncService {
         }
 
         // Validações de campos obrigatórios - com fallbacks
-        const email = order.email || order.customer_email || order.clientEmail;
+        let email = order.email || order.customer_email || order.clientEmail;
+        
+        // Validar e filtrar emails inválidos
+        if (email) {
+          // Remove emails hash da VTEX e emails inválidos
+          if (email.includes('@ct.vtex.com.br') || 
+              !email.includes('@') || 
+              email.includes('@piccadilly.com.br') ||
+              email === 'piccadilly@piccadilly.com.br') {
+            email = null; // Descartar email inválido
+          }
+        }
+        
         const item = order.item || order.sku || order.productId || `ITEM_${orderId}`;
         const quantity = order.quantity || order.totalItems || 1;
         const price = order.price || order.totalValue || order.value || '0';
@@ -878,41 +968,72 @@ class OrdersSyncService {
         };
       }
 
-      // Gera nome do arquivo seguindo o padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-default.csv
-      let timestamp = getBrazilianTimestampForFilename();
-      let period = options.period || 'default';
+      // Gera nome do arquivo seguindo o padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
+      // Exemplo: ems-sl-pcdly-2025-11-04T00-01-00-00-01-07-59.csv
+      // Formato: ems-sl-pcdly-{data}T{inicio}-{fim}-{segundos}.csv
+      let filename = options.filename;
       
-      // Se brazilianDate foi fornecido, usa ele com o horário atual
-      if (options.brazilianDate) {
-        const brazilianDate = options.brazilianDate;
-        // Obtém horário atual no fuso de Brasília
-        const now = new Date();
-        const brazilianTime = new Intl.DateTimeFormat('pt-BR', {
-          timeZone: 'America/Sao_Paulo',
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        }).formatToParts(now);
-        
-        const parts = {};
-        brazilianTime.forEach(part => {
-          parts[part.type] = part.value;
-        });
-        
-        // Formata como HH-MM-SS
-        const currentTime = `${parts.hour}-${parts.minute}-${parts.second}`;
-        timestamp = `${brazilianDate}T${currentTime}`;
+      // Tenta gerar nome do arquivo, mas se houver erro, usa fallback
+      try {
+        if (!filename) {
+          // Se brazilianDate, startTime e endTime foram fornecidos, usa eles
+          if (options.brazilianDate && options.startTime && options.endTime) {
+            const brazilianDate = options.brazilianDate;
+            
+            // Formata horários: HH:MM ou HH:MM:SS -> HH-MM-SS
+            const formatTime = (time) => {
+              if (!time) return '00-00-00';
+              // Remove espaços e formata
+              const cleaned = String(time).trim();
+              const parts = cleaned.split(':');
+              
+              // Garante HH-MM-SS
+              if (parts.length === 2) {
+                return `${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}-00`;
+              } else if (parts.length === 3) {
+                return `${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+              }
+              return cleaned.replace(/:/g, '-');
+            };
+            
+            const startTimeFormatted = formatTime(options.startTime);
+            const endTimeFormatted = formatTime(options.endTime);
+            
+            // Extrai os segundos do horário final para o último campo
+            const endTimeParts = endTimeFormatted.split('-');
+            const endSeconds = endTimeParts.length >= 3 ? endTimeParts[2] : '00';
+            
+            // Padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
+            filename = `ems-sl-pcdly-${brazilianDate}T${startTimeFormatted}-${endTimeFormatted}-${endSeconds}.csv`;
+          } else if (options.startDate && options.endDate) {
+            // Se tiver startDate e endDate em UTC, converte para brasileiro
+            const moment = require('moment-timezone');
+            const startDateBR = moment(options.startDate).tz('America/Sao_Paulo');
+            const endDateBR = moment(options.endDate).tz('America/Sao_Paulo');
+            
+            const dateStr = startDateBR.format('YYYY-MM-DD');
+            const startTime = startDateBR.format('HH-MM-SS');
+            const endTime = endDateBR.format('HH-MM-SS');
+            const endSeconds = endDateBR.format('SS');
+            
+            filename = `ems-sl-pcdly-${dateStr}T${startTime}-${endTime}-${endSeconds}.csv`;
+          } else {
+            // Fallback: usa timestamp atual
+            const timestamp = getBrazilianTimestampForFilename();
+            filename = `ems-sl-pcdly-${timestamp}-default.csv`;
+          }
+        }
+      } catch (filenameError) {
+        console.warn('⚠️ Erro ao gerar nome do arquivo, usando fallback:', filenameError.message);
+        const timestamp = getBrazilianTimestampForFilename();
+        filename = `ems-sl-pcdly-${timestamp}-default.csv`;
       }
       
-      // Sempre usa 'default' como período se não especificado
-      const sanitizedPeriod = (period || 'default').replace(/[<>:"/\\|?*]/g, '-');
-      
-      // Padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-default.csv
-      let filename = options.filename || `ems-sl-pcdly-${timestamp}-${sanitizedPeriod}.csv`;
       if (!filename.endsWith('.csv')) {
         filename += '.csv';
       }
+      
+      console.log(`📝 Nome do arquivo CSV: ${filename}`);
 
       // Cria diretório de saída
       await fs.ensureDir(this.exportsDir);
@@ -949,6 +1070,11 @@ class OrdersSyncService {
       // Salva arquivo com BOM
       const csvWithBom = '\ufeff' + csvContent;
       await fs.writeFile(filePath, csvWithBom, 'utf8');
+      
+      console.log(`✅ Arquivo CSV salvo: ${filename}`);
+      console.log(`📁 Caminho completo: ${filePath}`);
+      console.log(`📊 Tamanho: ${Buffer.byteLength(csvWithBom, 'utf8')} bytes`);
+      console.log(`📦 Total de pedidos: ${orders.length}`);
 
       const result = {
         success: true,
@@ -976,8 +1102,10 @@ class OrdersSyncService {
           }
         } catch (sendError) {
           console.error('❌ Erro ao enviar CSV para Emarsys:', sendError.message);
+          console.log('⚠️ Arquivo CSV foi salvo localmente mesmo com erro no envio');
           result.emarsysSent = false;
           result.sendError = sendError.message;
+          // Não lança erro - o arquivo já foi salvo com sucesso
         }
       }
 
@@ -1200,13 +1328,31 @@ class OrdersSyncService {
       console.log(`✅ ${saveResult.inserted || 0} inseridos, ${saveResult.updated || 0} atualizados no SQLite`);
 
       // Buscar detalhes completos dos pedidos que foram salvos (para obter email)
-      // Se não tiver email, vamos buscar os detalhes da VTEX
+      // IMPORTANTE: Buscar apenas pedidos do período especificado para evitar processar pedidos antigos
       console.log('🔍 Verificando se pedidos salvos têm email...');
-      let dbOrders = await this.getPendingSyncOrders(
-        options.dataInicial && options.dataFinal 
-          ? { startDate: options.dataInicial, endDate: options.dataFinal }
-          : {}
-      );
+      console.log('📅 Filtrando pedidos por período:', {
+        dataInicial: options.dataInicial,
+        dataFinal: options.dataFinal
+      });
+      
+      // Se não houver período especificado, não buscar pedidos (evitar processar todos)
+      if (!options.dataInicial || !options.dataFinal) {
+        console.warn('⚠️ Período não especificado, não buscando pedidos do SQLite para evitar processar todos');
+        return {
+          success: true,
+          totalOrders: 0,
+          message: 'Período não especificado',
+          duration: Date.now() - startTime,
+          timestamp: getBrazilianTimestamp()
+        };
+      }
+      
+      let dbOrders = await this.getPendingSyncOrders({
+        startDate: options.dataInicial,
+        endDate: options.dataFinal
+      });
+      
+      console.log(`📊 Pedidos encontrados no SQLite para o período: ${dbOrders.length}`);
       
       // Se pedidos salvos não têm email, buscar detalhes da VTEX e email via CPF na CL
       const ordersWithoutEmail = dbOrders.filter(o => !o.email);
@@ -1255,12 +1401,12 @@ class OrdersSyncService {
           }
         }
         
-        // Buscar novamente os pedidos atualizados
-        dbOrders = await this.getPendingSyncOrders(
-          options.dataInicial && options.dataFinal 
-            ? { startDate: options.dataInicial, endDate: options.dataFinal }
-            : {}
-        );
+        // Buscar novamente os pedidos atualizados (sempre com filtro de período)
+        dbOrders = await this.getPendingSyncOrders({
+          startDate: options.dataInicial,
+          endDate: options.dataFinal
+        });
+        console.log(`📊 Pedidos após atualização de emails: ${dbOrders.length}`);
       }
       
       // Transformar para formato Emarsys
@@ -1273,7 +1419,10 @@ class OrdersSyncService {
           ...options,
           autoSend: true,
           startDate: options.dataInicial,
-          endDate: options.dataFinal
+          endDate: options.dataFinal,
+          brazilianDate: options.brazilianDate,
+          startTime: options.startTime,
+          endTime: options.endTime
         });
       } else {
         console.warn('⚠️ Nenhum pedido válido para gerar CSV. Verifique os logs acima para detalhes dos erros.');

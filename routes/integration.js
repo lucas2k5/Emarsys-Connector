@@ -906,13 +906,13 @@ router.get('/orders-extract-all', async (req, res) => {
                       
                       // Calcular desconto individual do item usando priceTags
                       const itemDiscount = calculateItemDiscount(item);
-                      
+                     
                       formattedOrders.push({
                         order: orderId,
                         item: itemRefId,
                         email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
                         quantity: item.quantity || 1,
-                        price: item.price || item.sellingPrice || 0,
+                        price: item.price || item.sellingPrice,
                         timestamp: orderDetail.creationDate || orderDetail.invoiceCreatedDate || new Date().toISOString(),
                         isSync: false,
                         order_status: orderDetail.status || orderDetail.orderStatus || null,

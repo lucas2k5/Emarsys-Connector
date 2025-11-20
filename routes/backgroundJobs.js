@@ -396,7 +396,10 @@ async function handleCronOrders(req, res) {
         const result = await ordersSyncService.syncOrders({ 
           maxOrders: maxOrdersNum, 
           dataInicial: finalStartDate, 
-          dataFinal: finalToDate 
+          dataFinal: finalToDate,
+          brazilianDate: brazilianDate,
+          startTime: startTime,
+          endTime: endTime
         });
         console.log('✅ [Background] Resultado do syncOrders:', {
           success: result.success,
@@ -458,6 +461,53 @@ async function handleCronOrders(req, res) {
 // Registrar a rota para ambos POST e GET
 router.post('/cron-orders', handleCronOrders);
 router.get('/cron-orders', handleCronOrders);
+
+// DELETE /api/background/clear-orders
+// Limpa registros do SQLite
+router.delete('/clear-orders', async (req, res) => {
+  try {
+    const { onlyPending = false, confirm = false } = req.body;
+    
+    if (!confirm) {
+      return res.status(400).json({
+        success: false,
+        error: 'Confirmação necessária',
+        message: 'Envie { "confirm": true } no body para confirmar a limpeza'
+      });
+    }
+    
+    const OrdersSyncService = require('../services/ordersSyncService');
+    const ordersSyncService = new OrdersSyncService();
+    await ordersSyncService.initDatabase();
+    
+    const result = ordersSyncService.db.clearOrders(onlyPending);
+    
+    if (result.success) {
+      const stats = ordersSyncService.db.getStats();
+      return res.json({
+        success: true,
+        deleted: result.deleted,
+        message: result.message,
+        stats: {
+          total: stats.total,
+          pending: stats.pending,
+          synced: stats.synced
+        }
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Erro ao limpar orders:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // POST /api/background/sync-orders
 // Rota original mantida intacta (usa serviços antigos)
