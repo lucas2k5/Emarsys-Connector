@@ -134,7 +134,9 @@ class OrdersSyncService {
         status: res.status,
         dataLength: res.data?.list?.length || 0,
         hasData: !!res.data,
-        hasList: !!res.data?.list
+        hasList: !!res.data?.list,
+        hasPaging: !!res.data?.paging,
+        paging: res.data?.paging || null
       });
       
       if (res.data && res.data.list && res.data.list.length > 0) {
@@ -172,7 +174,7 @@ class OrdersSyncService {
       let allOrders = [];
       let page = 1;
       let hasMorePages = true;
-      const MAX_PAGES = 30;
+      const MAX_PAGES = 100; // Aumentado de 30 para 100 para suportar até 10.000 pedidos
       const PER_PAGE = 100;
 
       while (hasMorePages && page <= MAX_PAGES) {
@@ -182,19 +184,39 @@ class OrdersSyncService {
             orderBy: 'creationDate,asc'
           });
           
-          if (orderFeed && orderFeed.list) {
+          if (orderFeed && orderFeed.list && orderFeed.list.length > 0) {
             allOrders = allOrders.concat(orderFeed.list);
-            console.log(`✅ Página ${page}: ${orderFeed.list.length} pedidos encontrados`);
+            const ordersInPage = orderFeed.list.length;
+            console.log(`✅ Página ${page}: ${ordersInPage} pedidos encontrados (Total acumulado: ${allOrders.length})`);
             
+            // Verifica informações de paginação explícitas
             if (orderFeed.paging && orderFeed.paging.pages) {
               const totalPages = orderFeed.paging.pages;
               const currentPage = orderFeed.paging.currentPage || page;
+              console.log(`📊 Paginação explícita: página ${currentPage} de ${totalPages}`);
               hasMorePages = currentPage < totalPages && page < MAX_PAGES;
-              page++;
+              
+              if (page >= MAX_PAGES && currentPage < totalPages) {
+                console.warn(`⚠️ Limite de ${MAX_PAGES} páginas atingido. Total de páginas disponíveis: ${totalPages}`);
+                console.warn(`⚠️ Pedidos encontrados até agora: ${allOrders.length}`);
+              }
             } else {
-              hasMorePages = false;
+              // Se não houver informações de paginação explícitas, usa heurística:
+              // Se retornou exatamente PER_PAGE pedidos, provavelmente há mais páginas
+              // Se retornou menos que PER_PAGE, provavelmente é a última página
+              if (ordersInPage === PER_PAGE) {
+                console.log(`📄 Sem informações de paginação, mas retornou ${PER_PAGE} pedidos. Assumindo que há mais páginas...`);
+                hasMorePages = true;
+              } else {
+                console.log(`📄 Retornou ${ordersInPage} pedidos (menos que ${PER_PAGE}), assumindo última página`);
+                hasMorePages = false;
+              }
             }
+            
+            page++;
           } else {
+            // Resposta vazia ou sem lista - não há mais páginas
+            console.log(`📄 Página ${page} retornou vazia ou sem lista, finalizando busca`);
             hasMorePages = false;
           }
 
@@ -212,7 +234,7 @@ class OrdersSyncService {
         }
       }
 
-      console.log(`🎉 Busca concluída! Total de ${allOrders.length} pedidos encontrados`);
+      console.log(`🎉 Busca concluída! Total de ${allOrders.length} pedidos encontrados em ${page - 1} página(s)`);
       return allOrders;
     } catch (error) {
       console.error('❌ Erro ao buscar pedidos no período:', error);
@@ -456,12 +478,6 @@ class OrdersSyncService {
         const discountsTotal = order.totals.find(t => t.id === 'Discounts');
         const shippingTotal = order.totals.find(t => t.id === 'Shipping');
         
-        // Log dos valores brutos dos totals
-        console.log(`[TOTALS RAW] Pedido ${orderId}:`, {
-          discountsRaw: discountsTotal?.value,
-          shippingRaw: shippingTotal?.value,
-          allTotals: order.totals.map(t => ({ id: t.id, value: t.value, name: t.name }))
-        });
         
         if (discountsTotal && discountsTotal.value !== undefined && discountsTotal.value !== null) {
           // Desconto vem como valor negativo em centavos, então pegamos o valor absoluto
@@ -487,8 +503,6 @@ class OrdersSyncService {
         ? totalShippingValue / validItemsCount 
         : 0;
       
-      // Log detalhado para debug
-      console.log(`[CALCULO DESCONTO] Pedido ${orderId}: desconto=${totalDiscountValue.toFixed(2)}, frete=${totalShippingValue.toFixed(2)}, itens=${validItemsCount}, desconto_rateado_base=${baseDiscountPerItem.toFixed(4)}, frete_rateado_base=${baseShippingPerItem.toFixed(4)}`);
       
       // Processar cada item individualmente
       let itemIndex = 0;
@@ -544,7 +558,6 @@ class OrdersSyncService {
           totalDistributedDiscount += parseFloat(itemDiscount);
         }
         
-        console.log(`[ITEM] Pedido ${orderId}, Item ${itemId}: preço=${itemPrice.toFixed(2)}, desconto_rateado=${itemDiscount}`)
         formattedOrders.push({
           order: orderId,
           item: itemId,
@@ -570,6 +583,37 @@ class OrdersSyncService {
   }
 
   /**
+   * Calcula e formata informações de progresso
+   * @param {number} current - Índice atual (1-based)
+   * @param {number} total - Total de itens
+   * @param {Date} startTime - Data/hora de início
+   * @returns {Object} Objeto com informações de progresso formatadas
+   */
+  _calculateProgress(current, total, startTime) {
+    const percentage = ((current / total) * 100).toFixed(1);
+    const remaining = total - current;
+    const remainingPercentage = ((remaining / total) * 100).toFixed(1);
+    
+    // Calcular tempo médio por item
+    const elapsed = Date.now() - startTime.getTime();
+    const avgTimePerItem = elapsed / current;
+    const estimatedRemaining = avgTimePerItem * remaining;
+    const estimatedEndTime = new Date(Date.now() + estimatedRemaining);
+    
+    // Formatar horário de término previsto (horário de São Paulo)
+    const moment = require('moment-timezone');
+    const estimatedEndTimeBR = moment(estimatedEndTime).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss');
+    
+    return {
+      current,
+      total,
+      percentage,
+      remainingPercentage,
+      estimatedEndTimeBR
+    };
+  }
+
+  /**
    * Salva pedidos da VTEX no SQLite
    * Busca detalhes completos de cada pedido para garantir refId correto
    * @param {Array} orders - Array de pedidos da VTEX
@@ -580,11 +624,21 @@ class OrdersSyncService {
       await this.initDatabase();
       
       const formattedOrders = [];
+      const startTime = new Date();
+      const totalOrders = orders.length;
+      let currentIndex = 0;
       
       // Buscar detalhes completos de cada pedido (similar ao sendOrderToHook)
       for (const order of orders) {
+        currentIndex++;
         const orderId = order.orderId;
         if (!orderId) continue;
+        
+        // Log de progresso
+        const progress = this._calculateProgress(currentIndex, totalOrders, startTime);
+        console.log(`📦 Processando pedido ${progress.current} de ${progress.total} pedidos`);
+        console.log(`   📊 Progresso: ${progress.percentage}% concluído | ${progress.remainingPercentage}% restante`);
+        console.log(`   ⏰ Previsão de término: ${progress.estimatedEndTimeBR} (horário de São Paulo)`);
         
         try {
           // Busca detalhes completos do pedido para garantir que temos refId correto
@@ -756,9 +810,20 @@ class OrdersSyncService {
       }
     }
     
+    const startTime = new Date();
+    const totalItems = orders.length;
+    let currentIndex = 0;
+    
     for (const order of orders) {
+      currentIndex++;
       try {
         const orderId = order.order;
+        
+        // Log de progresso
+        const progress = this._calculateProgress(currentIndex, totalItems, startTime);
+        console.log(`🔄 Processando item ${progress.current} de ${progress.total} itens`);
+        console.log(`   📊 Progresso: ${progress.percentage}% concluído | ${progress.remainingPercentage}% restante`);
+        console.log(`   ⏰ Previsão de término: ${progress.estimatedEndTimeBR} (horário de São Paulo)`);
         
         // Cria identificador único para o item do pedido (orderId + item)
         const uniqueItemId = `${orderId}_${order.item}`;
@@ -920,8 +985,14 @@ class OrdersSyncService {
       });
     }
 
-    console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
+    // Calcula quantidade de pedidos únicos
+    const uniqueOrders = new Set(orders.map(o => o.order));
+    const uniqueOrdersCount = uniqueOrders.size;
+    const uniqueProcessedOrders = new Set(emarsysData.map(o => o.order));
+    const uniqueProcessedOrdersCount = uniqueProcessedOrders.size;
+    
+    console.log(`✅ Transformados ${orders.length} itens (${uniqueOrdersCount} pedidos únicos) em ${emarsysData.length} registros (${uniqueProcessedOrdersCount} pedidos únicos) para Emarsys`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} itens processados de ${uniqueProcessedOrdersCount} pedidos únicos, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
     
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);
@@ -1071,10 +1142,15 @@ class OrdersSyncService {
       const csvWithBom = '\ufeff' + csvContent;
       await fs.writeFile(filePath, csvWithBom, 'utf8');
       
+      // Calcula quantidade de pedidos únicos e itens
+      const uniqueOrders = new Set(orders.map(o => o.order));
+      const uniqueOrdersCount = uniqueOrders.size;
+      const itemsCount = orders.length;
+      
       console.log(`✅ Arquivo CSV salvo: ${filename}`);
       console.log(`📁 Caminho completo: ${filePath}`);
       console.log(`📊 Tamanho: ${Buffer.byteLength(csvWithBom, 'utf8')} bytes`);
-      console.log(`📦 Total de pedidos: ${orders.length}`);
+      console.log(`📦 Resumo: ${itemsCount} itens de ${uniqueOrdersCount} pedidos únicos`);
 
       const result = {
         success: true,
@@ -1357,8 +1433,18 @@ class OrdersSyncService {
       // Se pedidos salvos não têm email, buscar detalhes da VTEX e email via CPF na CL
       const ordersWithoutEmail = dbOrders.filter(o => !o.email);
       if (ordersWithoutEmail.length > 0) {
-        console.log(`📧 ${ordersWithoutEmail.length} pedidos sem email, buscando detalhes da VTEX e email via CPF na CL...`);
-        for (const dbOrder of ordersWithoutEmail.slice(0, 50)) { // Limitar a 50 para não sobrecarregar
+        const ordersToProcess = ordersWithoutEmail.slice(0, 50); // Limitar a 50 para não sobrecarregar
+        console.log(`📧 ${ordersWithoutEmail.length} pedidos sem email, buscando detalhes da VTEX e email via CPF na CL (processando ${ordersToProcess.length})...`);
+        const emailSearchStartTime = new Date();
+        let emailSearchIndex = 0;
+        
+        for (const dbOrder of ordersToProcess) {
+          emailSearchIndex++;
+          const emailProgress = this._calculateProgress(emailSearchIndex, ordersToProcess.length, emailSearchStartTime);
+          console.log(`📧 Buscando email: pedido ${emailProgress.current} de ${emailProgress.total} pedidos`);
+          console.log(`   📊 Progresso: ${emailProgress.percentage}% concluído | ${emailProgress.remainingPercentage}% restante`);
+          console.log(`   ⏰ Previsão de término: ${emailProgress.estimatedEndTimeBR} (horário de São Paulo)`);
+          
           try {
             // 1. Buscar detalhes completos do pedido
             const orderDetail = await this.getOrderById(dbOrder.order);
