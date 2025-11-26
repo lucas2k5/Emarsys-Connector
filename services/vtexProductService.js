@@ -873,14 +873,97 @@ class VtexProductService {
         }
       });
 
-      // Se encontrou na API pública, retorna (produto ativo)
+      // Se encontrou na API pública
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         const product = response.data[0];
-        console.log(`      ✓ API pública: produto ativo encontrado`);
+        console.log(`      ✓ API pública: produto encontrado`);
+        
+        // CORREÇÃO: Verificar se todos os SKUs esperados estão presentes
+        // A API pública só retorna SKUs ativos, precisamos complementar com os inativos
+        if (skuIds && skuIds.length > 0 && product.items && Array.isArray(product.items)) {
+          // Extrai os IDs dos SKUs retornados pela API pública
+          const returnedSkuIds = new Set();
+          product.items.forEach(item => {
+            // O item pode ter itemId como string ou número
+            if (item.itemId) {
+              returnedSkuIds.add(parseInt(item.itemId));
+            }
+          });
+          
+          // Identifica SKUs faltantes (inativos que não vieram da API pública)
+          const missingSkuIds = skuIds.filter(skuId => !returnedSkuIds.has(skuId));
+          
+          if (missingSkuIds.length > 0) {
+            console.log(`      ⚠️ API pública retornou ${returnedSkuIds.size}/${skuIds.length} SKUs`);
+            console.log(`      🔍 Buscando ${missingSkuIds.length} SKUs inativos na API privada...`);
+            
+            // Busca detalhes do produto na API privada para obter categoria correta
+            const productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
+            
+            // Busca os SKUs faltantes na API privada
+            const missingSkusDetails = [];
+            for (const skuId of missingSkuIds) {
+              try {
+                const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
+                if (skuDetail && skuDetail.RefId) {
+                  missingSkusDetails.push(skuDetail);
+                  console.log(`         ✓ SKU ${skuId}: encontrado na API privada (inativo)`);
+                } else if (skuDetail) {
+                  // SKU existe mas não tem RefId, usa fallback
+                  skuDetail.RefId = `SKU-${skuId}`;
+                  missingSkusDetails.push(skuDetail);
+                  console.log(`         ⚠️ SKU ${skuId}: sem RefId, usando fallback`);
+                } else {
+                  console.log(`         ⚠️ SKU ${skuId}: não encontrado na API privada`);
+                }
+              } catch (skuError) {
+                console.log(`         ⚠️ SKU ${skuId}: erro ao buscar - ${skuError.message}`);
+              }
+            }
+            
+            // Mescla os SKUs inativos com o produto da API pública
+            if (missingSkusDetails.length > 0) {
+              console.log(`      ✓ Adicionando ${missingSkusDetails.length} SKUs inativos ao produto`);
+              
+              // Determina se a categoria indica inativo
+              const productCategory = productDetails?.CategoryName || product.categories?.[0] || '';
+              const isCategoryInactive = productCategory.toLowerCase().includes('inativo');
+              
+              // Converte os SKUs da API privada para o formato de items
+              const inactiveItems = missingSkusDetails.map(sku => {
+                return {
+                  itemId: String(sku.Id),
+                  referenceId: [{ Value: sku.RefId }],
+                  ean: sku.EAN || '',
+                  images: [],
+                  sellers: [{
+                    commertialOffer: {
+                      Price: 0,
+                      ListPrice: 0,
+                      IsAvailable: false, // SKUs inativos nunca estão disponíveis
+                      AvailableQuantity: 0
+                    }
+                  }],
+                  Tamanho: sku.Name || '',
+                  releaseDate: sku.DateUpdated || sku.CreationDate || '',
+                  isInactive: true // Marca como inativo para referência
+                };
+              });
+              
+              // Adiciona os items inativos ao produto
+              product.items = [...product.items, ...inactiveItems];
+              
+              console.log(`      ✓ Total de SKUs no produto: ${product.items.length}`);
+            }
+          } else {
+            console.log(`      ✓ Todos os ${skuIds.length} SKUs estão presentes`);
+          }
+        }
+        
         return product;
       }
 
-      // PASSO 2: API pública não retornou dados, tentar API privada (produtos inativos)
+      // PASSO 2: API pública não retornou dados, tentar API privada (produtos completamente inativos)
       console.log(`      ℹ️ API pública: sem dados, buscando na API privada...`);
       
       // Busca detalhes do produto pela API privada
@@ -905,6 +988,11 @@ class VtexProductService {
             const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
             if (skuDetail && skuDetail.RefId) {
               skusDetails.push(skuDetail);
+            } else if (skuDetail) {
+              // SKU existe mas não tem RefId, usa fallback
+              skuDetail.RefId = `SKU-${skuId}`;
+              skusDetails.push(skuDetail);
+              console.log(`         ⚠️ SKU ${skuId}: sem RefId, usando fallback`);
             } else {
               console.log(`         ⚠️ SKU ${skuId}: sem RefId válido`);
             }
