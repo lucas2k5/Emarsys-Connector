@@ -15,6 +15,16 @@ services:
       - DEBUG=${DEBUG:-false}
       - ENABLE_EMARSYS_UPLOAD=${ENABLE_EMARSYS_UPLOAD:-true}
       - SQLITE_DB_PATH=/app/data/orders.db
+      # Emarsys Configuration
+      - EMARSYS_USER=${EMARSYS_USER}
+      - EMARSYS_USERNAME=${EMARSYS_USERNAME}
+      - EMARSYS_SECRET=${EMARSYS_SECRET}
+      - EMARSYS_PASSWORD=${EMARSYS_PASSWORD}
+      - EMARSYS_CLIENT_ID=${EMARSYS_CLIENT_ID}
+      - EMARSYS_CLIENT_SECRET=${EMARSYS_CLIENT_SECRET}
+      - EMARSYS_BEARER_TOKEN=${EMARSYS_BEARER_TOKEN}
+      - EMARSYS_MERCHANT_ID=${EMARSYS_MERCHANT_ID}
+      - WEBDAV_FOLDER=${WEBDAV_FOLDER}
       # Variáveis opcionais para cron jobs (se não definidas, os crons serão desabilitados)
       # - PRODUCTS_SYNC_CRON=${PRODUCTS_SYNC_CRON}
       # - ORDERS_SYNC_CRON=${ORDERS_SYNC_CRON}

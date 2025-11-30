@@ -867,6 +867,45 @@ router.post('/create-single', async (req, res) => {
       });
     }
     
+    // Validação de credenciais necessárias
+    const missingCredentials = [];
+    
+    // Verifica credenciais VTEX
+    if (!process.env.VTEX_BASE_URL) {
+      missingCredentials.push('VTEX_BASE_URL');
+    }
+    if (!process.env.VTEX_APP_KEY) {
+      missingCredentials.push('VTEX_APP_KEY');
+    }
+    if (!process.env.VTEX_APP_TOKEN) {
+      missingCredentials.push('VTEX_APP_TOKEN');
+    }
+    
+    // Verifica credenciais Emarsys
+    const emarsysUser = process.env.EMARSYS_USER || process.env.EMARSYS_USERNAME;
+    const emarsysSecret = process.env.EMARSYS_SECRET || process.env.EMARSYS_PASSWORD;
+    if (!emarsysUser) {
+      missingCredentials.push('EMARSYS_USER ou EMARSYS_USERNAME');
+    }
+    if (!emarsysSecret) {
+      missingCredentials.push('EMARSYS_SECRET ou EMARSYS_PASSWORD');
+    }
+    
+    if (missingCredentials.length > 0) {
+      const { logger } = require('../utils/logger');
+      logger.error('Credenciais faltando no endpoint create-single', { 
+        missingCredentials,
+        reqId
+      });
+      return res.status(500).json({
+        success: false,
+        error: 'Credenciais não configuradas no servidor',
+        missingCredentials: missingCredentials,
+        message: `Configure as seguintes variáveis de ambiente: ${missingCredentials.join(', ')}`,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     // Idempotência: evita processar múltiplas vezes o mesmo email em janela curta
     const emailKey = String(email || '').trim().toLowerCase();
     const nowTs = Date.now();
