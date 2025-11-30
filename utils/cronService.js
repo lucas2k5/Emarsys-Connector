@@ -129,7 +129,7 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders usando o fluxo orders-extract-all (dia anterior)
+   * Configura o cron para sincronização de orders usando o fluxo cron-orders (SQLite)
    * Usa a rota de background job para evitar timeout de 504
    */
   setupOrdersSync() {

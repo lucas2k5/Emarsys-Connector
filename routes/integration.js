@@ -659,6 +659,7 @@ router.post('/orders-extract', async (req, res) => {
 /**
  * @route GET /api/integration/orders-extract-all
  * @desc Extrai TODOS os pedidos do período (com paginação automática)
+ * @deprecated Esta rota não é mais usada pelo cron job. O cron agora usa POST /api/background/cron-orders
  * @param {string} brazilianDate - Data brasileira (YYYY-MM-DD) OU
  * @param {string} startDate - Data inicial UTC (ISO) OU
  * @param {string} toDate - Data final UTC (ISO) OU
