@@ -50,8 +50,22 @@ class EmarsysContactImportService {
 
       console.log('🔑 Obtendo novo token OAuth2 da Emarsys...');
       
+      // Verifica credenciais dinamicamente (pode ter sido carregado depois da instanciação)
+      const wsseUser = this.wsseUser || process.env.EMARSYS_USER || process.env.EMARSYS_USERNAME;
+      const wsseSecret = this.wsseSecret || process.env.EMARSYS_SECRET || process.env.EMARSYS_PASSWORD;
+      
+      if (!wsseUser || !wsseSecret) {
+        throw new Error('Credenciais Emarsys não configuradas para OAuth2');
+      }
+      
+      // Atualiza as propriedades se foram carregadas do env dinamicamente
+      if (!this.wsseUser || !this.wsseSecret) {
+        this.wsseUser = wsseUser;
+        this.wsseSecret = wsseSecret;
+      }
+      
       // Usa as credenciais do Postman (Basic Auth)
-      const credentials = Buffer.from(`${this.wsseUser}:${this.wsseSecret}`).toString('base64');
+      const credentials = Buffer.from(`${wsseUser}:${wsseSecret}`).toString('base64');
       
       const response = await axios.post('https://auth.emarsys.net/oauth2/token', 
         'grant_type=client_credentials',
@@ -464,12 +478,35 @@ class EmarsysContactImportService {
     async createContact(contactData, options = {}) {
       const { maxRetries = 3, retryDelay = 1000, validateData = true } = options;
       
-      if (!this.wsseUser || !this.wsseSecret) {
+      // Verifica credenciais dinamicamente (pode ter sido carregado depois da instanciação)
+      const wsseUser = this.wsseUser || process.env.EMARSYS_USER || process.env.EMARSYS_USERNAME;
+      const wsseSecret = this.wsseSecret || process.env.EMARSYS_SECRET || process.env.EMARSYS_PASSWORD;
+      
+      if (!wsseUser || !wsseSecret) {
+        console.error('❌ Credenciais Emarsys não configuradas:', {
+          hasWsseUser: !!this.wsseUser,
+          hasWsseSecret: !!this.wsseSecret,
+          hasEnvUser: !!process.env.EMARSYS_USER,
+          hasEnvUsername: !!process.env.EMARSYS_USERNAME,
+          hasEnvSecret: !!process.env.EMARSYS_SECRET,
+          hasEnvPassword: !!process.env.EMARSYS_PASSWORD
+        });
         return {
           success: false,
-          error: 'Credenciais Emarsys não configuradas.',
+          error: 'Credenciais Emarsys não configuradas. Configure EMARSYS_USER e EMARSYS_SECRET (ou EMARSYS_USERNAME e EMARSYS_PASSWORD)',
           errorType: 'CONFIG_ERROR'
         };
+      }
+      
+      // Atualiza as propriedades se foram carregadas do env dinamicamente
+      if (!this.wsseUser || !this.wsseSecret) {
+        this.wsseUser = wsseUser;
+        this.wsseSecret = wsseSecret;
+        // Inicializa o cliente se ainda não foi inicializado
+        if (!this.client) {
+          console.log('🔧 Inicializando cliente Emarsys com credenciais carregadas dinamicamente...');
+          this.initializeClient();
+        }
       }
 
       // Validação dos dados se habilitada

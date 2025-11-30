@@ -5,25 +5,112 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Server Configuration
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=${PORT:-3000}
       - HOST=${HOST:-0.0.0.0}
+      - BASE_URL=${BASE_URL}
+      - DEBUG=${DEBUG:-false}
+      - LOG_VERBOSE=${LOG_VERBOSE}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - SQLITE_DB_PATH=/app/data/orders.db
+      
+      # VTEX Configuration
+      - VTEX_ACCOUNT_NAME=${VTEX_ACCOUNT_NAME}
       - VTEX_BASE_URL=${VTEX_BASE_URL}
       - VTEX_APP_KEY=${VTEX_APP_KEY}
       - VTEX_APP_TOKEN=${VTEX_APP_TOKEN}
+      - VTEX_AUTH_TOKEN=${VTEX_AUTH_TOKEN}
       - VTEX_ORDERS_URL=${VTEX_ORDERS_URL:-/_v/orders/list}
-      - DEBUG=${DEBUG:-false}
+      - VTEX_ORDERS_DELETE=${VTEX_ORDERS_DELETE}
+      
+      # Emarsys Configuration
+      - EMARSYS_USER=${EMARSYS_USER}
+      - EMARSYS_USERNAME=${EMARSYS_USERNAME}
+      - EMARSYS_SECRET=${EMARSYS_SECRET}
+      - EMARSYS_PASSWORD=${EMARSYS_PASSWORD}
+      - EMARSYS_CLIENT_ID=${EMARSYS_CLIENT_ID}
+      - EMARSYS_CLIENT_SECRET=${EMARSYS_CLIENT_SECRET}
+      - EMARSYS_BEARER_TOKEN=${EMARSYS_BEARER_TOKEN}
+      - EMARSYS_MERCHANT_ID=${EMARSYS_MERCHANT_ID}
+      - EMARSYS_SALES_TOKEN=${EMARSYS_SALES_TOKEN}
+      - EMARSYS_ENDPOINT=${EMARSYS_ENDPOINT}
+      - EMARSYS_HAPI_URL=${EMARSYS_HAPI_URL}
+      - WEBDAV_FOLDER=${WEBDAV_FOLDER}
+      
+      # SFTP Configuration
+      - SFTP_HOST=${SFTP_HOST}
+      - SFTP_PORT=${SFTP_PORT:-22}
+      - SFTP_USERNAME=${SFTP_USERNAME}
+      - SFTP_PASSWORD=${SFTP_PASSWORD}
+      - SFTP_REMOTE_PATH=${SFTP_REMOTE_PATH}
+      - SFTP_READY_TIMEOUT=${SFTP_READY_TIMEOUT:-20000}
+      - SFTP_KEEPALIVE_INTERVAL=${SFTP_KEEPALIVE_INTERVAL:-15000}
+      - SFTP_KEEPALIVE_COUNT_MAX=${SFTP_KEEPALIVE_COUNT_MAX:-5}
+      
+      # HAPI Configuration
+      - HAPI_URL=${HAPI_URL}
+      
+      # Inngest Configuration
+      - INNGEST_EVENT_KEY=${INNGEST_EVENT_KEY}
+      - INNGEST_SIGNING_KEY=${INNGEST_SIGNING_KEY}
+      - INNGEST_ENV=${INNGEST_ENV:-dev}
+      
+      # Orders Configuration
       - ENABLE_EMARSYS_UPLOAD=${ENABLE_EMARSYS_UPLOAD:-true}
-      - SQLITE_DB_PATH=/app/data/orders.db
-      # Variáveis opcionais para cron jobs (se não definidas, os crons serão desabilitados)
-      # - PRODUCTS_SYNC_CRON=${PRODUCTS_SYNC_CRON}
-      # - ORDERS_SYNC_CRON=${ORDERS_SYNC_CRON}
-      # - CRON_TIMEZONE=${CRON_TIMEZONE:-America/Sao_Paulo}
+      - ORDERS_DAYS_LOOKBACK=${ORDERS_DAYS_LOOKBACK:-1}
+      - ORDERS_MAX_PAGES=${ORDERS_MAX_PAGES:-10}
+      - ORDERS_PAGE_SIZE=${ORDERS_PAGE_SIZE:-50}
+      - ORDERS_DELAY_MS=${ORDERS_DELAY_MS:-300}
+      - ORDERS_TIMEOUT_MS=${ORDERS_TIMEOUT_MS:-900000}
+      - ORDERS_SYNC_ENABLED=${ORDERS_SYNC_ENABLED:-true}
+      - ENABLE_ORDER_CLEANUP=${ENABLE_ORDER_CLEANUP:-false}
+      - PROCESSED_ORDERS_RETENTION_HOURS=${PROCESSED_ORDERS_RETENTION_HOURS:-720}
+      - DISABLE_CLEANUP=${DISABLE_CLEANUP}
+      
+      # Products Configuration
+      - PRODUCTS_BATCH_SIZE=${PRODUCTS_BATCH_SIZE:-20}
+      - PRODUCTS_CONCURRENCY=${PRODUCTS_CONCURRENCY:-4}
+      - PRODUCTS_MIN_TIME_MS=${PRODUCTS_MIN_TIME_MS:-100}
+      - PRODUCTS_LOG_EVERY=${PRODUCTS_LOG_EVERY:-20}
+      - PRODUCTS_INTRA_BATCH_CONCURRENCY=${PRODUCTS_INTRA_BATCH_CONCURRENCY:-4}
+      - PRODUCTS_ERRORS_SAMPLE=${PRODUCTS_ERRORS_SAMPLE:-10}
+      - PRODUCTS_INTER_BATCH_SLEEP_MS=${PRODUCTS_INTER_BATCH_SLEEP_MS:-250}
+      - PRODUCTS_INTER_CHUNK_SLEEP_MS=${PRODUCTS_INTER_CHUNK_SLEEP_MS:-1000}
+      - PRODUCTS_TIMEOUT_MS=${PRODUCTS_TIMEOUT_MS:-600000}
+      - PRODUCTS_MAX_PER_RUN=${PRODUCTS_MAX_PER_RUN}
+      
+      # Rate Limiting Configuration
+      - API_MAX_CONCURRENT=${API_MAX_CONCURRENT:-5}
+      - API_MIN_TIME=${API_MIN_TIME:-200}
+      - PRODUCT_MAX_CONCURRENT=${PRODUCT_MAX_CONCURRENT:-10}
+      - PRODUCT_MIN_TIME=${PRODUCT_MIN_TIME:-100}
+      
+      # Inngest Chunk Configuration
+      - INNGEST_CHUNK_SIZE=${INNGEST_CHUNK_SIZE:-50}
+      - SKIP_INLINE_CSV_GENERATION=${SKIP_INLINE_CSV_GENERATION:-true}
+      
+      # EMS Configuration
+      - EMS_ENTITY_ID=${EMS_ENTITY_ID}
+      - EMS_SYNC_LOOKBACK_HOURS=${EMS_SYNC_LOOKBACK_HOURS:-5}
+      - EMS_ORDERS_ENTITY_ID=${EMS_ORDERS_ENTITY_ID}
+      
+      # Cron Jobs Configuration
+      - PRODUCTS_SYNC_CRON=${PRODUCTS_SYNC_CRON}
+      - ORDERS_SYNC_CRON=${ORDERS_SYNC_CRON}
+      - CRON_TIMEZONE=${CRON_TIMEZONE:-America/Sao_Paulo}
+      
+      # Other Configuration
+      - TEST_TOKEN=${TEST_TOKEN}
+      - MARKETPLACE=${MARKETPLACE:-false}
+      - ENABLE_FTP_UPLOAD=${ENABLE_FTP_UPLOAD}
     volumes:
-      - ./data:/app/data
+      # Volume privado para SQLite - apenas o container tem acesso
+      # O SQLite ficará em /app/data/orders.db dentro do volume nomeado
+      - sqlite_data:/app/data
+      # Volumes para exports e logs (acessíveis do host para backup/debug)
       - ./exports:/app/exports
       - ./logs:/app/logs
-      - sqlite_data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
