@@ -105,10 +105,12 @@ services:
       - MARKETPLACE=${MARKETPLACE:-false}
       - ENABLE_FTP_UPLOAD=${ENABLE_FTP_UPLOAD}
     volumes:
-      - ./data:/app/data
+      # Volume privado para SQLite - apenas o container tem acesso
+      # O SQLite ficará em /app/data/orders.db dentro do volume nomeado
+      - sqlite_data:/app/data
+      # Volumes para exports e logs (acessíveis do host para backup/debug)
       - ./exports:/app/exports
       - ./logs:/app/logs
-      - sqlite_data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
