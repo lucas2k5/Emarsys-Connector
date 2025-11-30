@@ -519,10 +519,6 @@ class VtexOrdersService {
         _size: 1
       };
       
-      console.log('👤 getCLOptInStatus: Consultando CL para email:', email);
-      console.log('👤 getCLOptInStatus: URL:', url);
-      console.log('👤 getCLOptInStatus: Params:', params);
-      
       const response = await axios.get(url, { 
         params,
         headers: {
@@ -532,33 +528,22 @@ class VtexOrdersService {
         timeout: 20000 
       });
       
-      console.log('👤 getCLOptInStatus: Response status:', response.status);
-      console.log('👤 getCLOptInStatus: Response data:', response.data);
-      
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         const isNewsletterOptIn = response.data[0].isNewsletterOptIn;
         console.log('👤 getCLOptInStatus: isNewsletterOptIn valor bruto:', isNewsletterOptIn, '(tipo:', typeof isNewsletterOptIn, ')');
-        
-        // Normaliza o valor para boolean
-        // VTEX CL armazena isNewsletterOptIn como string "true"/"false" ou boolean
         if (isNewsletterOptIn === true || isNewsletterOptIn === 'true' || isNewsletterOptIn === '1' || isNewsletterOptIn === 1) {
           console.log('👤 getCLOptInStatus: Retornando true');
           return true;
         } else if (isNewsletterOptIn === false || isNewsletterOptIn === 'false' || isNewsletterOptIn === '0' || isNewsletterOptIn === 0) {
           console.log('👤 getCLOptInStatus: Retornando false');
           return false;
-        } else {
-          console.log('👤 getCLOptInStatus: Valor não reconhecido, retornando null');
-        }
-      } else {
-        console.log('👤 getCLOptInStatus: Nenhum registro encontrado na CL');
+        } 
       }
       
       return null; // Não encontrado ou valor inválido
     } catch (error) {
       console.error(`❌ getCLOptInStatus: Erro ao buscar isNewsletterOptIn da CL para ${email}:`, error.message);
       if (error.response) {
-        console.error('❌ getCLOptInStatus: Status:', error.response.status);
         console.error('❌ getCLOptInStatus: Data:', JSON.stringify(error.response.data));
       }
       return null;

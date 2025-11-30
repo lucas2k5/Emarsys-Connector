@@ -822,8 +822,15 @@ PRODUCTS_CONCURRENCY=2
 
 ```bash
 npm install -g pm2
-pm2 install pm2-logrotate
+npm run prod:logrotate:setup  # Configura rotação diária automática de logs
 ```
+
+**Nota importante sobre logs:**
+- Todos os logs agora são gerados **por dia** (rotação diária automática)
+- Logs combinados: `logs/ems-pcy-combined-DD-MM-YYYY.log` (mantém 7 dias, compactados)
+- Logs do PM2: `logs/ems-pcy-pm2-*.log` (rotacionados diariamente pelo pm2-logrotate)
+- Não há mais arquivos de log genéricos acumulando indefinidamente
+- Para configurar manualmente o pm2-logrotate, execute: `pm2 install pm2-logrotate`
 
 2. **Iniciar aplicação**:
 
