@@ -66,12 +66,13 @@ const transports = [
     format: consoleFormat,
   }),
 
-  // Arquivo de logs combinados (TUDO em um só arquivo)
+  // Arquivo de logs combinados (TUDO em um só arquivo) - Rotação diária
   new DailyRotateFile({
     filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
     datePattern: 'DD-MM-YYYY',
-    maxSize: '50m',
-    maxFiles: '7d',
+    maxSize: '20m',        // Reduzido de 50m para evitar arquivos muito grandes
+    maxFiles: '7d',        // Manter apenas 7 dias
+    zippedArchive: true,   // Comprimir arquivos antigos automaticamente
     level: 'info',
     format: logFormat,
   }),
@@ -167,12 +168,13 @@ const metricsLogger = winston.createLogger({
       maxSize: '20m',
       maxFiles: '30d',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
     }),
   ],
@@ -192,12 +194,13 @@ const auditLogger = winston.createLogger({
       maxSize: '20m',
       maxFiles: '90d',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
     }),
   ],
@@ -222,12 +225,13 @@ const ordersLogger = winston.createLogger({
       maxFiles: '30d',
       level: 'info',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
       format: dividerFormat,
     }),
@@ -253,12 +257,13 @@ const productsLogger = winston.createLogger({
       maxFiles: '30d',
       level: 'info',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
       format: dividerFormat,
     }),
@@ -284,12 +289,13 @@ const clientsLogger = winston.createLogger({
       maxFiles: '30d',
       level: 'info',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
       format: dividerFormat,
     }),
@@ -315,12 +321,13 @@ const accessLogger = winston.createLogger({
       maxFiles: '30d',
       level: 'info',
     }),
-    // Adiciona também ao log combinado
+    // Adiciona também ao log combinado - Rotação diária
     new DailyRotateFile({
       filename: path.join('logs', 'ems-pcy-combined-%DATE%.log'),
       datePattern: 'DD-MM-YYYY',
-      maxSize: '50m',
+      maxSize: '20m',        // Reduzido para evitar acúmulo
       maxFiles: '7d',
+      zippedArchive: true,   // Comprimir automaticamente
       level: 'info',
     }),
   ],

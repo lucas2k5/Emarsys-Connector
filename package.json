@@ -14,6 +14,7 @@
     "prod:delete": "pm2 delete emarsys-server",
     "prod:logs": "pm2 logs emarsys-server",
     "prod:logs:error": "pm2 logs emarsys-server --err",
+    "prod:logrotate:setup": "node scripts/setup-pm2-logrotate.js",
     "prod:monit": "pm2 monit",
     "prod:status": "pm2 status",
     "test": "echo \"Error: no test specified\" && exit 1",
