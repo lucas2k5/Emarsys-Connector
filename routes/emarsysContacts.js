@@ -811,7 +811,6 @@ router.post('/create-single', async (req, res) => {
       const mask = (obj) => {
         if (!obj || typeof obj !== 'object') return obj;
         const clone = { ...obj };
-        console.log('/api/emarsys/contacts/create-single => clone values', clone);
         if (clone.email) {
           const [user, domain] = String(clone.email).split('@');
           clone.email = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
