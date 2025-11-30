@@ -117,33 +117,6 @@ router.get('/search-test', async (req, res) => {
   }
 });
 
-/**
- * @route GET /api/vtex/products/test-private-api
- * @desc Testa a API privada da VTEX para buscar productIds
- * @access Public
- */
-router.get('/test-private-api', async (req, res) => {
-  try {
-    console.log('🔍 Testando API privada da VTEX...');
-    
-    // Acessa o método diretamente se existir, senão cria uma instância temporária
-    const productIds = await vtexProductService.getProductIdsFromPrivateApi(5);
-    
-    res.json({
-      success: true,
-      data: productIds,
-      count: productIds.length,
-      message: `Encontrados ${productIds.length} productIds válidos na API privada`,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
 
 /**
  * @route GET /api/vtex/products/test-private-endpoints
@@ -294,46 +267,9 @@ router.get('/', async (req, res) => {
 router.post('/sync', async (req, res) => {
   try {
     console.log(`🚀 Iniciando sincronização de produtos em background`);
-    
     const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.body || {};
-    
-    // Gerar ID único para o job
     const jobId = `sync-products-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    // Usar o sistema de background jobs existente
-    const backgroundJobsModule = require('./backgroundJobs');
-    
-    // Simular uma requisição para o endpoint de background
-    const mockReq = {
-      body: { maxProducts, forceRefresh, batchSize }
-    };
-    
-    const mockRes = {
-      json: (data) => {
-        // Retornar resposta imediata
-        res.json({
-          success: true,
-          jobId: data.jobId,
-          message: 'Sincronização iniciada em background - o processo continuará mesmo se você fechar esta janela',
-          checkStatus: `/api/background/status/${data.jobId}`,
-          backgroundEndpoint: `/api/background/sync-products`,
-          config: { maxProducts, forceRefresh, batchSize },
-          instructions: {
-            pt: 'Use o endpoint checkStatus para acompanhar o progresso',
-            en: 'Use the checkStatus endpoint to track progress'
-          },
-          timestamp: new Date().toISOString()
-        });
-      },
-      status: (code) => ({
-        json: (data) => res.status(code).json(data)
-      })
-    };
-    
-    // Executar a lógica de background job diretamente
-    const backgroundRouter = require('./backgroundJobs');
-    
-    // Armazenamento temporário para status dos jobs (copiado do backgroundJobs.js)
     if (!global.jobStatus) {
       global.jobStatus = new Map();
     }
@@ -667,32 +603,6 @@ router.post('/generate-csv', async (req, res) => {
       csv: csvResult,
       format: 'SAP Emarsys Product Import',
       documentation: 'https://help.sap.com/docs/SAP_EMARSYS/5d44574160f44536b0130abf58cb87cc/fdf6fbc574c11014855de082fd7ded5b.html?locale=en-US#loiofdf6fbc574c11014855de082fd7ded5b__basic-field-set',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * @route GET /api/vtex/products/test-sftp
- * @desc Testa a conectividade SFTP com o Emarsys
- * @access Public
- */
-router.get('/test-sftp', async (req, res) => {
-  try {
-    console.log('🧪 Testando conectividade SFTP com Emarsys...');
-    
-    const result = await vtexProductService.testSftpConnectivity();
-    
-    res.json({
-      success: true,
-      message: 'Teste de conectividade SFTP concluído',
-      result: result,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

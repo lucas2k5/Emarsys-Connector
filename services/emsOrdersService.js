@@ -5,7 +5,7 @@ const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
 class EmsOrdersService {
   constructor() {
     this.vtexBaseUrl = normalizeVtexBaseUrl(process.env.VTEX_BASE_URL);
-    this.entity = 'emsOrdersV2';
+    this.entity = process.env.EMS_ORDERS_ENTITY_ID;
     this.exportsDir = path.join(__dirname, '..', 'exports');
   }
 
@@ -81,7 +81,6 @@ class EmsOrdersService {
   }
 
   /**
-   * Verifica se um registro já existe na emsOrdersV2 com filtros específicos
    * @param {string} order - ID do pedido
    * @param {string} item - ID do item
    * @param {string} status - Status do pedido (opcional)
@@ -93,26 +92,15 @@ class EmsOrdersService {
     const { URL } = require('url');
     return new Promise((resolve, reject) => {
       try {
-        // Prepara options para enviar body urlencoded em requisição GET
-        // const whereParts = [
-        //   'isSync=false',
-        //   `order="${order}"`
-        // ];
-        // if (item) {
-        //   whereParts.push(`item="${item}"`);
-        // }
-        // if (status) {
-        //   whereParts.push(`order_status="${status}"`);
-        // }
         const formBody = querystring.stringify({
-          '_schema': 'emsOrdersV2',
+          '_schema': this.entity,
           '_fields': 'id,order,item,isSync,order_status',
           '_sort': 'timestamp ASC',
           '_page': '1',
           '_perPage': '100'
         });
 
-        const url = new URL('https://piccadilly.vtexcommercestable.com.br/api/dataentities/emsOrdersV2/search?isSync=false');
+        const url = new URL(`https://piccadilly.vtexcommercestable.com.br/api/dataentities/${this.entity}/search?isSync=false`);
         const headers = this.getVtexHeaders();
 
         const options = {
@@ -221,7 +209,6 @@ class EmsOrdersService {
   }
 
   /**
-   * Lista todos os pedidos da emsOrdersV2 com isSync=false
    * @returns {Array} Array de pedidos pendentes
    */
   async listAllEmsOrdersV2() {

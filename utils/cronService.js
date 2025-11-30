@@ -143,6 +143,17 @@ class CronService {
     const job = new cron.CronJob(this.ordersSyncCron, async () => {
       const serviceName = 'orders-sync';
       
+      // Verificar se o cron está habilitado (play/pause via variável de ambiente)
+      const ordersSyncEnabled = process.env.ORDERS_SYNC_ENABLED !== 'false';
+      if (!ordersSyncEnabled) {
+        console.log(`⏸️ [CRON] Sincronização de orders está pausada (ORDERS_SYNC_ENABLED=false)`);
+        logHelpers.logOrders('info', '⏸️ [CRON] Sincronização de orders pausada', {
+          reason: 'ORDERS_SYNC_ENABLED=false',
+          cronExpression: this.ordersSyncCron
+        });
+        return;
+      }
+      
       // Verificar se o serviço pode executar (proteção contra loops)
       if (!crashProtection.canExecute(serviceName)) {
         console.warn(`🚫 [CRON] Sincronização de orders bloqueada por proteção contra crashes`);
@@ -246,7 +257,9 @@ class CronService {
     }, null, true, this.cronTimezone);
 
     this.jobs.set('orders-sync', job);
-    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job]`);
+    const ordersSyncEnabled = process.env.ORDERS_SYNC_ENABLED !== 'false';
+    const status = ordersSyncEnabled ? '▶️ ATIVO' : '⏸️ PAUSADO';
+    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job] [status: ${status}]`);
   }
 
   /**

@@ -919,14 +919,11 @@ class VtexOrdersService {
 
   /**
    * [DEPRECATED] Salva controle de pedidos processados para evitar duplicatas
-   * Agora usa a entidade emsOrdersV2 para controle de sincronização
    * @param {Array} orderIds - Array de IDs dos pedidos processados
    * @param {string} syncTimestamp - Timestamp da sincronização
    * @returns {Object} Resultado da operação
    */
   async saveProcessedOrders(processedItems, syncTimestamp) {
-    console.log('⚠️ [DEPRECATED] saveProcessedOrders - Agora usa emsOrdersV2.isSync para controle de sincronização');
-    return { success: true, message: 'Deprecated - usando emsOrdersV2' };
     try {
       await this.ensureDataDirectory();
       
@@ -1246,8 +1243,9 @@ class VtexOrdersService {
           continue;
         }
         
-        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
-        const orderIdPattern = /^\d{13}-01$/;
+        // Valida se o orderId segue o padrão: 13 dígitos + "-" + 2 dígitos (ex: "-01", "-02", "-03")
+        // Pedidos que começam com números e terminam com sufixo numérico não são de marketplace
+        const orderIdPattern = /^\d{13}-\d{2}$/;
         if (!orderIdPattern.test(orderId)) {
           console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
           skippedMarketplace++;
@@ -1887,9 +1885,7 @@ class VtexOrdersService {
               }
             }
             
-            // Marca pedidos como sincronizados na emsOrdersV2
             try {
-              console.log('📝 Marcando pedidos como sincronizados na emsOrdersV2...');
               console.log(`📊 Total de ${ordersToProcess.length} itens no CSV para marcar como sincronizados`);
               
               if (ordersToProcess.length > 0) {
@@ -2304,16 +2300,12 @@ class VtexOrdersService {
         totalOrders: orders.length,
         success: result.success
       });
-
-      // Após envio bem-sucedido, marca pedidos como sincronizados na emsOrdersV2
       if (result && result.success) {
         console.log('✅ Envio bem-sucedido, marcando pedidos como sincronizados...');
         
-        // Marca pedidos enviados como sincronizados na emsOrdersV2
         // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
           
-          // Filtra pedidos de marketplace antes de marcar na emsOrdersV2
           const marketplaceValidator = require('../utils/marketplaceValidator');
           const filteredForSync = orders.filter(o => {
             const oid = o.order;
@@ -2325,7 +2317,7 @@ class VtexOrdersService {
 
           const skippedMarketplace = orders.length - filteredForSync.length;
           if (skippedMarketplace > 0) {
-            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync em emsOrdersV2`);
+            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync`);
           }
           
           
@@ -2685,8 +2677,6 @@ class VtexOrdersService {
         throw new Error(`Falha ao salvar pedidos: ${saveResult.error}`);
       }
       
-      // 3. Buscar dados formatados do endpoint /_v/orders/filter
-      console.log('🔄 Buscando dados formatados do emsOrdersV2');
       let formattedOrders = [];
       
       try {
@@ -2694,13 +2684,13 @@ class VtexOrdersService {
         
         // Extrai os orderIds para filtrar apenas os pedidos do período
         const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
-        console.log(`🔍 Buscando ${orderIds.length} pedidos formatados do emsOrdersV2...`);
+        console.log(`🔍 Buscando ${orderIds.length} pedidos formatados...`);
         
         // Busca pedidos em lotes usando o endpoint /_v/orders/filter
         const BATCH_SIZE = 50; // Busca em lotes de 50 para não sobrecarregar
         const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/filter`;
         
-        console.log(`[PROD-DEBUG] URL base do emsOrdersV2: ${formattedUrl}`);
+        console.log(`[PROD-DEBUG] URL base: ${formattedUrl}`);
         console.log(`[PROD-DEBUG] Total de pedidos a buscar: ${orderIds.length}`);
         console.log(`[PROD-DEBUG] Primeiros 5 orderIds:`, orderIds.slice(0, 5));
         
@@ -2718,46 +2708,125 @@ class VtexOrdersService {
           
           for (const orderId of batchIds) {
             try {
-              const requestUrl = `${formattedUrl}?order=${orderId}`;
-              console.log(`[PROD-DEBUG] Consultando: ${requestUrl}`);
+              // Tenta duas abordagens: com params e com URL direta
+              const requestUrlWithQuery = `${formattedUrl}?order=${encodeURIComponent(orderId)}`;
               
-              const response = await axios.get(formattedUrl, {
-                params: {
-                  order: orderId
-                },
-                headers: {
-                  'Accept': 'application/json',
-                  'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-                  'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
-                },
-                timeout: 30000
-              });
+              // Função helper para fazer a requisição com retry
+              const maxRetries = 3;
+              let finalAttempt = 1;
+              const fetchOrderWithRetry = async () => {
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                  finalAttempt = attempt;
+                  console.log(`[PROD-DEBUG] Tentativa ${attempt}/${maxRetries} para pedido ${orderId} (URL direta): ${requestUrlWithQuery}`);
+                  if (attempt > 1) {
+                    const delayMs = Math.pow(2, attempt - 2) * 1000; // 1s, 2s, 4s
+                    console.log(`[PROD-DEBUG] ⏳ Aguardando ${delayMs}ms antes de retry...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                  }
+                  
+                  console.log(`[PROD-DEBUG] Headers sendo enviados:`, {
+                    'Accept': 'application/json',
+                    'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY ? `${process.env.VTEX_APP_KEY.substring(0, 10)}...` : 'N/A',
+                    'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN ? `${process.env.VTEX_APP_TOKEN.substring(0, 10)}...` : 'N/A'
+                  });
+                  
+                  // Usa URL direta com query string (igual ao acesso do navegador)
+                  const response = await axios.get(requestUrlWithQuery, {
+                    headers: {
+                      'Accept': 'application/json',
+                      'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
+                      'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+                    },
+                    timeout: 30000
+                  });
+                  
+                  // Adiciona informação de tentativa na resposta para logging
+                  response._attemptNumber = attempt;
+                  response._wasRetried = attempt > 1;
+                  
+                  // Verifica se precisa retry (success=true mas data vazio)
+                  const needsRetry = response?.data?.success === true && 
+                                     Array.isArray(response?.data?.data) && 
+                                     response.data.data.length === 0;
+                  
+                  if (needsRetry && attempt < maxRetries) {
+                    console.log(`[PROD-DEBUG] ⚠️ Pedido ${orderId}: success=true mas data vazio. Tentando retry ${attempt + 1}/${maxRetries}...`);
+                    continue; // Continua para próxima tentativa
+                  }
+                  
+                  // Retorna a resposta (seja com dados ou não, na última tentativa)
+                  return response;
+                }
+              };
               
+              const response = await fetchOrderWithRetry();
+              
+              // Log da URL real construída pelo axios (incluindo query params)
+              const actualRequestUrl = `${response.config?.baseURL || ''}${response.config?.url || formattedUrl}${response.config?.params ? '?' + new URLSearchParams(response.config.params).toString() : ''}`;
+              console.log(`[PROD-DEBUG] URL real da requisição: ${actualRequestUrl}`);
               console.log(`[PROD-DEBUG] Response status para ${orderId}: ${response.status}`);
+              console.log(`[PROD-DEBUG] Response headers:`, JSON.stringify(response.headers, null, 2));
+              
+              // Log da resposta RAW completa (primeiros 2000 caracteres)
+              console.log(`[PROD-DEBUG] RESPOSTA RAW COMPLETA (primeiros 2000 chars):`, JSON.stringify(response.data).substring(0, 2000));
+              
               console.log(`[PROD-DEBUG] Response data.success: ${response?.data?.success}`);
               console.log(`[PROD-DEBUG] Response data.data type: ${Array.isArray(response?.data?.data) ? 'array' : typeof response?.data?.data}`);
               console.log(`[PROD-DEBUG] Response data.data length: ${response?.data?.data?.length || 0}`);
               
+              // Log completo da resposta para debug
+              console.log(`[PROD-DEBUG] Resposta completa para ${orderId}:`, JSON.stringify({
+                success: response?.data?.success,
+                hasData: !!response?.data?.data,
+                dataType: typeof response?.data?.data,
+                isArray: Array.isArray(response?.data?.data),
+                dataLength: response?.data?.data?.length,
+                pagination: response?.data?.pagination,
+                firstItem: response?.data?.data?.[0] ? JSON.stringify(response.data.data[0]).substring(0, 200) : 'N/A'
+              }, null, 2));
+              
               // O endpoint retorna {success: true, data: [...]}
-              if (response?.data?.success && Array.isArray(response.data.data)) {
-                const itemsCount = response.data.data.length;
-                if (itemsCount > 0) {
-                  // Log do primeiro item como amostra
-                  console.log(`[PROD-DEBUG] Primeiro item do pedido ${orderId}:`, JSON.stringify(response.data.data[0]).substring(0, 200));
-                  formattedOrders.push(...response.data.data);
-                  batchItemsFound += itemsCount;
+              // Verifica se a resposta tem a estrutura esperada
+              if (response?.data && typeof response.data === 'object') {
+                // Verifica se success é true e data existe
+                if (response.data.success === true && response.data.data !== undefined) {
+                  // Verifica se data é um array
+                  if (Array.isArray(response.data.data)) {
+                    const itemsCount = response.data.data.length;
+                    if (itemsCount > 0) {
+                      // Log do primeiro item como amostra
+                      const retryInfo = response._wasRetried ? ` (encontrado na tentativa ${response._attemptNumber}/${finalAttempt})` : '';
+                      console.log(`[PROD-DEBUG] ✅ Pedido ${orderId} encontrado com ${itemsCount} item(s)${retryInfo}`);
+                      console.log(`[PROD-DEBUG] Primeiro item do pedido ${orderId}:`, JSON.stringify(response.data.data[0]).substring(0, 200));
+                      formattedOrders.push(...response.data.data);
+                      batchItemsFound += itemsCount;
+                    } else {
+                      console.log(`[PROD-DEBUG] ⚠️ Pedido ${orderId} retornou array vazio após ${finalAttempt} tentativa(s) (success=true mas data.length=0)`);
+                      batchEmptyResponses++;
+                    }
+                  } else {
+                    console.warn(`[PROD-DEBUG] ⚠️ Pedido ${orderId}: data não é um array, tipo: ${typeof response.data.data}`, {
+                      dataValue: typeof response.data.data === 'string' ? response.data.data.substring(0, 100) : response.data.data
+                    });
+                    batchEmptyResponses++;
+                  }
                 } else {
-                  console.log(`[PROD-DEBUG] ⚠️ Pedido ${orderId} retornou array vazio`);
+                  console.warn(`[PROD-DEBUG] ⚠️ Resposta inesperada do endpoint para ${orderId}:`, {
+                    status: response?.status,
+                    success: response?.data?.success,
+                    successType: typeof response?.data?.success,
+                    hasData: response?.data?.data !== undefined,
+                    dataValue: response?.data?.data,
+                    fullResponse: JSON.stringify(response?.data).substring(0, 500)
+                  });
                   batchEmptyResponses++;
                 }
               } else {
-                console.warn(`[PROD-DEBUG] ⚠️ Resposta inesperada do endpoint para ${orderId}:`, {
+                console.warn(`[PROD-DEBUG] ⚠️ Resposta não tem estrutura esperada para ${orderId}:`, {
                   status: response?.status,
-                  success: response?.data?.success,
-                  hasData: !!response?.data?.data,
-                  isArray: Array.isArray(response?.data?.data),
-                  dataLength: response?.data?.data?.length,
-                  fullResponse: JSON.stringify(response?.data).substring(0, 300)
+                  hasData: !!response?.data,
+                  dataType: typeof response?.data,
+                  responseKeys: response?.data ? Object.keys(response.data) : 'N/A'
                 });
                 batchEmptyResponses++;
               }
@@ -2772,14 +2841,15 @@ class VtexOrdersService {
               batchErrors++;
             }
             
-            // Pequena pausa entre requisições para não sobrecarregar
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // Pausa entre requisições de diferentes pedidos para evitar race conditions na API VTEX
+            // Aumentado para 300ms baseado na observação de que alguns pedidos precisam de mais tempo
+            await new Promise(resolve => setTimeout(resolve, 300));
           }
           
           console.log(`[PROD-DEBUG] Resumo do lote ${batchNum}: ${batchItemsFound} itens encontrados, ${batchEmptyResponses} vazios, ${batchErrors} erros`);
         }
         
-        console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length} pedidos do emsOrdersV2`);
+        console.log(`✅ ${formattedOrders.length} itens encontrados em ${orderIds.length}`);
         console.log(`[PROD-DEBUG] formattedOrders.length: ${formattedOrders.length}, é array: ${Array.isArray(formattedOrders)}`);
         
         // Filtro adicional: verifica se o pedido está no período especificado
@@ -2808,7 +2878,6 @@ class VtexOrdersService {
       }
       
       console.log(`[PROD-DEBUG] ========================================`);
-      console.log(`[PROD-DEBUG] RESULTADO FINAL DA BUSCA emsOrdersV2:`);
       console.log(`[PROD-DEBUG] - Pedidos da VTEX OMS: ${orders.length}`);
       console.log(`[PROD-DEBUG] - Itens formatados encontrados: ${formattedOrders.length}`);
       console.log(`[PROD-DEBUG] - Tipo de formattedOrders: ${Array.isArray(formattedOrders) ? 'array' : typeof formattedOrders}`);
@@ -2819,9 +2888,8 @@ class VtexOrdersService {
      
       const transformedOrders = await this.transformOrdersForEmarsys(formattedOrders);
       
-      // 4.1. Registros já existem na emsOrdersV2 - apenas controle de isSync será feito após envio
       if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
-        console.log('ℹ️ Registros já existem na emsOrdersV2 - controle de isSync será feito após envio para Emarsys');
+        console.log('ℹ️ Registros já existem - controle de isSync será feito após envio para Emarsys');
       }
       
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
