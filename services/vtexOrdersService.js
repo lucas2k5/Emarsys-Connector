@@ -699,7 +699,7 @@ class VtexOrdersService {
       let allOrders = [];
       let page = 1;
       let hasMorePages = true;
-      const MAX_PAGES = 30; // Limite da VTEX
+      const MAX_PAGES = 100; // Aumentado de 30 para 100 para suportar até 10.000 pedidos
       const PER_PAGE = 100; // Máximo por página para reduzir número de páginas
 
       while (hasMorePages && page <= MAX_PAGES) {
@@ -710,16 +710,17 @@ class VtexOrdersService {
             orderBy: 'creationDate,asc'
           });
           
-          if (orderFeed && orderFeed.list) {
+          if (orderFeed && orderFeed.list && orderFeed.list.length > 0) {
             allOrders = allOrders.concat(orderFeed.list);
-            console.log(`✅ Página ${page}: ${orderFeed.list.length} pedidos encontrados`);
+            const ordersInPage = orderFeed.list.length;
+            console.log(`✅ Página ${page}: ${ordersInPage} pedidos encontrados (Total acumulado: ${allOrders.length})`);
             
-            // Verifica se há mais páginas
+            // Verifica informações de paginação explícitas
             if (orderFeed.paging && orderFeed.paging.pages) {
               const totalPages = orderFeed.paging.pages;
               const currentPage = orderFeed.paging.currentPage || page;
               
-              console.log(`📊 Paginação: página ${currentPage} de ${totalPages} (máximo ${MAX_PAGES})`);
+              console.log(`📊 Paginação explícita: página ${currentPage} de ${totalPages} (máximo ${MAX_PAGES})`);
               
               // Verifica se há mais páginas E se não excedeu o limite da VTEX
               hasMorePages = currentPage < totalPages && page < MAX_PAGES;
@@ -729,13 +730,23 @@ class VtexOrdersService {
                 console.warn(`⚠️ Pedidos encontrados até agora: ${allOrders.length}`);
                 console.warn(`⚠️ Para buscar mais pedidos, refine o filtro de período`);
               }
-              
-              page++;
             } else {
-              hasMorePages = false;
+              // Se não houver informações de paginação explícitas, usa heurística:
+              // Se retornou exatamente PER_PAGE pedidos, provavelmente há mais páginas
+              // Se retornou menos que PER_PAGE, provavelmente é a última página
+              if (ordersInPage === PER_PAGE) {
+                console.log(`📄 Sem informações de paginação, mas retornou ${PER_PAGE} pedidos. Assumindo que há mais páginas...`);
+                hasMorePages = true;
+              } else {
+                console.log(`📄 Retornou ${ordersInPage} pedidos (menos que ${PER_PAGE}), assumindo última página`);
+                hasMorePages = false;
+              }
             }
+            
+            page++;
           } else {
-            console.log('⚠️ Resposta inesperada da VTEX:', orderFeed);
+            // Resposta vazia ou sem lista - não há mais páginas
+            console.log(`📄 Página ${page} retornou vazia ou sem lista, finalizando busca`);
             hasMorePages = false;
           }
 
@@ -758,7 +769,7 @@ class VtexOrdersService {
         }
       }
 
-      console.log(`🎉 Busca concluída! Total de ${allOrders.length} pedidos encontrados`);
+      console.log(`🎉 Busca concluída! Total de ${allOrders.length} pedidos encontrados em ${page - 1} página(s)`);
       
       if (page > MAX_PAGES) {
         console.log(`ℹ️ Nota: Busca limitada a ${MAX_PAGES} páginas devido ao limite da VTEX`);
@@ -1357,8 +1368,14 @@ class VtexOrdersService {
       errorOrders: errorOrders.length > 0 ? errorOrders.slice(0, 10) : []
     });
 
-    console.log(`✅ Transformados ${orders.length} pedidos em ${emarsysData.length} registros para Emarsys`);
-    console.log(`📊 Estatísticas: ${emarsysData.length} processados, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
+    // Calcula quantidade de pedidos únicos
+    const uniqueOrders = new Set(orders.map(o => o.order));
+    const uniqueOrdersCount = uniqueOrders.size;
+    const uniqueProcessedOrders = new Set(emarsysData.map(o => o.order));
+    const uniqueProcessedOrdersCount = uniqueProcessedOrders.size;
+    
+    console.log(`✅ Transformados ${orders.length} itens (${uniqueOrdersCount} pedidos únicos) em ${emarsysData.length} registros (${uniqueProcessedOrdersCount} pedidos únicos) para Emarsys`);
+    console.log(`📊 Estatísticas: ${emarsysData.length} itens processados de ${uniqueProcessedOrdersCount} pedidos únicos, ${skippedMarketplace} pulados (marketplace), ${skippedDuplicates} pulados (duplicatas), ${canceledOrders} cancelados (valores negativos), ${errorOrders.length} com erro`);
     
     if (skippedMarketplace > 0) {
       console.log(`⏭️ ${skippedMarketplace} pedidos do marketplace foram pulados`);

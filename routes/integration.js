@@ -10,6 +10,30 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+/**
+ * Calcula desconto individual de um item usando priceTags
+ * @param {Object} item - Item do pedido
+ * @returns {string} Valor do desconto formatado
+ */
+function calculateItemDiscount(item) {
+  let totalDiscount = 0;
+
+  if (item.priceTags && Array.isArray(item.priceTags)) {
+    // Somar todos os descontos do item (valores negativos nos priceTags)
+    item.priceTags.forEach((priceTag) => {
+      if (priceTag.value < 0) { // Descontos são valores negativos
+        totalDiscount += Math.abs(priceTag.value); // Converter para positivo
+      }
+    });
+
+    // Converter de centavos para valor decimal
+    const discountValue = totalDiscount / 100;
+    return discountValue.toFixed(2);
+  }
+
+  return '0.00';
+}
+
 // Simple in-memory job manager (non-persistent)
 const jobs = new Map();
 function createJob(type) {
@@ -40,126 +64,89 @@ function getJob(id) {
 }
 
 /**
- * Busca pedidos não sincronizados na EMS via API externa
+ * Busca pedidos não sincronizados no SQLite local
  * @returns {Promise<Array>} Array de pedidos com isSync=false
  */
 async function fetchUnsyncedEmsOrders() {
   try {
-    console.log('🌐 Fazendo requisição para API externa de pedidos EMS...');
+    console.log('🔍 Buscando pedidos não sincronizados no SQLite local...');
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/list';
-    const params = {
-      '_where': '(isSync%3Dfalse)', // URL encoded: (isSync=false)
-      'page': 1,
-      'pageSize': 1000
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Cookie': 'VtexWorkspace=master%3A-'
-    };
-    
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const orders = Array.isArray(response.data) ? response.data : [];
-    console.log(`✅ ${orders.length} pedidos não sincronizados encontrados via API externa`);
+    const orders = db.listPendingSync({ limit: 1000 });
+    console.log(`✅ ${orders.length} pedidos não sincronizados encontrados no SQLite local`);
     
     return orders;
     
   } catch (error) {
-    console.error('❌ Erro ao buscar pedidos não sincronizados na EMS:', error?.response?.data || error.message);
+    console.error('❌ Erro ao buscar pedidos não sincronizados no SQLite:', error?.message || error);
     return []; // Retorna array vazio em caso de erro
   }
 }
 
 /**
- * Busca um registro específico na EMS por order e isSync
+ * Busca registros no SQLite local por order e isSync
  * @param {string} orderId - ID do pedido
  * @param {boolean} isSync - Status de sincronização
- * @returns {Promise<Object|null>} Registro encontrado ou null
+ * @returns {Promise<Object|null>} Primeiro registro encontrado ou null
  */
 async function fetchEmsOrderByFilter(orderId, isSync = false) {
   try {
-    console.log(`🔍 Buscando registro na EMS: order=${orderId}, isSync=${isSync}`);
+    console.log(`🔍 Buscando registro no SQLite: order=${orderId}, isSync=${isSync}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId,
-      'isSync': isSync.toString()
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const orders = db.findOrdersByOrderId(orderId, isSync);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para ${orderId}`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (orders && orders.length > 0) {
+      console.log(`✅ Registro encontrado no SQLite para ${orderId} com isSync=${isSync}`);
+      return orders[0]; // Retorna o primeiro registro encontrado
     } else {
-      console.log(`\x1b[41m\x1b[30mℹ️ Nenhum registro encontrado na EMS para ${orderId} com isSync=${isSync}\x1b[0m`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para ${orderId} com isSync=${isSync}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS para ${orderId}:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite para ${orderId}:`, error?.message || error);
     return null;
   }
 }
 
 /**
- * Busca um registro específico na EMS por order (independente do isSync)
+ * Busca registros no SQLite local por order (independente do isSync)
  * @param {string} orderId - ID do pedido
- * @returns {Promise<Object|null>} Registro encontrado ou null
+ * @returns {Promise<Object|null>} Primeiro registro encontrado ou null
  */
 async function fetchEmsOrderByOrderId(orderId) {
   try {
-    console.log(`🔍 Buscando registro na EMS por order: ${orderId}`);
+    console.log(`🔍 Buscando registro no SQLite por order: ${orderId}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId
-      // Não especifica isSync para buscar independente do status
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const orders = db.findOrdersByOrderId(orderId);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para ${orderId} (isSync: ${data.data[0].isSync})`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (orders && orders.length > 0) {
+      console.log(`✅ Registro encontrado no SQLite para ${orderId} (isSync: ${orders[0].isSync})`);
+      return orders[0]; // Retorna o primeiro registro encontrado
     } else {
-      console.log(`ℹ️ Nenhum registro encontrado na EMS para ${orderId}`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para ${orderId}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS para ${orderId}:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite para ${orderId}:`, error?.message || error);
     return null;
   }
 }
 
 /**
- * Busca registros na EMS por múltiplos filtros (order, item, order_status)
+ * Busca registro no SQLite local por múltiplos filtros (order, item, order_status)
  * @param {string} orderId - ID do pedido
  * @param {string} item - Item do pedido
  * @param {string} orderStatus - Status do pedido
@@ -167,37 +154,24 @@ async function fetchEmsOrderByOrderId(orderId) {
  */
 async function fetchEmsOrderByFilters(orderId, item, orderStatus) {
   try {
-    console.log(`🔍 Buscando registro na EMS por filtros: order=${orderId}, item=${item}, order_status=${orderStatus}`);
+    console.log(`🔍 Buscando registro no SQLite por filtros: order=${orderId}, item=${item}, order_status=${orderStatus}`);
     
-    const url = 'https://ems--piccadilly.myvtex.com/_v/orders/filter';
-    const params = {
-      'order': orderId,
-      'item': item,
-      'order_status': orderStatus
-      // Não especifica isSync para buscar independente do status
-    };
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
     
-    const headers = {
-      'Accept': 'application/json'
-    };
+    const order = db.findOrder(orderId, item, orderStatus);
     
-    const response = await axios.get(url, {
-      params,
-      headers,
-      timeout: 30000 // 30 segundos de timeout
-    });
-    
-    const data = response.data;
-    if (data && data.success && data.data && data.data.length > 0) {
-      console.log(`✅ Registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus} (isSync: ${data.data[0].isSync})`);
-      return data.data[0]; // Retorna o primeiro registro encontrado
+    if (order) {
+      console.log(`✅ Registro encontrado no SQLite para order=${orderId}, item=${item}, order_status=${orderStatus} (isSync: ${order.isSync})`);
+      return order;
     } else {
-      console.log(`ℹ️ Nenhum registro encontrado na EMS para order=${orderId}, item=${item}, order_status=${orderStatus}`);
+      console.log(`ℹ️ Nenhum registro encontrado no SQLite para order=${orderId}, item=${item}, order_status=${orderStatus}`);
       return null;
     }
     
   } catch (error) {
-    console.error(`❌ Erro ao buscar registro na EMS por filtros:`, error?.response?.data || error.message);
+    console.error(`❌ Erro ao buscar registro no SQLite por filtros:`, error?.message || error);
     return null;
   }
 }
@@ -685,6 +659,7 @@ router.post('/orders-extract', async (req, res) => {
 /**
  * @route GET /api/integration/orders-extract-all
  * @desc Extrai TODOS os pedidos do período (com paginação automática)
+ * @deprecated Esta rota não é mais usada pelo cron job. O cron agora usa POST /api/background/cron-orders
  * @param {string} brazilianDate - Data brasileira (YYYY-MM-DD) OU
  * @param {string} startDate - Data inicial UTC (ISO) OU
  * @param {string} toDate - Data final UTC (ISO) OU
@@ -910,30 +885,66 @@ router.get('/orders-extract-all', async (req, res) => {
             const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
               
             if (emsRecord && emsRecord.isSync === false) {
-                  console.log(`✅ Pedido ${orderId} já existe na EMS com isSync=false - pulando processamento`);
+                  console.log(`✅ Pedido ${orderId} já existe no SQLite com isSync=false - pulando processamento`);
                   hookResults.alreadySynced++;
               } else {
-                // Registro não existe na EMS, pode processar
-                console.log(`🆕 Pedido ${orderId} não existe na EMS - processando...`);
+                // Registro não existe no SQLite, pode processar
+                console.log(`🆕 Pedido ${orderId} não existe no SQLite - processando...`);
                 
-                // Após sincronização na EMS, enviar para o hook
-                const sendResult = await vtexOrdersService.sendOrderToHook(orderId);
-                if (sendResult.success) {
-                  if (sendResult.skipped) {
-                    console.log(`⏭️ Pedido ${orderId} já existe na base - pulando`);
+                // Salvar diretamente no SQLite
+                try {
+                  const { getDatabase } = require('../database/sqlite');
+                  const db = getDatabase();
+                  await db.init();
+                  
+                  // orderDetail já foi buscado anteriormente (linha 900)
+                  // Transformar para formato SQLite
+                  const formattedOrders = [];
+                  if (orderDetail.items && Array.isArray(orderDetail.items)) {
+                    for (const item of orderDetail.items) {
+                      // Prioriza refId, que é o identificador correto do item
+                      const itemRefId = item.refId;
+                      
+                      // Calcular desconto individual do item usando priceTags
+                      const itemDiscount = calculateItemDiscount(item);
+                     
+                      formattedOrders.push({
+                        order: orderId,
+                        item: itemRefId,
+                        email: orderDetail.clientProfileData?.email || orderDetail.customerEmail || null,
+                        quantity: item.quantity || 1,
+                        price: item.price || item.sellingPrice,
+                        timestamp: orderDetail.creationDate || orderDetail.invoiceCreatedDate || new Date().toISOString(),
+                        isSync: false,
+                        order_status: orderDetail.status || orderDetail.orderStatus || null,
+                        s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
+                        s_store_id: 'piccadilly',
+                        s_sales_channel: orderDetail.salesChannel || 'ecommerce',
+                        s_discount: itemDiscount // Desconto calculado dos priceTags
+                      });
+                    }
                   } else {
-                    console.log(`✅ Pedido ${orderId} enviado com sucesso para o hook`);
+                    // Se não há itens, não deve criar um registro com item igual ao orderId
+                    // Isso é um erro de dados - loga mas não cria registro inválido
+                    console.warn(`⚠️ Pedido ${orderId} não possui itens - pulando criação de registro`);
                   }
-                  hookResults.success++;
-                } else {
-                  console.error(`❌ Falha ao enviar pedido ${orderId} para hook:`, sendResult.error);
+                  
+                  // Salvar no SQLite
+                  if (formattedOrders.length > 0) {
+                    const insertResult = db.insertBatch(formattedOrders);
+                    console.log(`✅ Pedido ${orderId} salvo no SQLite (${insertResult.inserted || 0} inseridos, ${insertResult.updated || 0} atualizados)`);
+                    hookResults.success++;
+                  } else {
+                    console.warn(`⚠️ Pedido ${orderId} sem itens para salvar`);
+                    hookResults.failed++;
+                  }
+                } catch (dbError) {
+                  console.error(`❌ Falha ao salvar pedido ${orderId} no SQLite:`, dbError.message);
                   hookResults.failed++;
                   hookResults.errors.push({ 
                     orderId, 
-                    step: 'hook_send', 
-                    status: sendResult.status, 
-                    error: sendResult.error, 
-                    data: sendResult.data 
+                    step: 'sqlite_save', 
+                    error: dbError.message
                   });
                 }
             }

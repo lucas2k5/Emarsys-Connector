@@ -2,23 +2,6 @@ const express = require('express');
 const router = express.Router();
 const vtexProductService = require('../services/vtexProductService');
 
-/**
- * @route GET /api/vtex/products/test
- * @desc Testa conexão com VTEX
- * @access Public
- */
-router.get('/test', async (req, res) => {
-  try {
-    const result = await vtexProductService.testConnectivity();
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
 
 /**
  * @route GET /api/vtex/products/test-sftp

@@ -14,9 +14,31 @@ class CronService {
       : `http://localhost:${process.env.PORT || 3000}`;
     
     // Configurações de cron jobs via variáveis de ambiente
-    this.productsSyncCron = process.env.PRODUCTS_SYNC_CRON;
-    this.ordersSyncCron = process.env.ORDERS_SYNC_CRON;
+    // Trim para remover espaços em branco e validar se não está vazio
+    const productsSyncCronRaw = process.env.PRODUCTS_SYNC_CRON;
+    const ordersSyncCronRaw = process.env.ORDERS_SYNC_CRON;
+    
+    this.productsSyncCron = productsSyncCronRaw && productsSyncCronRaw.trim() 
+      ? productsSyncCronRaw.trim() 
+      : null;
+    this.ordersSyncCron = ordersSyncCronRaw && ordersSyncCronRaw.trim() 
+      ? ordersSyncCronRaw.trim() 
+      : null;
+    
     this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
+    
+    // Debug: Log das variáveis lidas (sem mostrar valores completos por segurança)
+    if (this.productsSyncCron) {
+      console.log(`✅ [CRON] PRODUCTS_SYNC_CRON carregado: ${this.productsSyncCron.substring(0, 20)}...`);
+    } else {
+      console.log(`⚠️ [CRON] PRODUCTS_SYNC_CRON não encontrado ou vazio. Valor raw: "${productsSyncCronRaw}"`);
+    }
+    
+    if (this.ordersSyncCron) {
+      console.log(`✅ [CRON] ORDERS_SYNC_CRON carregado: ${this.ordersSyncCron.substring(0, 20)}...`);
+    } else {
+      console.log(`⚠️ [CRON] ORDERS_SYNC_CRON não encontrado ou vazio. Valor raw: "${ordersSyncCronRaw}"`);
+    }
     
     // Configurações de timeout otimizadas
     this.productsTimeout = parseInt(process.env.PRODUCTS_TIMEOUT_MS) || 600000; // 10 minutos
@@ -27,15 +49,39 @@ class CronService {
    * Inicia todos os cron jobs
    */
   startAll() {
-    this.setupProductsSync();
-    this.setupOrdersSync();
-    console.log('🕐 Todos os cron jobs foram configurados e iniciados');
+    let configuredCount = 0;
+    
+    if (this.productsSyncCron) {
+      this.setupProductsSync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] PRODUCTS_SYNC_CRON não definido - cron de produtos desabilitado');
+    }
+    
+    if (this.ordersSyncCron) {
+      this.setupOrdersSync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] ORDERS_SYNC_CRON não definido - cron de orders desabilitado');
+    }
+    
+    if (configuredCount > 0) {
+      console.log(`🕐 ${configuredCount} cron job(s) configurado(s) e iniciado(s)`);
+    } else {
+      console.log('ℹ️ [CRON] Nenhum cron job configurado (variáveis de ambiente não definidas)');
+    }
   }
 
   /**
    * Configura o cron para sincronização de produtos
    */
   setupProductsSync() {
+    // Validar se a expressão cron está definida
+    if (!this.productsSyncCron) {
+      console.warn('⚠️ [CRON] PRODUCTS_SYNC_CRON não definido, pulando configuração de produtos');
+      return;
+    }
+    
     // Cron expression configurável via variável de ambiente
     const job = new cron.CronJob(this.productsSyncCron, async () => {
       const serviceName = 'products-sync';
@@ -83,10 +129,16 @@ class CronService {
   }
 
   /**
-   * Configura o cron para sincronização de orders usando o fluxo orders-extract-all (dia anterior)
+   * Configura o cron para sincronização de orders usando o fluxo cron-orders (SQLite)
    * Usa a rota de background job para evitar timeout de 504
    */
   setupOrdersSync() {
+    // Validar se a expressão cron está definida
+    if (!this.ordersSyncCron) {
+      console.warn('⚠️ [CRON] ORDERS_SYNC_CRON não definido, pulando configuração de orders');
+      return;
+    }
+    
     // Cron expression configurável via variável de ambiente
     const job = new cron.CronJob(this.ordersSyncCron, async () => {
       const serviceName = 'orders-sync';
@@ -133,19 +185,18 @@ class CronService {
       logHelpers.logOrders('info', '🔗 [CRON] Período atual calculado', { period });
       logHelpers.logOrders('info', '🔗 [CRON] Próximo período calculado', { nextExecution });
       
-      // MUDANÇA: Usar rota de background job ao invés da rota síncrona para evitar timeout 504
-      const url = `${this.baseUrl}/api/background/orders-extract-all`;
+      // NOVA ROTA: Usar /cron-orders que usa ordersSyncService (SQLite)
+      const url = `${this.baseUrl}/api/background/cron-orders`;
       const payload = period
-        ? { startDate: period.startDate, toDate: period.toDate, per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 }
-        : { per_page: 50, batching: true, daysPerBatch: 1, maxOrders: 100 };
+        ? { startDate: period.startDate, toDate: period.toDate, maxOrders: 100 }
+        : { maxOrders: 100 };
 
-      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON (background job)', {
+      logHelpers.logOrders('info', '🚀 Iniciando sincronização de orders via CRON (cron-orders com SQLite)', {
         endpoint: url,
         payload,
         cronExpression: this.ordersSyncCron,
-        mode: 'background-job',
-        batchingEnabled: true,
-        daysPerBatch: 1,
+        mode: 'cron-orders-sqlite',
+        service: 'ordersSyncService',
         maxOrders: 100
       });
       
