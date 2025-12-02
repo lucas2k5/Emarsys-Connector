@@ -265,3 +265,4 @@ docker compose exec app ./node_modules/.bin/pm2 logs --lines 20 --err | tail -5
 curl http://localhost:3000/api/health
 ```
 
+
