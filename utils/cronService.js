@@ -145,11 +145,12 @@ class CronService {
       
       // Verificar se o cron está desabilitado via variável de ambiente
       // Se ORDERS_SYNC_ENABLED=true, o cron é desativado/pulado
-      const ordersSyncDisabled = process.env.ORDERS_SYNC_ENABLED === 'true';
+      const ordersSyncEnabledValue = process.env.ORDERS_SYNC_ENABLED;
+      const ordersSyncDisabled = ordersSyncEnabledValue === 'true' || ordersSyncEnabledValue === true || ordersSyncEnabledValue === '1';
       if (ordersSyncDisabled) {
-        console.log(`⏸️ [CRON] Sincronização de orders está desativada (ORDERS_SYNC_ENABLED=true)`);
+        console.log(`⏸️ [CRON] Sincronização de orders está desativada (ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue})`);
         logHelpers.logOrders('info', '⏸️ [CRON] Sincronização de orders desativada', {
-          reason: 'ORDERS_SYNC_ENABLED=true',
+          reason: `ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}`,
           cronExpression: this.ordersSyncCron
         });
         return;
@@ -258,9 +259,10 @@ class CronService {
     }, null, true, this.cronTimezone);
 
     this.jobs.set('orders-sync', job);
-    const ordersSyncDisabled = process.env.ORDERS_SYNC_ENABLED === 'true';
+    const ordersSyncEnabledValue = process.env.ORDERS_SYNC_ENABLED;
+    const ordersSyncDisabled = ordersSyncEnabledValue === 'true' || ordersSyncEnabledValue === true || ordersSyncEnabledValue === '1';
     const status = ordersSyncDisabled ? '⏸️ DESATIVADO' : '▶️ ATIVO';
-    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job] [status: ${status}]`);
+    console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job] [status: ${status}] [ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}]`);
   }
 
   /**
