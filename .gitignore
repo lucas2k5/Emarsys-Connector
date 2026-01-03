@@ -6,6 +6,7 @@ node_modules/
 data/
 .vercel
 .env
+dist/
 
 .vscode/
 
