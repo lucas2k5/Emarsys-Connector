@@ -3,6 +3,7 @@
   "version": "1.13.0",
   "description": "Servidor Express para integração com Emarsys",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=3072 server.js",
     "dev": "nodemon --expose-gc --max-old-space-size=3072 server.js",

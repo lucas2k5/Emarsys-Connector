@@ -1,48 +1,39 @@
 {
-  // Visit https://aka.ms/tsconfig to read more about this file
   "compilerOptions": {
-    // File Layout
     "rootDir": ".",
     "outDir": "./dist",
 
-    // Environment Settings
-    // See also https://aka.ms/tsconfig/module
-    "module": "nodenext",
-    "target": "esnext",
-    "types": [],
-    // For nodejs:
-    // "lib": ["esnext"],
-    // "types": ["node"],
-    // and npm install -D @types/node
+    /* Mudanças principais aqui */
+    "module": "NodeNext",           // Necessário para ESM moderno no Node
+    "moduleResolution": "NodeNext", // Garante que o TS ache os módulos corretamente
+    "target": "ESNext",
+    
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    /* Tipagens para Node (Importante instalar: npm i -D @types/node) */
+    "lib": ["ESNext"],
+    "types": ["node"],
 
     "allowJs": true,
     "checkJs": false,
-    // Other Outputs
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
 
-    // Stricter Typechecking Options
+    /* Rigor */
+    "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-
-    // Style Options
-    // "noImplicitReturns": true,
-    // "noImplicitOverride": true,
-    // "noUnusedLocals": true,
-    // "noUnusedParameters": true,
-    // "noFallthroughCasesInSwitch": true,
-    // "noPropertyAccessFromIndexSignature": true,
-
-    // Recommended Options
-    "strict": true,
+    
+    /* Flags que você já tinha e são boas */
     "jsx": "react-jsx",
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": true, // Agora vai funcionar com import normal
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force",
-    "skipLibCheck": true,
+    "moduleDetection": "force", 
+    "skipLibCheck": true
   },
-  "include": ["./**/*"],        // Inclui tudo dentro de src
-  "exclude": ["node_modules", ".docker", "data", "exports", "logs", "dist"]
+  "include": ["**/*"],
+  "exclude": ["node_modules", "dist", ".docker", "data", "exports", "logs"]
 }
