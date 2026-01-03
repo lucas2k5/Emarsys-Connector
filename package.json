@@ -28,7 +28,9 @@
     "dashboards": "echo 'Dashboards disponíveis: http://localhost:3000/api/metrics/dashboard | http://localhost:3000/api/alerts/dashboard'",
     "monitoring:setup": "mkdir -p logs data && echo 'Sistema de monitoramento configurado!'",
     "postinstall": "node scripts/postinstall.js",
-    "deploy": "node scripts/deploy.js"
+    "deploy": "node scripts/deploy.js",
+    "beta:build": "tsc",
+    "beta:start": "node dist/server.js"
   },
   "keywords": [
     "emarsys",
