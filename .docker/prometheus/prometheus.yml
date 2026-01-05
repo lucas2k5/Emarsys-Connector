@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: 'express' 
+    metrics_path: '/api/metrics/prometheus'
+    static_configs:
+    - targets: ['app:3000'] 
