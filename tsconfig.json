@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist",
+
+    /* Mudanças principais aqui */
+    "module": "NodeNext",           // Necessário para ESM moderno no Node
+    "moduleResolution": "NodeNext", // Garante que o TS ache os módulos corretamente
+    "target": "ESNext",
+    
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    /* Tipagens para Node (Importante instalar: npm i -D @types/node) */
+    "lib": ["ESNext"],
+    "types": ["node"],
+
+    "allowJs": true,
+    "checkJs": false,
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    /* Rigor */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    
+    /* Flags que você já tinha e são boas */
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true, // Agora vai funcionar com import normal
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force", 
+    "skipLibCheck": true
+  },
+  "include": ["**/*"],
+  "exclude": ["node_modules", "dist", ".docker", "data", "exports", "logs"]
+}

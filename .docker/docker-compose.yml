@@ -1,6 +1,28 @@
 services:
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "7000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
   app:
-    build: .
+    build: 
+      context: ..
+      dockerfile: .docker/Dockerfile
     container_name: emarsys-connector
     ports:
       - "3000:3000"
@@ -9,7 +31,6 @@ services:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=${PORT:-3000}
       - HOST=${HOST:-0.0.0.0}
-      - BASE_URL=${BASE_URL}
       - DEBUG=${DEBUG:-false}
       - LOG_VERBOSE=${LOG_VERBOSE}
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -20,23 +41,17 @@ services:
       - VTEX_BASE_URL=${VTEX_BASE_URL}
       - VTEX_APP_KEY=${VTEX_APP_KEY}
       - VTEX_APP_TOKEN=${VTEX_APP_TOKEN}
-      - VTEX_AUTH_TOKEN=${VTEX_AUTH_TOKEN}
       - VTEX_ORDERS_URL=${VTEX_ORDERS_URL:-/_v/orders/list}
-      - VTEX_ORDERS_DELETE=${VTEX_ORDERS_DELETE}
       
       # Emarsys Configuration
       - EMARSYS_USER=${EMARSYS_USER}
-      - EMARSYS_USERNAME=${EMARSYS_USERNAME}
       - EMARSYS_SECRET=${EMARSYS_SECRET}
-      - EMARSYS_PASSWORD=${EMARSYS_PASSWORD}
       - EMARSYS_CLIENT_ID=${EMARSYS_CLIENT_ID}
       - EMARSYS_CLIENT_SECRET=${EMARSYS_CLIENT_SECRET}
       - EMARSYS_BEARER_TOKEN=${EMARSYS_BEARER_TOKEN}
       - EMARSYS_MERCHANT_ID=${EMARSYS_MERCHANT_ID}
-      - EMARSYS_SALES_TOKEN=${EMARSYS_SALES_TOKEN}
       - EMARSYS_ENDPOINT=${EMARSYS_ENDPOINT}
-      - EMARSYS_HAPI_URL=${EMARSYS_HAPI_URL}
-      - WEBDAV_FOLDER=${WEBDAV_FOLDER}
+      - EMARSYS_HAPI_URL=${EMARSYS_HAPI_URL}      
       
       # SFTP Configuration
       - SFTP_HOST=${SFTP_HOST}
@@ -65,8 +80,7 @@ services:
       - ORDERS_TIMEOUT_MS=${ORDERS_TIMEOUT_MS:-900000}
       - ORDERS_SYNC_ENABLED=${ORDERS_SYNC_ENABLED:-true}
       - ENABLE_ORDER_CLEANUP=${ENABLE_ORDER_CLEANUP:-false}
-      - PROCESSED_ORDERS_RETENTION_HOURS=${PROCESSED_ORDERS_RETENTION_HOURS:-720}
-      - DISABLE_CLEANUP=${DISABLE_CLEANUP}
+      - PROCESSED_ORDERS_RETENTION_HOURS=${PROCESSED_ORDERS_RETENTION_HOURS:-720} 
       
       # Products Configuration
       - PRODUCTS_BATCH_SIZE=${PRODUCTS_BATCH_SIZE:-20}
@@ -91,13 +105,10 @@ services:
       - SKIP_INLINE_CSV_GENERATION=${SKIP_INLINE_CSV_GENERATION:-true}
       
       # EMS Configuration
-      - EMS_ENTITY_ID=${EMS_ENTITY_ID}
       - EMS_SYNC_LOOKBACK_HOURS=${EMS_SYNC_LOOKBACK_HOURS:-5}
-      - EMS_ORDERS_ENTITY_ID=${EMS_ORDERS_ENTITY_ID}
       
       # Cron Jobs Configuration
-      - PRODUCTS_SYNC_CRON=${PRODUCTS_SYNC_CRON}
-      - ORDERS_SYNC_CRON=${ORDERS_SYNC_CRON}
+    
       - CRON_TIMEZONE=${CRON_TIMEZONE:-America/Sao_Paulo}
       
       # Other Configuration
@@ -122,4 +133,5 @@ services:
 volumes:
   sqlite_data:
     driver: local
+  prometheus:
 

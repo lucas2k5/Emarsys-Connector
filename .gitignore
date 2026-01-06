@@ -6,7 +6,9 @@ node_modules/
 data/
 .vercel
 .env
+dist/
 
+.vscode/
 
 # Logs do sistema de monitoramento
 logs/
