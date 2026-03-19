@@ -1327,7 +1327,7 @@ class ContactService {
 
       // Gera nome do arquivo com timestamp de Brasília
       const timestamp = getBrazilianTimestampForFilename();
-      const filename = options.filename || `openflow-piccadilly-cl-data-${timestamp}.csv`;
+      const filename = options.filename || `openflow-hope-cl-data-${timestamp}.csv`;
       
       // Adiciona extensão .csv se não tiver
       if (!filename.endsWith('.csv')) {

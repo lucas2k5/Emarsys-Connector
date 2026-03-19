@@ -74,7 +74,7 @@ Histórico de releases e versões.
 ```bash
 # 1. Clone o repositório
 git clone <repository-url>
-cd piccadilly.emarsys-connector
+cd hope.emarsys-connector
 
 # 2. Configure variáveis de ambiente
 cp env.example .env

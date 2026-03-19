@@ -13,7 +13,7 @@ console.log('🧹 Limpando logs antigos com nomes longos...');
 
 // Lista de padrões antigos para remover
 const oldPatterns = [
-  'piccadilly-emarsys-',
+  'hope-emarsys-',
   'orders-logs-',
   'product-logs-',
   'clients-logs-'

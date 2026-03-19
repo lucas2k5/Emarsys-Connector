@@ -1,6 +1,6 @@
 const axios = require('axios');
 //const { normalizeVtexBaseUrl } = require('../utils/urlUtils');
-const baseurlStable = 'https://piccadilly.vtexcommercestable.com.br/api/dataentities';
+const baseurlStable = 'https://hope.vtexcommercestable.com.br/api/dataentities';
 
 /**
  * Codifica caracteres especiais na query _where para funcionar corretamente com a API

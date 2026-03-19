@@ -1,937 +1,378 @@
-# 🚀 Piccadilly Emarsys Connector
+# Hope Emarsys Connector
 
-Sistema de integração completo entre VTEX e Emarsys para sincronização de produtos, pedidos e contatos.
+Sistema de integração entre VTEX e Emarsys para sincronização de produtos, pedidos e contatos.
 
-## 🐛 **MODO DEBUG - LEIA PRIMEIRO**
+## Visão Geral
 
-> **⚠️ IMPORTANTE:** Antes de executar qualquer sincronização, configure `DEBUG=true` no arquivo `.env` para testar a lógica de marcação `isSync=true` sem enviar dados reais para a Emarsys.
+O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como ponte entre a plataforma de e-commerce VTEX e a plataforma de marketing Emarsys.
 
-### 🎯 **Para que serve o DEBUG:**
-
-- ✅ **Testa marcação `isSync=true`** sem envio real para Emarsys
-- ✅ **Evita duplicação** de pedidos na próxima execução
-- ✅ **Valida fluxo completo** antes do envio real
-- ✅ **Debug de problemas** de sincronização
-
-### 🚀 **Como usar:**
-
-```bash
-# 1. Ativar DEBUG
-echo "DEBUG=true" >> .env
-
-# 2. Executar sincronização (simula envio)
-curl --location 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3&startTime=00:00&endTime=05:00&per_page=100'
-
-# 3. Verificar se pedidos foram marcados
-curl http://localhost:3000/api/ems-orders/pending-sync
-
-# 4. Desativar DEBUG para produção
-echo "DEBUG=false" >> .env
-```
-
-### 📋 **Comportamento:**
-
-- **DEBUG=true**: Gera CSV + Simula envio + Marca `isSync=true` + Deleta `orders.json`
-- **DEBUG=false**: Gera CSV + Envia real + Marca `isSync=true` + Deleta `orders.json`
-
-### 📖 **Documentação completa:** [Especificação do Modo DEBUG](docs/debug-mode-specification.md)
-
----
-
-## 📋 Índice
-
-- [🐛 Modo DEBUG](#-modo-debug---leia-primeiro)
-- [Visão Geral](#visão-geral)
-- [Arquitetura](#arquitetura)
-- [Funcionalidades](#funcionalidades)
-- [Instalação e Configuração](#instalação-e-configuração)
-- [Uso](#uso)
-- [APIs e Endpoints](#apis-e-endpoints)
-- [Monitoramento e Métricas](#monitoramento-e-métricas)
-- [Manutenção e Troubleshooting](#manutenção-e-troubleshooting)
-- [Deploy](#deploy)
-- [Contribuição](#contribuição)
-
-## 🎯 Visão Geral
-
-O **Piccadilly Emarsys Connector** é uma aplicação Node.js/Express que atua como ponte entre a plataforma de e-commerce VTEX e a plataforma de marketing Emarsys. Ele automatiza a sincronização de dados críticos para operações de marketing e vendas.
-
-### Principais Casos de Uso
-
-1. **Sincronização de Pedidos**: Importa pedidos da VTEX e envia para Emarsys para análise e campanhas
-2. **Sincronização de Produtos**: Mantém catálogo de produtos atualizado na Emarsys
-3. **Gestão de Contatos**: Importa e gerencia contatos com integração bidirecional
-4. **Relatórios de Vendas**: Gera e envia relatórios CSV automatizados
-5. **Integração de Clientes**: Sincroniza base de clientes entre sistemas
-
-## 🏗️ Arquitetura
-
-### Estrutura do Projeto
+### Fluxos de Dados
 
 ```
-piccadilly.emarsys-connector/
-├── api/                        # Endpoints para cron jobs e APIs especiais
-│   ├── background/            # APIs para jobs em background
-│   │   ├── status.js         # Status dos jobs
-│   │   └── sync-products.js  # Sincronização de produtos
-│   └── cron/                  # Cron jobs da Vercel
-├── config/                     # Configurações da aplicação
-├── data/                       # Armazenamento local de dados
-│   ├── orders.json            # Cache de pedidos
-│   ├── products.json          # Cache de produtos
-│   ├── sync-stats.json        # Estatísticas de sincronização
-│   └── last-sync.json         # Dados da última sincronização
-├── exports/                    # Arquivos CSV gerados
-├── logs/                       # Logs da aplicação
-├── routes/                     # Rotas da API
-│   ├── alerts.js              # Sistema de alertas
-│   ├── backgroundJobs.js      # Jobs em background
+PRODUTOS:   App → GET VTEX Catalog API → CSV (.gz) → Upload SFTP (a cada 8h)
+PEDIDOS:    App → GET VTEX OMS API → SQLite → CSV → Upload SFTP (a cada 30min)
+CONTATOS:   VTEX Master Data → POST webhook → Webhook externo (tempo real)
+```
+
+- **Produtos e Pedidos**: A aplicação busca ativamente (pull) os dados na VTEX via API
+- **Contatos**: A VTEX envia (push) os dados via webhook quando um cliente é criado/atualizado
+
+## Arquitetura
+
+```
+hope.emarsys-connector/
+├── server.js                   # Servidor Express principal
+├── routes/                     # Endpoints REST API
+│   ├── emarsysContacts.js     # Contatos VTEX → Webhook externo
+│   ├── vtexProducts.js        # Sync de produtos VTEX → SFTP
+│   ├── emarsysSales.js        # Sales data
+│   ├── integration.js         # Integração unificada de pedidos
+│   ├── emsClients.js          # Sync de clientes via Master Data
+│   ├── emsOrders.js           # Sync de pedidos via Master Data
 │   ├── cronJobs.js            # Gerenciamento de cron jobs
-│   ├── emarsys*.js            # Rotas Emarsys
-│   ├── integration.js         # Integração principal
-│   ├── metrics.js             # Métricas e monitoramento
-│   └── vtexProducts.js        # Produtos VTEX
-├── services/                   # Lógica de negócio
-│   ├── contactService.js      # Serviço de contatos
-│   ├── emarsys*.js            # Serviços Emarsys
-│   ├── integrationService.js  # Serviço de integração
-│   └── vtex*.js               # Serviços VTEX
-├── utils/                      # Utilitários
 │   ├── alerts.js              # Sistema de alertas
-│   ├── cronService.js         # Gerenciador de cron
-│   ├── logger.js              # Sistema de logs
-│   ├── metrics.js             # Coleta de métricas
-│   └── monitoring.js          # Monitoramento
-├── server.js                   # Servidor principal
-├── ecosystem.config.js         # Configuração PM2
-└── package.json               # Dependências
+│   └── metrics.js             # Métricas e monitoramento
+├── services/                   # Lógica de negócio
+│   ├── contactWebhookService.js    # Envio de contatos via webhook (NOVO)
+│   ├── ordersSftpService.js        # Upload de pedidos via SFTP dedicado (NOVO)
+│   ├── vtexProductService.js       # Produtos VTEX → CSV → SFTP
+│   ├── emarsysCsvService.js        # Geração de CSV para Emarsys
+│   ├── vtexOrdersService.js        # Busca e processamento de pedidos
+│   ├── ordersSyncService.js        # Orquestração do sync de pedidos
+│   ├── emarsysHapiService.js       # Upload pedidos via HAPI (legado)
+│   ├── emarsysContactImportService.js # Contatos via API Emarsys (legado)
+│   ├── contactService.js           # Extração de contatos da VTEX
+│   └── integrationService.js       # Serviço de integração unificado
+├── database/                   # SQLite (WAL mode) para tracking de pedidos
+│   ├── sqlite.js
+│   └── migrations/
+├── utils/                      # Utilitários (auth, logger, cron, métricas)
+├── helpers/                    # Helpers de sync de pedidos
+├── config/                     # Configurações de memória e monitoramento
+├── scripts/                    # Scripts de manutenção
+├── exports/                    # Arquivos CSV gerados
+├── data/                       # Cache local (products.json, etc.)
+└── logs/                       # Logs da aplicação
 ```
 
-### Componentes Principais
+## Fluxo de Produtos
 
-1. **Server (Express)**: API REST principal com middleware de segurança e monitoramento
-2. **Services**: Camada de negócio que implementa integrações
-3. **Utils**: Ferramentas auxiliares (logs, métricas, alertas)
-4. **Routes**: Endpoints organizados por domínio
-5. **Background Jobs**: Processamento assíncrono de tarefas pesadas
-6. **Cron Jobs**: Automação de sincronizações periódicas
+### Processo completo
 
-## 🔧 Funcionalidades
+```
+Cron (8h) ou POST /api/vtex/products/sync
+  │
+  ├─ Testa conectividade com VTEX
+  ├─ Busca todos os produtos + SKUs (rate limit: 3.900 req/s)
+  ├─ Salva cache local (data/products.json)
+  ├─ Gera CSV com 13 colunas (1 linha por SKU)
+  ├─ Comprime em .gz
+  └─ Upload via SFTP para servidor de produtos
+```
 
-### 1. Sincronização de Pedidos (Orders)
+### Colunas do CSV de Produtos
 
-- **Importação Automática**: Busca pedidos da VTEX periodicamente
-- **Processamento em Lote**: Otimizado para grandes volumes
-- **Controle de Duplicatas**: Evita reprocessamento
-- **Geração de CSV**: Formato otimizado para Emarsys
+| Coluna | Descrição | Origem VTEX |
+|---|---|---|
+| `item` | Referência do SKU | `referenceId` |
+| `title` | Nome do produto | `productName` |
+| `link` | URL do produto | `product.link` |
+| `image` | URL da imagem | primeira imagem do SKU |
+| `category` | Categoria (folha) | última categoria |
+| `available` | Disponibilidade | `IsAvailable` do seller |
+| `description` | Descrição | `product.description` |
+| `price` | Preço de venda | `Price` do seller |
+| `msrp` | Preço de lista | `ListPrice` do seller |
+| `group_id` | Agrupador de SKUs | `productId` |
+| `c_stock` | Estoque disponível | `AvailableQuantity` |
+| `c_sku_id` | ID do SKU na VTEX | `itemId` |
+| `c_product_id` | ID do produto na VTEX | `productId` |
 
-### 2. Sincronização de Produtos
+### SFTP de Produtos
 
-- **Catálogo Completo**: Importa todos os produtos ativos
-- **Atualização Incremental**: Sincroniza apenas alterações
-- **Imagens e Especificações**: Dados completos do produto
-- **CSV para SFTP**: Upload automático via SFTP
+Usa variáveis `SFTP_PRODUCTS_*` com fallback para `SFTP_*` (legado):
 
-### 3. Gestão de Contatos
+```env
+SFTP_PRODUCTS_HOST=
+SFTP_PRODUCTS_PORT=22
+SFTP_PRODUCTS_USERNAME=
+SFTP_PRODUCTS_PASSWORD=
+SFTP_PRODUCTS_REMOTE_PATH=/catalog/
+```
 
-- **Importação em Massa**: Processa milhares de contatos
-- **Validação de Dados**: Garante qualidade dos dados
-- **Endereços Completos**: Sincroniza dados de endereço
-- **Trigger em Tempo Real**: Criação individual via API
+## Fluxo de Pedidos
 
-### 4. Integração de Vendas
+### Processo completo
 
-- **Feed de Vendas**: Dados completos de transações
-- **Catálogo de Clientes**: Base unificada
-- **Relatórios Customizados**: Períodos e filtros flexíveis
-- **WebDAV/SFTP**: Múltiplos métodos de envio
+```
+Cron (30min) ou GET /api/integration/orders-extract-all
+  │
+  ├─ Busca pedidos na VTEX OMS API
+  ├─ Salva no SQLite (flag isSync para controle)
+  ├─ Gera CSV de vendas
+  └─ Envia via SFTP dedicado (ou HAPI como fallback)
+```
 
-### 5. Sistema de Monitoramento
+### SFTP de Pedidos
 
-- **Métricas em Tempo Real**: Dashboard interativo
-- **Alertas Automáticos**: Notificações de problemas
-- **Logs Estruturados**: Rastreamento completo
-- **Health Checks**: Monitoramento de disponibilidade
+Usa variáveis `SFTP_ORDERS_*` dedicadas:
 
-## 📦 Instalação e Configuração
+```env
+SFTP_ORDERS_HOST=
+SFTP_ORDERS_PORT=22
+SFTP_ORDERS_USERNAME=
+SFTP_ORDERS_PASSWORD=
+SFTP_ORDERS_REMOTE_PATH=/orders/
+```
+
+## Fluxo de Contatos
+
+### Processo (tempo real)
+
+```
+VTEX Master Data (cliente criado/atualizado)
+  │
+  └─ POST /api/emarsys/contacts/create-single
+       │
+       ├─ Valida e normaliza dados (CPF, telefone, gênero, opt-in)
+       ├─ Gera customer_id: base64(md5(cpf ou email))
+       └─ Envia via HTTP POST para webhook externo
+```
+
+### Payload do Webhook
+
+```json
+{
+  "customer_id": "base64(md5(cpf_or_email))",
+  "client_type": "hope",
+  "email": "cliente@email.com",
+  "cpf": "12345678900",
+  "bday": "1990-05-15",
+  "first_name": "João",
+  "last_name": "Silva",
+  "phone": "+5511999999999",
+  "mobile": "+5511888888888",
+  "gender": "masculino|feminino|outro",
+  "address": "Rua Example, 123",
+  "city": "São Paulo",
+  "state": "SP",
+  "country": "Brasil",
+  "postal_code": "01001000",
+  "opt_in": true,
+  "registration_data": "2024-01-15T10:30:00.000Z"
+}
+```
+
+### Configuração do Webhook
+
+```env
+CONTACTS_WEBHOOK_URL=
+CONTACTS_WEBHOOK_CLIENT_TYPE=hope
+CONTACTS_WEBHOOK_AUTH_HEADER=
+CONTACTS_WEBHOOK_TIMEOUT=30000
+```
+
+## Instalação
 
 ### Pré-requisitos
 
-- Node.js >= 14.x
-- NPM ou Yarn
+- Node.js >= 22.x (LTS)
+- NPM
 - PM2 (para produção)
-- Credenciais VTEX e Emarsys
 
-### Passo 1: Clonar o Repositório
-
-```bash
-git clone https://github.com/seu-usuario/piccadilly.emarsys-connector.git
-cd piccadilly.emarsys-connector
-```
-
-### Passo 2: Instalar Dependências
+### Setup
 
 ```bash
+git clone https://dev.azure.com/gabrielaraujo-openflow/Hope/_git/Emarsys-Connector
+cd Emarsys-Connector
 npm install
+cp .env.example .env
+# Editar .env com as credenciais
 ```
 
-### Passo 3: Configurar Variáveis de Ambiente
-
-```bash
-cp env.example .env
-```
-
-Edite o arquivo `.env` com suas credenciais:
-
-```env
-# Server Configuration
-PORT=3000
-HOST=0.0.0.0
-NODE_ENV=development
-# BASE_URL para uso em produção nos cron jobs (ex: https://seu-dominio.com)
-BASE_URL=
-
-# Debug Mode - CRÍTICO: Configure DEBUG=true para testar antes do envio real
-DEBUG=false
-
-# VTEX Configuration
-VTEX_ACCOUNT_NAME=piccadilly
-VTEX_APP_KEY=seu_app_key
-VTEX_APP_TOKEN=seu_app_token
-VTEX_BASE_URL=https://piccadilly.myvtex.com
-VTEX_AUTH_TOKEN=seu_auth_token_aqui
-
-# Emarsys Configuration
-EMARSYS_USER=seu_usuario
-EMARSYS_SECRET=sua_senha
-EMARSYS_ENDPOINT=https://api.emarsys.net/api/v2
-
-# SFTP Configuration
-SFTP_HOST=191.252.83.193
-SFTP_PORT=22
-SFTP_USERNAME=openflowpiccadil1
-SFTP_PASSWORD=sua_senha_sftp
-SFTP_REMOTE_PATH=/home/storage/catalog/catalog.csv.gz
-
-# Monitoring
-LOG_LEVEL=info
-ALERT_ERROR_RATE=0.1
-ALERT_RESPONSE_TIME=5000
-
-# Data Entities
-EMS_ORDERS_ENTITY_ID=emsOrdersV2
-ENABLE_ORDER_CLEANUP=false
-```
-
-### 🐛 Configuração do Modo DEBUG
-
-**IMPORTANTE:** Configure `DEBUG=true` para testar a lógica de marcação `isSync=true` antes de enviar dados reais para a Emarsys.
-
-```env
-# Para testes (recomendado)
-DEBUG=true
-
-# Para produção (apenas após validar em DEBUG)
-DEBUG=false
-```
-
-### Passo 4: Preparar Diretórios
-
-```bash
-npm run monitoring:setup
-```
-
-### Passo 5: Iniciar a Aplicação
-
-#### Desenvolvimento
+### Desenvolvimento
 
 ```bash
 npm run dev
 ```
 
-#### Produção com PM2
+### Produção
 
 ```bash
 npm run prod
 ```
 
-## 🚀 Uso
+## Configuração
 
-### Acessando a Aplicação
+### Variáveis de Ambiente
 
-Após iniciar, a aplicação estará disponível em:
+```env
+# Server
+PORT=3000
+NODE_ENV=development
+BASE_URL=
 
-- **API Principal**: http://localhost:3000
-- **Health Check**: http://localhost:3000/health
-- **Dashboard de Métricas**: http://localhost:3000/api/metrics/dashboard
-- **Documentação da API**: Veja seção [APIs e Endpoints](#apis-e-endpoints)
+# VTEX
+VTEX_APP_KEY=seu_app_key
+VTEX_APP_TOKEN=seu_app_token
+VTEX_BASE_URL=https://hope.myvtex.com
 
-### Fluxo de Trabalho Básico
+# Debug Mode
+DEBUG=false
 
-#### 🐛 1. Testar em Modo DEBUG (OBRIGATÓRIO)
+# Database
+SQLITE_DB_PATH=./data/orders.db
 
-**SEMPRE execute em DEBUG primeiro para validar a marcação `isSync=true`:**
+# Upload habilitado
+ENABLE_EMARSYS_UPLOAD=true
 
-```bash
-# 1. Ativar modo DEBUG
-echo "DEBUG=true" >> .env
+# SFTP Produtos (novo servidor dedicado)
+SFTP_PRODUCTS_HOST=
+SFTP_PRODUCTS_PORT=22
+SFTP_PRODUCTS_USERNAME=
+SFTP_PRODUCTS_PASSWORD=
+SFTP_PRODUCTS_REMOTE_PATH=/catalog/
 
-# 2. Reiniciar aplicação
-npm run dev
+# SFTP Pedidos (novo servidor dedicado)
+SFTP_ORDERS_HOST=
+SFTP_ORDERS_PORT=22
+SFTP_ORDERS_USERNAME=
+SFTP_ORDERS_PASSWORD=
+SFTP_ORDERS_REMOTE_PATH=/orders/
 
-# 3. Verificar status DEBUG
-curl -X POST http://localhost:3000/api/ems-orders/test-debug-mode
+# Webhook Contatos
+CONTACTS_WEBHOOK_URL=
+CONTACTS_WEBHOOK_CLIENT_TYPE=hope
+CONTACTS_WEBHOOK_AUTH_HEADER=
+CONTACTS_WEBHOOK_TIMEOUT=30000
 
-# 4. Listar pedidos pendentes para teste
-curl http://localhost:3000/api/ems-orders/pending-for-test
+# Cron Jobs
+PRODUCTS_SYNC_CRON=0 */8 * * *
+ORDERS_SYNC_CRON=*/30 * * * *
+CRON_TIMEZONE=America/Sao_Paulo
+ORDERS_SYNC_ENABLED=true
 
-# 5. Executar sincronização em DEBUG (simula envio)
-curl --location 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3&startTime=00:00&endTime=05:00&per_page=100'
-
-# 6. Verificar se pedidos foram marcados como isSync=true
-curl http://localhost:3000/api/ems-orders/pending-sync
-
-# 7. Desativar DEBUG para produção
-echo "DEBUG=false" >> .env
+# Monitoramento
+LOG_LEVEL=info
 ```
 
-#### 2. Verificar Status do Sistema
-
-```bash
-# Health check
-curl http://localhost:3000/health
-
-# Status das integrações
-curl http://localhost:3000/api/integration/test-connections
-```
-
-#### 3. Sincronizar Produtos
-
-```bash
-# Sincronização manual
-curl -X POST http://localhost:3000/api/vtex/products/sync
-
-# Sincronização em background
-curl -X POST http://localhost:3000/api/background/sync-products \
-  -H "Content-Type: application/json" \
-  -d '{"maxProducts": 1000}'
-```
-
-#### 4. Sincronizar Pedidos
-
-```bash
-# Buscar pedidos dos últimos 7 dias
-curl -X POST http://localhost:3000/api/integration/sales-feed \
-  -H "Content-Type: application/json" \
-  -d '{"startDate": "2025-09-12", "toDate": "2025-09-19"}'
-```
-
-#### 5. Processar Contatos
-
-```bash
-# Extrair contatos recentes (últimas 6h)
-curl -X POST http://localhost:3000/api/emarsys/contacts/extract-recent \
-  -H "Content-Type: application/json" \
-  -d '{"hours": 6, "useScroll": true}'
-```
-
-#### 6. Monitorar Jobs
-
-```bash
-# Listar jobs em execução
-curl http://localhost:3000/api/background/jobs?status=running
-
-# Verificar status de um job específico
-curl http://localhost:3000/api/background/status/{jobId}
-```
-
-### Automação com Cron Jobs
-
-O sistema possui cron jobs pré-configurados que executam automaticamente:
-
-| Job                 | Frequência     | Descrição               |
-| ------------------- | --------------- | ------------------------- |
-| Sync Orders Batched | A cada 10 horas | Sincronização combinada |
-| Sync Orders         | A cada 12 horas | Apenas pedidos            |
-| Sync Products       | A cada 14 horas | Apenas produtos           |
-| Products CSV        | A cada hora     | Geração de CSV          |
-
-Para gerenciar os cron jobs:
-
-```bash
-# Ver status dos cron jobs
-curl http://localhost:3000/api/cron-management/status
-
-# Pausar um cron job
-curl -X POST http://localhost:3000/api/cron-management/stop/sync-products
-
-# Reiniciar um cron job
-curl -X POST http://localhost:3000/api/cron-management/start/sync-products
-```
-
-## 📡 APIs e Endpoints
-
-### 🐛 Modo DEBUG
-
-#### `POST /api/ems-orders/test-debug-mode`
-
-Testa o modo DEBUG e executa marcação de pedidos pendentes.
-
-**Resposta DEBUG=true:**
-
-```json
-{
-  "success": true,
-  "message": "Modo DEBUG ativado - Teste de marcação concluído",
-  "debugMode": true,
-  "testOrders": 3,
-  "result": {
-    "updated": 3,
-    "errors": 0,
-    "total": 3
-  }
-}
-```
-
-#### `GET /api/ems-orders/pending-for-test`
-
-Lista pedidos pendentes para teste (primeiros 5).
-
-**Resposta:**
-
-```json
-{
-  "success": true,
-  "message": "5 pedidos pendentes encontrados",
-  "totalPending": 15,
-  "testOrders": [
-    {
-      "id": "12345",
-      "order": "1563641491289-01",
-      "email": "cliente@email.com",
-      "isSync": false
-    }
-  ]
-}
-```
-
-#### `POST /api/ems-orders/test-edit-single`
-
-Testa edição de um registro específico.
-
-**Body:**
-
-```json
-{
-  "orderId": "1563641491289-01"
-}
-```
-
-### Integração Principal
-
-#### `GET /api/integration/orders-extract-all`
-
-Extrai TODOS os pedidos do período com processamento completo (Hook → CSV → Emarsys)
-
-**Parâmetros (opcionais)**:
-
-- `brazilianDate` (string): Data brasileira (YYYY-MM-DD)
-- `startDate` (string): Data inicial UTC (ISO)
-- `toDate` (string): Data final UTC (ISO)
-- `startTime` (string): Horário inicial brasileiro (HH:MM, padrão: 00:00)
-- `endTime` (string): Horário final brasileiro (HH:MM, padrão: 23:59)
-- `per_page` (number): Pedidos por página (padrão: 100)
-- `batching` (boolean): Usar processamento em lotes
-- `daysPerBatch` (number): Dias por lote (padrão: 7)
-
-**🆕 Funcionalidade Automática**: Se nenhum parâmetro for fornecido, usa período baseado em `ORDERS_SYNC_CRON`
-
-**Exemplos**:
-
-```bash
-# Sem parâmetros (usa período do cron automaticamente)
-GET /api/integration/orders-extract-all
-
-# Com data brasileira
-GET /api/integration/orders-extract-all?brazilianDate=2025-09-28&startTime=08:00&endTime=18:00
-
-# Com datas UTC
-GET /api/integration/orders-extract-all?startDate=2025-09-28T00:00:00.000Z&toDate=2025-09-28T23:59:59.999Z
-```
-
-**Configurações de Cron Suportadas**:
-
-- `*/30 * * * *`: A cada 30 minutos (último intervalo até agora)
-- `0 */2 * * *`: A cada 2 horas (último intervalo até agora)
-- `0 0 * * *`: Diariamente à meia-noite (dia anterior se antes das 6h)
-- `0 8 * * *`: Diariamente às 8h (dia anterior se antes das 8h)
-- `0 0 * * 1`: Segunda-feira à meia-noite (semana anterior se não for segunda)
-
-#### `POST /api/integration/sales-feed`
-
-Processa feed de vendas completo (VTEX → Emarsys)
-
-**Parâmetros**:
-
-- `twoYears` (boolean): Buscar últimos 2 anos
-- `clientsOnly` (boolean): Apenas clientes
-- `startDate` (string): Data inicial (YYYY-MM-DD)
-- `toDate` (string): Data final (YYYY-MM-DD)
-
-#### `POST /api/integration/client-catalog`
-
-Processa catálogo de clientes
-
-### Produtos VTEX
-
-#### `GET /api/vtex/products`
-
-Lista produtos com paginação
-
-**Query Parameters**:
-
-- `page` (number): Página atual
-- `limit` (number): Itens por página
-- `search` (string): Termo de busca
-
-#### `POST /api/vtex/products/sync`
-
-Sincroniza produtos da VTEX
-
-**Body**:
-
-```json
-{
-  "maxProducts": 1000,
-  "forceRefresh": false,
-  "batchSize": 50
-}
-```
-
-#### `POST /api/vtex/products/generate-csv`
-
-Gera CSV dos produtos
-
-### Contatos Emarsys
-
-#### `POST /api/emarsys/contacts/extract-recent`
-
-Extrai contatos recentes
-
-**Body**:
-
-```json
-{
-  "hours": 6,
-  "useScroll": true,
-  "filename": "contatos-recentes"
-}
-```
-
-#### `POST /api/emarsys/contacts/create-single`
-
-Cria contato individual
-
-**Body**:
-
-```json
-{
-  "nome": "João Silva",
-  "email": "joao@email.com",
-  "phone": "+5511999999999",
-  "birth_date": "1990-05-15"
-}
-```
-
-### Vendas Emarsys
-
-#### `POST /api/emarsys/sales/send-unsynced`
-
-Envia apenas pedidos não sincronizados
-
-#### `GET /api/emarsys/sales/sync-status`
-
-Status da última sincronização
-
-#### `GET /api/emarsys/sales/orders-count`
-
-Contagem de pedidos por status
-
-### Background Jobs
-
-#### `POST /api/background/sync-complete`
-
-Sincronização completa (produtos + pedidos)
-
-**Body**:
-
-```json
-{
-  "maxProducts": 5000,
-  "maxOrders": 10000
-}
-```
-
-#### `GET /api/background/jobs`
-
-Lista todos os jobs
-
-**Query Parameters**:
-
-- `status`: running, completed, failed
-- `type`: sync-products, sync-orders
-- `limit`: número máximo de resultados
+Veja `.env.example` para a lista completa de variáveis.
+
+## APIs Principais
+
+### Produtos
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| POST/GET | `/api/vtex/products/sync` | Sincroniza produtos (background) |
+| POST | `/api/vtex/products/generate-csv` | Gera CSV dos produtos |
+| POST | `/api/vtex/products/generate-emarsys-csv` | Gera CSV + upload SFTP |
+| GET | `/api/vtex/products/test-sftp` | Testa conectividade SFTP |
+| GET | `/api/vtex/products/stats` | Estatísticas dos produtos |
+| GET | `/api/vtex/products/search?q=termo` | Busca produtos |
+
+### Pedidos
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/api/integration/orders-extract-all` | Extrai e processa pedidos |
+| POST | `/api/integration/sales-feed` | Feed de vendas completo |
+| GET | `/api/emarsys/sales/sync-status` | Status da sincronização |
+| POST | `/api/emarsys/sales/send-unsynced` | Envia pedidos pendentes |
+
+### Contatos
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| POST | `/api/emarsys/contacts/create-single` | Cria contato (webhook da VTEX) |
+| POST | `/api/emarsys/contacts/create` | Cria contato manual |
+| POST | `/api/emarsys/contacts/send` | Busca e envia contatos em lote |
+| POST | `/api/emarsys/contacts/extract-recent` | Extrai contatos recentes |
 
 ### Monitoramento
 
-#### `GET /api/metrics/dashboard`
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/api/metrics/dashboard` | Dashboard de métricas |
+| GET | `/api/metrics/prometheus` | Métricas Prometheus |
+| GET | `/api/alerts/active` | Alertas ativos |
+| GET | `/api/background/jobs` | Jobs em execução |
+| GET | `/api/cron-management/status` | Status dos cron jobs |
 
-Dashboard visual de métricas
+## Modo DEBUG
 
-#### `GET /api/metrics/prometheus`
-
-Métricas no formato Prometheus
-
-#### `GET /api/alerts/active`
-
-Lista alertas ativos
-
-#### `POST /api/alerts`
-
-Cria alerta manual
-
-**Body**:
-
-```json
-{
-  "type": "custom_alert",
-  "severity": "high",
-  "message": "Descrição do alerta",
-  "metadata": {}
-}
-```
-
-## 📊 Monitoramento e Métricas
-
-### Dashboard de Métricas
-
-Acesse http://localhost:3000/api/metrics/dashboard para visualizar:
-
-- **Requisições HTTP**: Total, erros, latência
-- **Contatos**: Processados, importados
-- **Produtos**: Sincronizados, atualizados
-- **Jobs**: Em execução, concluídos, falhas
-- **Sistema**: CPU, memória, uptime
-
-### Prometheus Integration
-
-Para integrar com Prometheus, adicione ao `prometheus.yml`:
-
-```yaml
-scrape_configs:
-  - job_name: 'emarsys-connector'
-    static_configs:
-      - targets: ['localhost:3000']
-    metrics_path: '/api/metrics/prometheus'
-```
-
-### Alertas Automáticos
-
-O sistema gera alertas automáticos para:
-
-- Taxa de erro > 10%
-- Tempo de resposta > 5 segundos
-- Uso de memória > 90%
-- 5 erros consecutivos
-
-### Logs Estruturados e Isolados
-
-Sistema de logging aprimorado com logs isolados por módulo e melhor visualização:
-
-#### Logs por Módulo (Isolados)
-
-- `orders-logs-{date}.log`: Logs específicos de sincronização de pedidos
-- `product-logs-{date}.log`: Logs específicos de sincronização de produtos
-- `clients-logs-{date}.log`: Logs específicos de sincronização de clientes
-
-#### Logs Gerais do Sistema
-
-- `piccadilly-emarsys-system-{date}.log`: Logs gerais do sistema
-- `piccadilly-emarsys-errors-{date}.log`: Apenas erros
-- `piccadilly-emarsys-http-{date}.log`: Requisições HTTP
-- `piccadilly-emarsys-metrics-{date}.log`: Métricas de performance
-- `piccadilly-emarsys-audit-{date}.log`: Auditoria de ações
-- `piccadilly-emarsys-sync-{date}.log`: Logs de sincronização
-- `piccadilly-emarsys-alerts-{date}.log`: Alertas do sistema
-
-#### Melhorias na Visualização
-
-- **Divisórias visuais**: Cada log é separado por linhas de igual (=) para melhor leitura
-- **Timezone São Paulo**: Todos os timestamps no fuso horário de Brasília
-- **Contexto detalhado**: Logs incluem informações específicas do módulo
-- **Estrutura JSON**: Logs estruturados para análise programática
-
-#### Comandos de Logs
+Configure `DEBUG=true` no `.env` para testar sem enviar dados reais:
 
 ```bash
-# Visualizar logs em tempo real
+# Ativar debug
+DEBUG=true
+
+# Testar sincronização (simula envio)
+curl 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3'
+
+# Verificar se pedidos foram marcados
+curl http://localhost:3000/api/ems-orders/pending-sync
+
+# Desativar para produção
+DEBUG=false
+```
+
+- **DEBUG=true**: Gera CSV + simula envio + marca `isSync=true`
+- **DEBUG=false**: Gera CSV + envia real + marca `isSync=true`
+
+## Logs
+
+### Por módulo
+
+- `orders-logs-{date}.log` — Pedidos
+- `product-logs-{date}.log` — Produtos
+- `clients-logs-{date}.log` — Clientes
+
+### Gerais
+
+- `hope-emarsys-system-{date}.log` — Sistema
+- `hope-emarsys-errors-{date}.log` — Erros
+- `hope-emarsys-http-{date}.log` — Requisições HTTP
+
+```bash
+# Logs em tempo real
 npm run logs
 
-# Limpar todos os logs e dados
-npm run clear-logs
-
-# Logs específicos por módulo
-tail -f logs/orders-logs-$(date +%Y-%m-%d).log
-tail -f logs/product-logs-$(date +%Y-%m-%d).log
-tail -f logs/clients-logs-$(date +%Y-%m-%d).log
-
 # Logs de erro
-tail -f logs/piccadilly-emarsys-errors-$(date +%Y-%m-%d).log
+tail -f logs/hope-emarsys-errors-$(date +%Y-%m-%d).log
 
-# Logs HTTP
-tail -f logs/piccadilly-emarsys-http-$(date +%Y-%m-%d).log
-```
-
-## 🔧 Manutenção e Troubleshooting
-
-### Problemas Comuns
-
-#### 1. Erro de Conexão com VTEX
-
-**Sintomas**: Timeout ou 401 nas requisições
-
-**Solução**:
-
-1. Verificar credenciais no `.env`
-2. Confirmar whitelist de IPs na VTEX
-3. Testar com: `curl http://localhost:3000/api/integration/test-connections`
-
-#### 2. Falha na Sincronização de Produtos
-
-**Sintomas**: Jobs falhando ou produtos não aparecendo
-
-**Solução**:
-
-1. Verificar logs: `npm run logs:error`
-2. Limpar cache: `rm data/products.json`
-3. Sincronizar com limite menor: `{"maxProducts": 100}`
-
-#### 3. Problemas de Memória
-
-**Sintomas**: Aplicação reiniciando ou lenta
-
-**Solução**:
-
-1. Aumentar limite de memória no PM2
-2. Ativar otimizações: `npm run prod:optimize`
-3. Configurar garbage collection mais agressivo
-
-#### 4. CSV não sendo gerado
-
-**Sintomas**: Arquivos CSV vazios ou ausentes
-
-**Solução**:
-
-1. Verificar permissões do diretório `exports/`
-2. Confirmar dados em `data/orders.json`
-3. Executar geração manual
-
-### Comandos Úteis de Manutenção
-
-```bash
-# Limpar todos os logs e dados (NOVO)
+# Limpar logs
 npm run clear-logs
-
-# Limpar logs antigos manualmente
-find ./logs -name "*.log" -mtime +30 -delete
-
-# Backup de dados
-tar -czf backup-$(date +%Y%m%d).tar.gz data/ exports/
-
-# Reset completo (desenvolvimento)
-rm -rf data/*.json exports/*.csv logs/*.log
-
-# Verificar uso de recursos
-pm2 monit
-
-# Reiniciar com limpeza de memória
-npm run prod:restart:gc
 ```
 
-### Otimizações de Timeout
+## Deploy
 
-O sistema foi otimizado para resolver problemas de timeout em produção:
-
-#### Configurações de Timeout Otimizadas
-
-```env
-# Timeouts configuráveis (em milissegundos)
-PRODUCTS_TIMEOUT_MS=600000    # 10 minutos para produtos
-ORDERS_TIMEOUT_MS=900000      # 15 minutos para pedidos
-```
-
-#### Melhorias Implementadas
-
-- **Timeouts aumentados**: De 5 minutos para 10-15 minutos conforme o módulo
-- **Logs específicos**: Cada módulo tem seus próprios logs para melhor debugging
-- **Contexto detalhado**: Logs incluem informações completas sobre timeouts
-- **Configuração flexível**: Timeouts configuráveis via variáveis de ambiente
-
-### Performance e Otimização
-
-#### Configurações Recomendadas
-
-**Produção com alto volume**:
-
-```env
-# Processamento em lotes
-ORDERS_MAX_PAGES=50
-ORDERS_PAGE_SIZE=100
-ORDERS_DELAY_MS=500
-
-# Rate limiting
-API_MAX_CONCURRENT=10
-API_MIN_TIME=100
-
-# Background jobs
-PRODUCTS_BATCH_SIZE=50
-PRODUCTS_CONCURRENCY=4
-```
-
-**Ambiente limitado**:
-
-```env
-# Reduzir consumo
-ORDERS_MAX_PAGES=5
-ORDERS_PAGE_SIZE=20
-PRODUCTS_BATCH_SIZE=10
-PRODUCTS_CONCURRENCY=2
-```
-
-#### Monitoramento de Performance
-
-1. **Memory Leaks**: Use `npm run test:gc` para verificar
-2. **Slow Queries**: Monitore logs de queries > 5s
-3. **Rate Limits**: Ajuste baseado nos logs de 429
-
-## 🚀 Deploy
-
-### Deploy Local/VPS com PM2
-
-1. **Configurar PM2**:
+### PM2 (Produção)
 
 ```bash
 npm install -g pm2
-npm run prod:logrotate:setup  # Configura rotação diária automática de logs
-```
-
-**Nota importante sobre logs:**
-- Todos os logs agora são gerados **por dia** (rotação diária automática)
-- Logs combinados: `logs/ems-pcy-combined-DD-MM-YYYY.log` (mantém 7 dias, compactados)
-- Logs do PM2: `logs/ems-pcy-pm2-*.log` (rotacionados diariamente pelo pm2-logrotate)
-- Não há mais arquivos de log genéricos acumulando indefinidamente
-- Para configurar manualmente o pm2-logrotate, execute: `pm2 install pm2-logrotate`
-
-2. **Iniciar aplicação**:
-
-```bash
 npm run prod
 pm2 save
 pm2 startup
 ```
 
-3. **Configurar Nginx** (opcional):
-
-```nginx
-server {
-    listen 80;
-    server_name api.suaempresa.com;
-  
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-### Deploy na Vercel
-
-1. **Conectar repositório** no dashboard Vercel
-2. **Configurar variáveis** de ambiente
-3. **Deploy automático** em cada push
-
-### Deploy com Docker
-
-```dockerfile
-FROM node:16-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
+### Docker
 
 ```bash
-docker build -t emarsys-connector .
+docker build -t emarsys-connector -f .docker/Dockerfile .
 docker run -p 3000:3000 --env-file .env emarsys-connector
 ```
 
-## 🤝 Contribuição
+Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/docker-setup.md) para guias detalhados.
 
-### Diretrizes de Contribuição
+## Pendências
 
-1. **Fork** o projeto
-2. Crie uma **feature branch** (`git checkout -b feature/AmazingFeature`)
-3. **Commit** suas mudanças (`git commit -m 'Add: nova funcionalidade'`)
-4. **Push** para a branch (`git push origin feature/AmazingFeature`)
-5. Abra um **Pull Request**
-
-### Padrões de Código
-
-- **ESLint**: Configuração padrão
-- **Commits**: Usar conventional commits
-- **Testes**: Adicionar testes para novas features
-- **Documentação**: Atualizar README quando necessário
-
-### Estrutura de Commit
-
-```
-tipo(escopo): descrição
-
-[corpo opcional]
-
-[rodapé opcional]
-```
-
-Tipos: feat, fix, docs, style, refactor, test, chore
-
-### Reportar Bugs
-
-Use as issues do GitHub com:
-
-- Descrição clara do problema
-- Passos para reproduzir
-- Comportamento esperado vs atual
-- Logs relevantes
-- Ambiente (OS, Node version, etc)
-
-## 📄 Licença
-
-Este projeto é proprietário e confidencial.
-
-## 📞 Suporte
-
-Para suporte e dúvidas:
-
-- Email: suporte@mptech.com.br
-- Documentação: [Wiki do Projeto](https://github.com/seu-repo/wiki)
-- Issues: [GitHub Issues](https://github.com/seu-repo/issues)
+- [ ] Preencher credenciais SFTP de **produtos** (`SFTP_PRODUCTS_*`)
+- [ ] Preencher credenciais SFTP de **pedidos** (`SFTP_ORDERS_*`)
+- [ ] Preencher URL do **webhook de contatos** (`CONTACTS_WEBHOOK_URL`)
+- [ ] Integrar `ordersSftpService.js` no fluxo de pedidos (atualmente usa HAPI)
 
 ---
 
-Desenvolvido com ❤️ por MP Consultoria Tech Commerce
+Desenvolvido por Openflow

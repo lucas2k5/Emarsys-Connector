@@ -19,7 +19,7 @@
     "prod:monit": "pm2 monit",
     "prod:status": "pm2 status",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "logs": "tail -f logs/piccadilly-emarsys-$(date +%Y-%m-%d).log",
+    "logs": "tail -f logs/hope-emarsys-$(date +%Y-%m-%d).log",
     "clear-logs": "node scripts/clear-logs.js",
     "cleanup:exports": "node scripts/cleanup-old-exports.js",
     "cleanup:exports:dry": "node scripts/cleanup-old-exports.js --dry-run",

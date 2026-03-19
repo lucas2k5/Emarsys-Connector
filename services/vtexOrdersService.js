@@ -512,7 +512,7 @@ class VtexOrdersService {
       }
       
       const baseUrl = process.env.VTEX_BASE_URL;
-      const url = `https://piccadilly.myvtex.com/api/dataentities/CL/search`;
+      const url = `https://hope.myvtex.com/api/dataentities/CL/search`;
       const params = {
         _where: `email=${email}`, // Axios já faz o encoding automaticamente
         _fields: 'isNewsletterOptIn',
@@ -831,7 +831,7 @@ class VtexOrdersService {
       const outputDir = await this.ensureOutputDirectory();
       const files = await fs.readdir(outputDir);
       const csvFiles = files
-        .filter(f => (f.startsWith('ems-sl-pcdly-') || f.startsWith('emarsys-sales-piccadilly-')) && f.endsWith('.csv'))
+        .filter(f => (f.startsWith('ems-sl-hope-') || f.startsWith('emarsys-sales-hope-')) && f.endsWith('.csv'))
         .map(f => path.join(outputDir, f));
       
       
@@ -1302,7 +1302,7 @@ class VtexOrdersService {
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
-          s_store_id: order.s_store_id || 'piccadilly',
+          s_store_id: order.s_store_id || 'hope',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
           s_discount: discount
         };
@@ -1498,8 +1498,8 @@ class VtexOrdersService {
       // Sanitiza o período para ser válido em nomes de arquivo
       const sanitizedPeriod = period.replace(/[<>:"/\\|?*]/g, '-');
       
-      // Formato resumido: ems-sl-pcdly-{data}-{periodo}.csv
-      const filename = options.filename || `ems-sl-pcdly-${timestamp}-${sanitizedPeriod}.csv`;
+      // Formato resumido: ems-sl-hope-{data}-{periodo}.csv
+      const filename = options.filename || `ems-sl-hope-${timestamp}-${sanitizedPeriod}.csv`;
       
       // Adiciona extensão .csv se não tiver
       if (!filename.endsWith('.csv')) {
@@ -1751,8 +1751,8 @@ class VtexOrdersService {
         
         try {
           // Extrai a data/hora do período a partir do filename
-          // Formato: ems-sl-pcdly-2025-09-02T00-01-00-00-01-05-00.csv
-          const filenameParts = filename.match(/ems-sl-pcdly-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/);
+          // Formato: ems-sl-hope-2025-09-02T00-01-00-00-01-05-00.csv
+          const filenameParts = filename.match(/ems-sl-hope-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/);
           let periodDateTime;
           
           if (filenameParts && filenameParts[1]) {
@@ -1886,7 +1886,7 @@ class VtexOrdersService {
                   
                   try {
                     // 1. Busca o registro existente usando order + item + order_status
-                    const filterUrl = `https://ems--piccadilly.myvtex.com/_v/orders/filter`;
+                    const filterUrl = `https://ems--hope.myvtex.com/_v/orders/filter`;
                     const filterParams = {
                       order: csvItem.order,
                       item: csvItem.item
@@ -1910,7 +1910,7 @@ class VtexOrdersService {
                       console.log(`🔍 Registro encontrado: ${csvItem.order}-${csvItem.item} (ID: ${recordId})`);
                       
                       // Atualiza usando o ID do registro
-                      const syncUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${recordId}/sync`;
+                      const syncUrl = `https://ems--hope.myvtex.com/_v/orders/${recordId}/sync`;
                       
                       await axios.patch(syncUrl, 
                         { isSync: true },
@@ -2173,7 +2173,7 @@ class VtexOrdersService {
           this.sanitizeField(order.timestamp, 25, 'timestamp'),             // Posição 5 - timestamp
           this.sanitizeField(order.price, 25, 'price'),                     // Posição 6 - price
           this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'), // Posição 7 - s_channel_source
-          this.sanitizeField(order.s_store_id || 'piccadilly', 25, 's_store_id'), // Posição 8 - s_store_id
+          this.sanitizeField(order.s_store_id || 'hope', 25, 's_store_id'), // Posição 8 - s_store_id
           this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'), // Posição 9 - s_sales_channel
           this.sanitizeField((order.s_discount ?? order.discount ?? '0'), 25, 's_discount')     // Posição 10 - s_discount
         ];
@@ -2568,7 +2568,7 @@ class VtexOrdersService {
   async sendOrderToHook(orderId) {
     try {
       // URL do hook existente no VTEX Store Framework
-      const hookUrl = 'https://ems--piccadilly.myvtex.com/_v/order/hook';
+      const hookUrl = 'https://ems--hope.myvtex.com/_v/order/hook';
       const axios = require('axios');
       
       if (!orderId) {
@@ -2948,7 +2948,7 @@ class VtexOrdersService {
 
   /**
    * Verifica se já existe um lote para o período especificado
-   * @param {string} period - Nome do período (ex: "emarsys-sales-piccadilly-2025-09-02T00-01-00-2025-09-02T05-00-00")
+   * @param {string} period - Nome do período (ex: "emarsys-sales-hope-2025-09-02T00-01-00-2025-09-02T05-00-00")
    * @returns {Promise<Object>} Resultado da verificação { exists: boolean, batch: object|null }
    */
   async checkBatchExists(period) {

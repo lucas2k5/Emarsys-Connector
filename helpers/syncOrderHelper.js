@@ -15,8 +15,8 @@ async function syncOrdersStatus(listResp) {
     // Processa cada pedido individualmente
     for (const order of listResp.data.data) {
       try {
-        // Segunda requisição: PATCH para ems--piccadilly.myvtex.com com o ID específico
-        const patchUrl = `https://ems--piccadilly.myvtex.com/_v/orders/${order.id}/sync`;
+        // Segunda requisição: PATCH para ems--hope.myvtex.com com o ID específico
+        const patchUrl = `https://ems--hope.myvtex.com/_v/orders/${order.id}/sync`;
         const patchResp = await axios.patch(patchUrl, {
           isSync: true
         }, {

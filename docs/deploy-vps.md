@@ -119,8 +119,8 @@ mkdir -p ~/apps
 cd ~/apps
 
 # Clonar o repositório
-git clone <URL_DO_SEU_REPOSITORIO> piccadilly.emarsys-connector
-cd piccadilly.emarsys-connector
+git clone <URL_DO_SEU_REPOSITORIO> hope.emarsys-connector
+cd hope.emarsys-connector
 
 # Ou se já tiver o código, fazer upload via SCP/SFTP e extrair
 ```
@@ -366,7 +366,7 @@ After=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/usuario/apps/piccadilly.emarsys-connector
+WorkingDirectory=/home/usuario/apps/hope.emarsys-connector
 ExecStart=/usr/bin/docker compose up -d
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
@@ -378,7 +378,7 @@ WantedBy=multi-user.target
 ```
 
 **Substituir:**
-- `/home/usuario/apps/piccadilly.emarsys-connector` pelo caminho real do projeto
+- `/home/usuario/apps/hope.emarsys-connector` pelo caminho real do projeto
 - `usuario` pelo seu usuário
 
 Ativar o serviço:
@@ -500,7 +500,7 @@ tar -czf ~/backups/emarsys-connector/logs-$(date +%Y%m%d).tar.gz logs/
 crontab -e
 
 # Adicionar linha para backup diário às 2h da manhã
-0 2 * * * cd ~/apps/piccadilly.emarsys-connector && docker compose exec -T app cp /app/data/orders.db /tmp/orders.db && docker compose cp app:/tmp/orders.db ~/backups/emarsys-connector/orders-$(date +\%Y\%m\%d).db
+0 2 * * * cd ~/apps/hope.emarsys-connector && docker compose exec -T app cp /app/data/orders.db /tmp/orders.db && docker compose cp app:/tmp/orders.db ~/backups/emarsys-connector/orders-$(date +\%Y\%m\%d).db
 ```
 
 ## 🐛 Troubleshooting

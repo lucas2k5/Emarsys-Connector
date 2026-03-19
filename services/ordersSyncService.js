@@ -350,7 +350,7 @@ class OrdersSyncService {
         return null;
       }
 
-      const baseUrl = process.env.VTEX_BASE_URL || 'https://piccadilly.myvtex.com';
+      const baseUrl = process.env.VTEX_BASE_URL || 'https://hope.myvtex.com';
       const url = `${baseUrl}/api/dataentities/CL/search`;
       
       const headers = {
@@ -458,7 +458,7 @@ class OrdersSyncService {
     if (!finalEmail) {
       finalEmail = order.clientProfileData?.email || order.customerEmail || null;
       // Validar se não é hash ou email inválido
-      if (finalEmail && (finalEmail.includes('@ct.vtex.com.br') || !finalEmail.includes('@') || finalEmail.includes('@piccadilly.com.br'))) {
+      if (finalEmail && (finalEmail.includes('@ct.vtex.com.br') || !finalEmail.includes('@') || finalEmail.includes('@hope.com.br'))) {
         finalEmail = null; // Descartar email hash ou inválido
       }
     }
@@ -568,7 +568,7 @@ class OrdersSyncService {
           isSync: false,
           order_status: order.status || order.orderStatus || null,
           s_channel_source: order.salesChannel || order.channel || 'web',
-          s_store_id: 'piccadilly',
+          s_store_id: 'hope',
           s_sales_channel: order.salesChannel || 'ecommerce',
           s_discount: itemDiscount // Desconto rateado (apenas desconto total, sem frete) / número de itens
         });
@@ -659,7 +659,7 @@ class OrdersSyncService {
           if (orderDetail?.clientProfileData?.email || orderDetail?.customerEmail) {
             const orderEmail = orderDetail.clientProfileData?.email || orderDetail.customerEmail;
             // Validar se não é email hash ou inválido
-            if (orderEmail && orderEmail.includes('@') && !orderEmail.includes('@ct.vtex.com.br') && !orderEmail.includes('@piccadilly.com.br') && orderEmail !== 'piccadilly@piccadilly.com.br') {
+            if (orderEmail && orderEmail.includes('@') && !orderEmail.includes('@ct.vtex.com.br') && !orderEmail.includes('@hope.com.br') && orderEmail !== 'hope@hope.com.br') {
               email = orderEmail;
             }
           }
@@ -864,8 +864,8 @@ class OrdersSyncService {
           // Remove emails hash da VTEX e emails inválidos
           if (email.includes('@ct.vtex.com.br') || 
               !email.includes('@') || 
-              email.includes('@piccadilly.com.br') ||
-              email === 'piccadilly@piccadilly.com.br') {
+              email.includes('@hope.com.br') ||
+              email === 'hope@hope.com.br') {
             email = null; // Descartar email inválido
           }
         }
@@ -930,7 +930,7 @@ class OrdersSyncService {
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
-          s_store_id: order.s_store_id || 'piccadilly',
+          s_store_id: order.s_store_id || 'hope',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
           s_discount: discount
         };
@@ -1039,9 +1039,9 @@ class OrdersSyncService {
         };
       }
 
-      // Gera nome do arquivo seguindo o padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
-      // Exemplo: ems-sl-pcdly-2025-11-04T00-01-00-00-01-07-59.csv
-      // Formato: ems-sl-pcdly-{data}T{inicio}-{fim}-{segundos}.csv
+      // Gera nome do arquivo seguindo o padrão: ems-sl-hope-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
+      // Exemplo: ems-sl-hope-2025-11-04T00-01-00-00-01-07-59.csv
+      // Formato: ems-sl-hope-{data}T{inicio}-{fim}-{segundos}.csv
       let filename = options.filename;
       
       // Tenta gerar nome do arquivo, mas se houver erro, usa fallback
@@ -1074,8 +1074,8 @@ class OrdersSyncService {
             const endTimeParts = endTimeFormatted.split('-');
             const endSeconds = endTimeParts.length >= 3 ? endTimeParts[2] : '00';
             
-            // Padrão: ems-sl-pcdly-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
-            filename = `ems-sl-pcdly-${brazilianDate}T${startTimeFormatted}-${endTimeFormatted}-${endSeconds}.csv`;
+            // Padrão: ems-sl-hope-YYYY-MM-DDTHH-MM-SS-HH-MM-SS-SS.csv
+            filename = `ems-sl-hope-${brazilianDate}T${startTimeFormatted}-${endTimeFormatted}-${endSeconds}.csv`;
           } else if (options.startDate && options.endDate) {
             // Se tiver startDate e endDate em UTC, converte para brasileiro
             const moment = require('moment-timezone');
@@ -1087,17 +1087,17 @@ class OrdersSyncService {
             const endTime = endDateBR.format('HH-MM-SS');
             const endSeconds = endDateBR.format('SS');
             
-            filename = `ems-sl-pcdly-${dateStr}T${startTime}-${endTime}-${endSeconds}.csv`;
+            filename = `ems-sl-hope-${dateStr}T${startTime}-${endTime}-${endSeconds}.csv`;
           } else {
             // Fallback: usa timestamp atual
             const timestamp = getBrazilianTimestampForFilename();
-            filename = `ems-sl-pcdly-${timestamp}-default.csv`;
+            filename = `ems-sl-hope-${timestamp}-default.csv`;
           }
         }
       } catch (filenameError) {
         console.warn('⚠️ Erro ao gerar nome do arquivo, usando fallback:', filenameError.message);
         const timestamp = getBrazilianTimestampForFilename();
-        filename = `ems-sl-pcdly-${timestamp}-default.csv`;
+        filename = `ems-sl-hope-${timestamp}-default.csv`;
       }
       
       if (!filename.endsWith('.csv')) {
@@ -1298,7 +1298,7 @@ class OrdersSyncService {
         this.sanitizeField(order.timestamp, 25, 'timestamp'),
         this.sanitizeField(order.price, 25, 'price'),
         this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'),
-        this.sanitizeField(order.s_store_id || 'piccadilly', 25, 's_store_id'),
+        this.sanitizeField(order.s_store_id || 'hope', 25, 's_store_id'),
         this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'),
         this.sanitizeField(order.s_discount ?? '0', 25, 's_discount')
       ];

@@ -41,22 +41,22 @@ class VtexProductService {
     // Otimizador de memória
     this.memoryOptimizer = new MemoryOptimizer();
     
-    // Configurações SFTP para Emarsys
-    // Decodifica a senha se ela estiver URL-encoded, senão usa como está
-    let sftpPassword = process.env.SFTP_PASSWORD;
+    // Configurações SFTP para Emarsys - PRODUTOS
+    // Usa SFTP_PRODUCTS_* se disponível, senão faz fallback para SFTP_* (legado)
+    let sftpPassword = process.env.SFTP_PRODUCTS_PASSWORD || process.env.SFTP_PASSWORD;
     try {
       // Tenta decodificar apenas se contiver caracteres encoded (%)
       if (sftpPassword && sftpPassword.includes('%')) {
         sftpPassword = decodeURIComponent(sftpPassword);
       }
     } catch (e) {
-      console.warn('⚠️ Não foi possível decodificar SFTP_PASSWORD, usando valor original');
+      console.warn('⚠️ Não foi possível decodificar SFTP_PRODUCTS_PASSWORD, usando valor original');
     }
-    
+
     this.sftpConfig = {
-      host: process.env.SFTP_HOST,
-      port: parseInt(process.env.SFTP_PORT),
-      username: process.env.SFTP_USERNAME,
+      host: process.env.SFTP_PRODUCTS_HOST || process.env.SFTP_HOST,
+      port: parseInt(process.env.SFTP_PRODUCTS_PORT || process.env.SFTP_PORT),
+      username: process.env.SFTP_PRODUCTS_USERNAME || process.env.SFTP_USERNAME,
       password: sftpPassword,
       readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 90000, // 90 segundos para handshake
       keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 10000, // Keepalive a cada 10s
@@ -97,7 +97,7 @@ class VtexProductService {
         ]
       }
     };
-    this.sftpRemotePath = process.env.SFTP_REMOTE_PATH;
+    this.sftpRemotePath = process.env.SFTP_PRODUCTS_REMOTE_PATH || process.env.SFTP_REMOTE_PATH;
     
     // Validação das configurações SFTP
     this._validateSftpConfig();
@@ -215,14 +215,16 @@ class VtexProductService {
    * Valida as configurações SFTP
    */
   _validateSftpConfig() {
-    const requiredVars = ['SFTP_HOST', 'SFTP_PORT', 'SFTP_USERNAME', 'SFTP_PASSWORD'];
-    const missingVars = requiredVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      console.warn(`⚠️ Variáveis de ambiente SFTP ausentes: ${missingVars.join(', ')}`);
-      console.warn('📤 Upload SFTP será desabilitado até que as variáveis sejam configuradas');
+    // Valida usando as variáveis de produtos OU legadas (fallback)
+    const hasProductsConfig = process.env.SFTP_PRODUCTS_HOST && process.env.SFTP_PRODUCTS_USERNAME && process.env.SFTP_PRODUCTS_PASSWORD;
+    const hasLegacyConfig = process.env.SFTP_HOST && process.env.SFTP_USERNAME && process.env.SFTP_PASSWORD;
+
+    if (!hasProductsConfig && !hasLegacyConfig) {
+      console.warn('⚠️ Variáveis SFTP de PRODUTOS não configuradas (SFTP_PRODUCTS_* ou SFTP_* legado)');
+      console.warn('📤 Upload SFTP de produtos será desabilitado até que as variáveis sejam configuradas');
     } else {
-      console.log('✅ Configurações SFTP validadas');
+      const source = hasProductsConfig ? 'SFTP_PRODUCTS_*' : 'SFTP_* (legado)';
+      console.log(`✅ Configurações SFTP de PRODUTOS validadas (usando ${source})`);
       console.log(`   🌐 Host: ${this.sftpConfig.host}`);
       console.log(`   🔌 Porta: ${this.sftpConfig.port}`);
       console.log(`   👤 Usuário: ${this.sftpConfig.username}`);
@@ -726,7 +728,7 @@ class VtexProductService {
    */
   async fetchProductDetailsFromPrivateApi(productId) {
     try {
-      const url = `https://piccadilly.vtexcommercestable.com.br/api/catalog/pvt/product/${productId}`;
+      const url = `https://hope.vtexcommercestable.com.br/api/catalog/pvt/product/${productId}`;
       const response = await this.client.get(url);
       
       if (response.data) {
@@ -800,7 +802,7 @@ class VtexProductService {
       productId: productId,
       productName: productName,
       description: productDescription,
-      link: `https://www.piccadilly.com.br/${productLinkId}/p`,
+      link: `https://www.hope.com.br/${productLinkId}/p`,
       category: extractedCategory,
       categories: [extractedCategory],
       releaseDate: firstSku.DateUpdated || firstSku.CreationDate || '',
@@ -861,7 +863,7 @@ class VtexProductService {
     
     try {
       // PASSO 1: Tentar API pública primeiro (produtos ativos com dados completos)
-      const url = `https://www.piccadilly.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
+      const url = `https://www.hope.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
       const response = await axios.get(url, {
         headers: {
           'Accept': 'application/json',

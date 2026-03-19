@@ -11,50 +11,33 @@ class EmarsysCsvService {
    * @returns {string} Conteúdo CSV
    */
   generateProductCsvContent(products) {
-    // Cabeçalho conforme especificação da Emarsys Catalog
+    // Cabeçalho com apenas as 12 colunas necessárias
     const headers = [
       'item',
       'title',
+      'link',
+      'image',
       'category',
       'available',
       'description',
       'price',
       'msrp',
-      'link',
-      'image',
-      'zoom_image',
       'group_id',
       'c_stock',
-      'c_ean',
-      'c_dataLancamento',
-      'c_altura_do_salto',
-      'c_beneficios',
-      'c_collab_barbie',
-      'c_cor',
-      'c_fechamento',
-      'c_forro',
-      'c_genero',
-      'c_material',
-      'c_medida_do_salto_cm',
-      'c_medidas',
-      'c_modelo',
-      'c_peso_do_produto',
-      'c_referencia_curta',
-      'c_tecnologia',
-      'c_tamanho'
+      'c_sku_id',
+      'c_product_id'
     ];
 
     let csvContent = headers.join(',') + '\n';
-    const batchSize = 100; // Aumentado de 50 para 100 para acelerar processamento
+    const batchSize = 100;
 
-    console.log(`📊 Processando ${products.length} produtos em lotes de ${batchSize} (otimizado)...`);
+    console.log(`📊 Processando ${products.length} produtos em lotes de ${batchSize}...`);
 
     for (let i = 0; i < products.length; i += batchSize) {
       const batch = products.slice(i, i + batchSize);
       const currentBatch = Math.floor(i/batchSize) + 1;
       const totalBatches = Math.ceil(products.length/batchSize);
-      
-      // Log apenas a cada 10 lotes para reduzir verbosidade
+
       if (currentBatch % 10 === 0 || currentBatch === 1 || currentBatch === totalBatches) {
         console.log(`🔄 Processando lote ${currentBatch}/${totalBatches}`);
       }
@@ -63,93 +46,47 @@ class EmarsysCsvService {
         // Para cada produto, gerar uma linha para cada item (SKU)
         if (product.items && Array.isArray(product.items)) {
           product.items.forEach(item => {
-            // Função auxiliar para extrair valores de arrays
-            const extractArrayValue = (array, index = 0) => {
-              if (Array.isArray(array) && array.length > index) {
-                return array[index];
-              }
-              return '';
-            };
             const row = [
-               this.sanitizeField(item.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-               this.sanitizeField(product.productName, 100), // title
-               this.sanitizeCategory(product.categories?.[0] || product.category, 50), // category
-               item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',     // available
-               this.sanitizeField(product.description || '', 200),                      // description
-               this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),       // price
-               this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),   // msrp
-               this.sanitizeField(product.link || '', 200),                             // link
-               this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // image (sanitizada)
-               this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                 // zoom_image (sanitizada)
-               this.sanitizeField(product.productId, 50),                         // group_id
-               item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,             // c_stock
-               this.sanitizeField(item.ean || '', 50),                                  // c_ean
-               this.formatEmarsysTimestamp(item.releaseDate || product.releaseDate || ''), // c_dataLancamento
-               this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),  // c_altura_do_salto
-               '',                                                                      // c_beneficios
-               '',                                                                      // c_collab_barbie
-               this.sanitizeField(extractArrayValue(product['Cor']), 50),              // c_cor
-               '',                                                                      // c_fechamento
-               this.sanitizeField(extractArrayValue(product['Forro']), 50),            // c_forro
-               this.sanitizeField(extractArrayValue(product['Gênero']), 50),           // c_genero
-               this.sanitizeField(extractArrayValue(product['Material']), 50),         // c_material
-               this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-               '',                                                                      // c_medidas
-               this.sanitizeField(extractArrayValue(product['Modelo']), 50),           // c_modelo
-               this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),  // c_peso_do_produto
-               this.sanitizeField(extractArrayValue(product['Referência Curta']), 50), // c_referencia_curta
-               '',                                                                      // c_tecnologia
-               this.sanitizeField(extractArrayValue(item.Tamanho), 50)                 // c_tamanho
+               this.sanitizeField(item.referenceId?.[0]?.Value, 50),                    // item (SKU Reference ID)
+               this.sanitizeField(product.productName, 100),                             // title
+               this.sanitizeField(product.link || '', 200),                              // link
+               this.sanitizeImageUrl(item.images?.[0]?.imageUrl),                        // image
+               this.sanitizeCategory(product.categories?.[0] || product.category, 50),   // category
+               item.sellers?.[0]?.commertialOffer?.IsAvailable ? 'true' : 'false',       // available
+               this.sanitizeField(product.description || '', 200),                       // description
+               this.formatPrice(item.sellers?.[0]?.commertialOffer?.Price || 0),         // price
+               this.formatPrice(item.sellers?.[0]?.commertialOffer?.ListPrice || 0),     // msrp
+               this.sanitizeField(product.productId, 50),                                // group_id
+               item.sellers?.[0]?.commertialOffer?.AvailableQuantity || 0,               // c_stock
+               this.sanitizeField(item.itemId, 50),                                      // c_sku_id
+               this.sanitizeField(product.productId, 50)                                 // c_product_id
             ];
 
             csvContent += row.join(',') + '\n';
           });
         } else {
           // Fallback: se não há items, usar dados do produto principal
-          const extractArrayValue = (array, index = 0) => {
-            if (Array.isArray(array) && array.length > index) {
-              return array[index];
-            }
-            return '';
-          };
-
           const row = [
-             this.sanitizeField(product.referenceId?.[0]?.Value, 50), // item (SKU Reference ID)
-             this.sanitizeField(product.productName || '', 100),                       // title
+             this.sanitizeField(product.referenceId?.[0]?.Value, 50),                    // item (SKU Reference ID)
+             this.sanitizeField(product.productName || '', 100),                          // title
+             this.sanitizeField(product.link || '', 200),                                 // link
+             this.sanitizeImageUrl(product.imageUrl),                                     // image
              this.sanitizeCategory(product.categories?.[0] || product.category || '', 50), // category
-             'true',                                                                   // available
-             this.sanitizeField(product.description || '', 200),                       // description
-             this.formatPrice(product.price || 0),                                     // price
-             this.formatPrice(product.listPrice || 0),                                 // msrp
-             this.sanitizeField(product.link || '', 200),                              // link
-             this.sanitizeImageUrl(product.imageUrl),                            // image (sanitizada)
-             this.sanitizeImageUrl(product.imageUrl),                            // zoom_image (sanitizada)
-             this.sanitizeField(product.productId, 50),                                // group_id
-             product.availableQuantity || 0,                                           // c_stock
-             this.sanitizeField(product.ean || '', 50),                                // c_ean
-             this.formatEmarsysTimestamp(product.releaseDate || ''),                   // c_dataLancamento
-             this.sanitizeField(extractArrayValue(product['Altura do Salto']), 50),   // c_altura_do_salto
-             '',                                                                       // c_beneficios
-             '',                                                                       // c_collab_barbie
-             this.sanitizeField(extractArrayValue(product['Cor']), 50),               // c_cor
-             '',                                                                       // c_fechamento
-             this.sanitizeField(extractArrayValue(product['Forro']), 50),             // c_forro
-             this.sanitizeField(extractArrayValue(product['Gênero']), 50),            // c_genero
-             this.sanitizeField(extractArrayValue(product['Material']), 50),          // c_material
-             this.sanitizeField(extractArrayValue(product['Medida do Salto (cm)']), 50), // c_medida_do_salto_cm
-             '',                                                                       // c_medidas
-             this.sanitizeField(extractArrayValue(product['Modelo']), 50),            // c_modelo
-             this.sanitizeField(extractArrayValue(product['Peso do Produto']), 50),   // c_peso_do_produto
-             this.sanitizeField(extractArrayValue(product['Referência Curta']), 50),  // c_referencia_curta
-             '',                                                                       // c_tecnologia
-             this.sanitizeField(extractArrayValue(product['Tamanho']), 50)            // c_tamanho
+             'true',                                                                      // available
+             this.sanitizeField(product.description || '', 200),                          // description
+             this.formatPrice(product.price || 0),                                        // price
+             this.formatPrice(product.listPrice || 0),                                    // msrp
+             this.sanitizeField(product.productId, 50),                                   // group_id
+             product.availableQuantity || 0,                                              // c_stock
+             this.sanitizeField(product.productId, 50),                                   // c_sku_id (fallback: usa productId)
+             this.sanitizeField(product.productId, 50)                                    // c_product_id
            ];
 
            csvContent += row.join(',') + '\n';
         }
       });
 
-      // Força garbage collection a cada 20 lotes para liberar memória (ajustado para lotes maiores)
+      // Força garbage collection a cada 20 lotes para liberar memória
       if (i > 0 && i % (batchSize * 10) === 0) {
         if (global.gc) {
           console.log('🧹 Executando garbage collection durante geração CSV...');
@@ -320,35 +257,19 @@ class EmarsysCsvService {
    */
   mapProductToCsvRow(product) {
     return [
-      product.name || '',                                    // title
       product.productId || '',                               // item
+      product.name || '',                                    // title
+      product.link || '',                                    // link
+      product.image || '',                                   // image
       product.category || '',                                // category
       'true',                                                // available
       product.description || '',                             // description
       product.price || 0,                                    // price
       product.listPrice || product.price || 0,               // msrp
-      product.link || '',                                    // link
-      product.image || '',                                   // image
-      product.image || '',                                   // zoom_image
       product.productId || '',                               // group_id
       0,                                                     // c_stock
-      product.ean || '',                                     // c_ean
-      '',                                                    // c_dataLancamento
-      '',                                                    // c_altura_do_salto
-      '',                                                    // c_beneficios
-      '',                                                    // c_collab_barbie
-      '',                                                    // c_cor
-      '',                                                    // c_fechamento
-      '',                                                    // c_forro
-      '',                                                    // c_genero
-      '',                                                    // c_material
-      '',                                                    // c_medida_do_salto_cm
-      '',                                                    // c_medidas
-      '',                                                    // c_modelo
-      '',                                                    // c_peso_do_produto
-      '',                                                    // c_referencia_curta
-      '',                                                    // c_tecnologia
-      ''                                                     // c_tamanho
+      product.skuId || product.productId || '',              // c_sku_id
+      product.productId || ''                                // c_product_id
     ];
   }
 

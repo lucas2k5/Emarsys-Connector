@@ -47,7 +47,7 @@ class ExportsCleanup {
   extractDateFromFilename(filename) {
     // Padrões de data nos arquivos:
     // emarsys-products-import-2025-11-11T00-02-02.csv
-    // ems-sl-pcdly-2025-11-11T00-00-00-00-00-01-59.csv
+    // ems-sl-hope-2025-11-11T00-00-00-00-00-01-59.csv
     
     // Regex para capturar YYYY-MM-DD
     const dateMatch = filename.match(/(\d{4})-(\d{2})-(\d{2})/);

@@ -138,12 +138,15 @@ router.get('/latest', async (req, res) => {
 
 /**
  * @route POST /api/emarsys/contacts/send
- * @desc Envia arquivo CSV de contatos para Emarsys
+ * @desc [DEPRECIADO] Envia arquivo CSV de contatos para Emarsys.
+ *       Contatos agora devem ser enviados via webhook (/create-single ou /create).
+ *       Esta rota é mantida para compatibilidade temporária.
  * @access Public
  * @body {string} [filename] - Nome específico do arquivo (opcional, usa o mais recente se não informado)
  */
 router.post('/send', async (req, res) => {
   try {
+    console.warn('⚠️ [DEPRECIADO] Rota /send será removida. Use /create-single (webhook) para enviar contatos.');
     console.log('🚀 Iniciando envio de arquivo CSV de contatos para Emarsys...');
     
     const { filename } = req.body;
@@ -372,31 +375,34 @@ router.get('/fields', async (req, res) => {
 
 /**
  * @route POST /api/emarsys/contacts/create
- * @desc Cria um contato individual via API v2
+ * @desc Cria um contato individual via webhook
  * @access Public
- * @body {Object} contact - Dados do contato no formato Emarsys
+ * @body {Object} contact - Dados do contato (formato Emarsys com IDs numéricos ou campos nomeados)
  */
 router.post('/create', async (req, res) => {
   try {
-    console.log('👤 Criando contato individual...');
-    
+    console.log('👤 Criando contato individual via webhook...');
+
     const { contact } = req.body;
-    
-    if (!contact || !contact['3']) {
+
+    // Aceita tanto campo '3' (ID Emarsys) quanto 'email' (nomeado)
+    const email = contact && (contact['3'] || contact.email);
+    if (!contact || !email) {
       return res.status(400).json({
         success: false,
-        error: 'Campo email (3) é obrigatório',
+        error: 'Campo email (3 ou email) é obrigatório',
         timestamp: new Date().toISOString()
       });
     }
-    
-    const emarsysImportService = require('../services/emarsysContactImportService');
-    const result = await emarsysImportService.createContact(contact);
-    
+
+    // Usa o serviço de webhook em vez da API Emarsys
+    const contactWebhookService = require('../services/contactWebhookService');
+    const result = await contactWebhookService.sendContact(contact);
+
     if (result.success) {
       res.status(201).json({
         success: true,
-        message: 'Contato criado com sucesso',
+        message: 'Contato enviado com sucesso via webhook',
         data: result.data,
         timestamp: new Date().toISOString()
       });
@@ -404,6 +410,7 @@ router.post('/create', async (req, res) => {
       res.status(result.status || 500).json({
         success: false,
         error: result.error,
+        errorType: result.errorType,
         timestamp: new Date().toISOString()
       });
     }
@@ -727,48 +734,30 @@ router.post('/create-single-from-ad', async (req, res) => {
       zip_code: zip_code || ''
     };
 
-    // Reutiliza o mesmo serviço usado pela rota /create-single para criar o contato
-    const emarsysImportService = require('../services/emarsysContactImportService');
+    // Envia para o webhook usando o novo serviço (substitui API Emarsys)
+    const contactWebhookService = require('../services/contactWebhookService');
 
-    const contact = {
-      '3': forwardBody.email,
-      '1': firstName,
-      '2': lastName
-    };
-    if (forwardBody.city) contact['11'] = forwardBody.city;
-    if (forwardBody.state) contact['12'] = forwardBody.state;
-    if (forwardBody.zip_code) contact['13'] = forwardBody.zip_code;
-    if (forwardBody.country) contact['14'] = forwardBody.country;
-    if (forwardBody.document) {
-      const cleanedDoc = cleanDocument(forwardBody.document);
-      if (cleanedDoc) contact['43'] = cleanedDoc;
-    }
-
-    const result = await emarsysImportService.createContact(contact);
+    const result = await contactWebhookService.sendContact(forwardBody);
 
     if (result.success) {
-      const action = result.action || 'created';
-      const message = action === 'updated'
-        ? 'Contato atualizado com sucesso via userId + endereço'
-        : 'Contato criado com sucesso via userId + endereço';
+      const message = 'Contato enviado com sucesso via webhook (userId + endereço)';
 
-      // Log de produção para resposta de sucesso
       const { logger } = require('../utils/logger');
-      logger.info('Contato processado com sucesso via userId + endereço', {
-        action,
-        userId: forwardBody.userId,
+      logger.info('Contato processado com sucesso via userId + endereço (webhook)', {
+        action: result.action,
+        userId,
         email: forwardBody.email,
-        emarsysResponse: result.data,
+        webhookResponse: result.data,
         timestamp: new Date().toISOString()
       });
 
       return res.status(201).json({
         success: true,
         message,
-        action,
+        action: result.action,
         data: {
           contact: forwardBody,
-          emarsysResponse: result.data
+          webhookResponse: result.data
         },
         timestamp: new Date().toISOString()
       });
@@ -777,6 +766,7 @@ router.post('/create-single-from-ad', async (req, res) => {
     return res.status(result.status || 500).json({
       success: false,
       error: result.error,
+      errorType: result.errorType,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -804,8 +794,9 @@ const __inFlightCreateByEmail = new Map();
 const IDEMPOTENCY_WINDOW_MS = 15000;
 
 router.post('/create-single', async (req, res) => {
+  let emailKey = '';
   try {
-    console.log('👤 Criando contato único via trigger...');
+    console.log('👤 Criando contato único via webhook...');
     try {
       const { logger, auditLogger } = require('../utils/logger');
       const mask = (obj) => {
@@ -838,7 +829,7 @@ router.post('/create-single', async (req, res) => {
         'user-agent': req.headers['user-agent'],
         'content-type': req.headers['content-type']
       };
-      auditLogger.info('Create single contact - incoming request', {
+      auditLogger.info('Create single contact - incoming request (webhook)', {
         route: '/api/emarsys/contacts/create-single',
         method: 'POST',
         headers: headersToLog,
@@ -850,13 +841,13 @@ router.post('/create-single', async (req, res) => {
     } catch (e) {
       console.warn('⚠️ Falha ao logar auditoria da requisição:', e.message);
     }
-    
-    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country, document } = req.body;
+
+    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country, document, address, postal_code } = req.body;
 
     // X-Request-Id para correlação
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     res.set('X-Request-Id', reqId);
-    
+
     // Validação dos campos obrigatórios
     if (!email) {
       return res.status(400).json({
@@ -865,48 +856,30 @@ router.post('/create-single', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     }
-    
-    // Validação de credenciais necessárias
-    const missingCredentials = [];
-    
-    // Verifica credenciais VTEX
-    if (!process.env.VTEX_BASE_URL) {
-      missingCredentials.push('VTEX_BASE_URL');
-    }
-    if (!process.env.VTEX_APP_KEY) {
-      missingCredentials.push('VTEX_APP_KEY');
-    }
-    if (!process.env.VTEX_APP_TOKEN) {
-      missingCredentials.push('VTEX_APP_TOKEN');
-    }
-    
-    // Verifica credenciais Emarsys
-    const emarsysUser = process.env.EMARSYS_USER || process.env.EMARSYS_USERNAME;
-    const emarsysSecret = process.env.EMARSYS_SECRET || process.env.EMARSYS_PASSWORD;
-    if (!emarsysUser) {
-      missingCredentials.push('EMARSYS_USER ou EMARSYS_USERNAME');
-    }
-    if (!emarsysSecret) {
-      missingCredentials.push('EMARSYS_SECRET ou EMARSYS_PASSWORD');
-    }
-    
-    if (missingCredentials.length > 0) {
-      const { logger } = require('../utils/logger');
-      logger.error('Credenciais faltando no endpoint create-single', { 
-        missingCredentials,
-        reqId
-      });
+
+    // Verifica se o webhook está configurado
+    const contactWebhookService = require('../services/contactWebhookService');
+    if (!contactWebhookService.isConfigured()) {
       return res.status(500).json({
         success: false,
-        error: 'Credenciais não configuradas no servidor',
-        missingCredentials: missingCredentials,
-        message: `Configure as seguintes variáveis de ambiente: ${missingCredentials.join(', ')}`,
+        error: 'CONTACTS_WEBHOOK_URL não configurado no .env',
+        message: 'Configure a variável CONTACTS_WEBHOOK_URL com a URL do webhook de contatos',
         timestamp: new Date().toISOString()
       });
     }
-    
+
+    // Validação de credenciais VTEX (necessárias para desofuscar email e buscar opt-in)
+    const missingCredentials = [];
+    if (!process.env.VTEX_BASE_URL) missingCredentials.push('VTEX_BASE_URL');
+    if (!process.env.VTEX_APP_KEY) missingCredentials.push('VTEX_APP_KEY');
+    if (!process.env.VTEX_APP_TOKEN) missingCredentials.push('VTEX_APP_TOKEN');
+
+    if (missingCredentials.length > 0) {
+      console.warn(`⚠️ Credenciais VTEX faltando: ${missingCredentials.join(', ')}. Enriquecimento de dados desabilitado.`);
+    }
+
     // Idempotência: evita processar múltiplas vezes o mesmo email em janela curta
-    const emailKey = String(email || '').trim().toLowerCase();
+    emailKey = String(email || '').trim().toLowerCase();
     const nowTs = Date.now();
     const lastTs = __inFlightCreateByEmail.get(emailKey) || 0;
     if (emailKey && nowTs - lastTs < IDEMPOTENCY_WINDOW_MS) {
@@ -924,221 +897,106 @@ router.post('/create-single', async (req, res) => {
       setTimeout(() => __inFlightCreateByEmail.delete(emailKey), IDEMPOTENCY_WINDOW_MS);
     }
 
-    // Obtém email real se necessário (desofuscar email)
-    const VtexOrdersService = require('../services/vtexOrdersService');
-    const vtexOrdersService = new VtexOrdersService();
+    // Obtém email real se necessário (desofuscar email) - só se VTEX estiver configurado
     let realEmail = emailKey;
-    try {
-      const emailMapping = await vtexOrdersService.getRealEmail(emailKey);
-      console.log('👤 DEBUG getRealEmail:', emailMapping);
-      if (emailMapping && emailMapping.email) {
-        realEmail = emailMapping.email;
-        console.log('👤 Email desofuscado:', realEmail);
-      } else {
-        console.log('👤 Email não é ofuscado, usando original:', emailKey);
+    let optinStatus = optin;
+
+    if (missingCredentials.length === 0) {
+      const VtexOrdersService = require('../services/vtexOrdersService');
+      const vtexOrdersService = new VtexOrdersService();
+
+      try {
+        const emailMapping = await vtexOrdersService.getRealEmail(emailKey);
+        if (emailMapping && emailMapping.email) {
+          realEmail = emailMapping.email;
+          console.log('👤 Email desofuscado:', realEmail);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Erro ao obter email real para ${emailKey}:`, error.message);
       }
-    } catch (error) {
-      console.warn(`⚠️ Erro ao obter email real para ${emailKey}:`, error.message);
-      // Mantém o email original em caso de erro
+
+      // Busca o status de isNewsletterOptIn da CL (Customer List)
+      try {
+        const clOptIn = await vtexOrdersService.getCLOptInStatus(realEmail);
+        if (clOptIn !== null) {
+          optinStatus = clOptIn;
+          console.log('✅ Usando optinStatus da CL:', optinStatus);
+        }
+      } catch (error) {
+        console.error(`❌ Erro ao buscar isNewsletterOptIn da CL para ${realEmail}:`, error.message);
+      }
     }
 
-    // Busca o status de isNewsletterOptIn da CL (Customer List)
-    let optinStatus = optin; // Valor inicial vem do body
-    console.log('👤 optinStatus inicial (do body):', optinStatus);
-    try {
-      console.log('👤 Buscando opt-in na CL para email:', realEmail);
-      const clOptIn = await vtexOrdersService.getCLOptInStatus(realEmail);
-      console.log('👤 clOptIn retornado da CL:', clOptIn, '(tipo:', typeof clOptIn, ')');
-      if (clOptIn !== null) {
-        // Usa o valor da CL se disponível (prioridade)
-        optinStatus = clOptIn;
-        console.log('✅ Usando optinStatus da CL:', optinStatus);
-      } else {
-        console.log('⚠️ clOptIn é null - cliente não encontrado na CL ou sem valor de opt-in');
-      }
-      // Se clOptIn for null, mantém o valor do body
-    } catch (error) {
-      console.error(`❌ Erro ao buscar isNewsletterOptIn da CL para ${realEmail}:`, error.message);
-      console.error('Stack:', error.stack);
-      // Mantém o valor do body em caso de erro
-    }
-
-    // Prepara os dados do contato no formato Emarsys
-    const contact = {
-      '3': realEmail, // Campo 3 = Email real (chave primária)
-      '1': first_name, // Campo 1 = Primeiro nome (first_name)
-      '2': last_name, // Campo 2 = Sobrenome (last_name)
+    // Monta os dados do contato no formato que o contactWebhookService espera
+    const contactData = {
+      email: realEmail,
+      first_name: first_name || '',
+      last_name: last_name || '',
+      phone: phone || '',
+      mobile: mobile || '',
+      birth_date: birth_date || '',
+      gender: gender || '',
+      optin: optinStatus,
+      address: address || '',
+      city: city || '',
+      state: state || '',
+      country: country || 'Brasil',
+      postal_code: postal_code || zip_code || '',
+      document: document || ''
     };
-    
-    // Adiciona telefone fixo se fornecido
-    if (phone) {
-      const normalizedPhone = normalizarTelefone(phone);
-      if (normalizedPhone) {
-        contact['15'] = normalizedPhone; // Campo 15 = Telefone (phone)
-      }
-    }
-    // Adiciona celular se fornecido
-    if (mobile) {
-      const normalizedMobile = normalizarTelefone(mobile);
-      if (normalizedMobile) {
-        contact['37'] = normalizedMobile; // Campo 37 = Mobile (celular)
-      }
-    }
-    
-    // Adiciona data de nascimento se fornecida
-    if (birth_date) {
-      const normalized = normalizeBirthDate(birth_date);
-      if (normalized) {
-        contact['4'] = normalized; // Campo 4 = Data de nascimento (YYYY-MM-DD)
-      }
-    }
 
-    // Adiciona gênero se fornecido (campo 5)
-    if (typeof gender !== 'undefined' && gender !== null && gender !== '') {
-      const normalized = String(gender).trim().toLowerCase();
-      const map = {
-        masculino: 1,
-        male: 1,
-        m: 1,
-        '1': 1,
-        feminino: 2,
-        female: 2,
-        f: 2,
-        '2': 2,
-        outro: 3,
-        other: 3,
-        '3': 3
-      };
-      const value = Object.prototype.hasOwnProperty.call(map, normalized) ? map[normalized] : gender;
-      contact['5'] = value; // Campo 5 = Gênero (gender)
-    }
-    
-    // Define opt-in baseado no valor da CL ou do body (campo 31). Emarsys espera 1=True e 2=False
-    if (typeof optinStatus !== 'undefined') {
-      // Normaliza optinStatus para booleano (trata strings "false", "0", etc)
-      const normalizedOptin = optinStatus === true || optinStatus === 1 || optinStatus === "1" || 
-                              (typeof optinStatus === 'string' && optinStatus.toLowerCase() === 'true');
-      contact['31'] = normalizedOptin ? "1" : "2";
-      console.log('👤 Opt-in enviado para Emarsys:', contact['31'], '(1=optou, 2=não optou)');
-    }
-    
-    // Adiciona cidade se fornecida
-    if (city) {
-      contact['11'] = city; // Campo 11 = Cidade (city)
-    }
-    
-    // Adiciona estado se fornecido
-    if (state) {
-      contact['12'] = state; // Campo 12 = Estado (state)
-    }
-    
-    // Adiciona CEP se fornecido
-    if (zip_code) {
-      contact['13'] = zip_code; // Campo 13 = CEP (zip_code)
-    }
-    
-    // Adiciona país se fornecido
-    if (country) {
-      // Mapeia o nome do país para o ID válido da Emarsys
-      const countryId = mapCountryToEmarsysId(country);
-      if (countryId) {
-        contact['14'] = countryId; // Campo 14 = País (country) - ID válido
-      } else {
-        console.warn(`⚠️ País não reconhecido: ${country}. Campo country será omitido.`);
-      }
-    }
-    
-    // Adiciona documento (CPF/CNPJ) se fornecido
-    if (document) {
-      const cleanedDoc = cleanDocument(document);
-      if (cleanedDoc) {
-        contact['43'] = cleanedDoc; // Campo 43 = Documento (CPF/CNPJ)
-      }
-    }
-    
     try {
       const { logger } = require('../utils/logger');
-      logger.info('Dados do contato preparados (masked)', {
-        contact: {
-          ...contact,
-          '3': contact['3'] ? `${String(contact['3']).slice(0, 2)}***@${String(contact['3']).split('@')[1] || ''}` : undefined,
-          '15': contact['15'] ? String(contact['15']).replace(/\d(?=\d{2})/g, '*') : undefined,
-          '37': contact['37'] ? String(contact['37']).replace(/\d(?=\d{2})/g, '*') : undefined,
-          '4': contact['4'] ? '****-**-**' : undefined,
-          '13': contact['13'] ? String(contact['13']).replace(/\d(?=\d{2})/g, '*') : undefined,
-          '43': contact['43'] ? String(contact['43']).replace(/\d(?=\d{2})/g, '*') : undefined,
-        }
-      });
+      logger.info('Webhook payload preparado (pre-send)', { reqId, email: realEmail });
     } catch (_) {}
-    
-    // Usa o serviço de importação da Emarsys com opções de retry
-    const emarsysImportService = require('../services/emarsysContactImportService');
-    // Loga payload real que será enviado (serviço também mascara ao logar)
-    const { logger } = require('../utils/logger');
-    logger.info('Emarsys upsert payload (pre-send)', { reqId, payload: { key_id: '3', ...contact } });
-    
-    // Opções de retry para falhas temporárias
+
+    // Envia para o webhook usando o novo serviço
     const retryOptions = {
       maxRetries: 3,
-      retryDelay: 1000,
-      validateData: true
+      retryDelay: 1000
     };
-    
-    const result = await emarsysImportService.createContact(contact, retryOptions);
-    
+
+    const result = await contactWebhookService.sendContact(contactData, retryOptions);
+
     if (result.success) {
-      const action = result.action || 'created';
-      const message = action === 'updated' 
-        ? 'Contato atualizado com sucesso via trigger' 
-        : 'Contato criado com sucesso via trigger';
-      
       res.status(201).json({
         success: true,
-        message,
-        action,
+        message: 'Contato enviado com sucesso via webhook',
+        action: result.action,
         data: {
           contact: {
-            first_name,
+            first_name: first_name || '',
             last_name: last_name || '',
             email: emailKey,
             phone: phone || '',
             mobile: mobile || '',
             birth_date: normalizeBirthDate(birth_date) || '',
-            gender: typeof gender !== 'undefined' ? gender : '',
-            optin: typeof optin !== 'undefined' ? 
-              ((optin === true || optin === 1 || optin === "1" || 
-                (typeof optin === 'string' && optin.toLowerCase() === 'true')) ? "1" : "2") : "1",
+            gender: gender || '',
+            opt_in: contactWebhookService.normalizeOptIn(optinStatus),
             city: city || '',
             state: state || '',
-            zip_code: zip_code || '',
-            country: "24",
+            postal_code: postal_code || zip_code || '',
+            country: country || 'Brasil',
             document: document || '',
           },
-          emarsysResponse: result.data
+          webhookResponse: result.data
         },
         timestamp: new Date().toISOString()
       });
     } else {
-      // Log detalhado do erro para diagnóstico
-      console.error('❌ Falha ao criar contato:', {
+      console.error('❌ Falha ao enviar contato para webhook:', {
         error: result.error,
         errorType: result.errorType,
-        status: result.status,
         retryable: result.retryable,
         attempts: result.attempts,
         email: emailKey
       });
-      
-      // Determina o status HTTP apropriado baseado no tipo de erro
+
       let httpStatus = result.status || 500;
-      if (result.errorType === 'VALIDATION_ERROR') {
-        httpStatus = 400;
-      } else if (result.errorType === 'AUTH_ERROR') {
-        httpStatus = 401;
-      } else if (result.errorType === 'RATE_LIMIT_ERROR') {
-        httpStatus = 429;
-      }
-      
+      if (result.errorType === 'VALIDATION_ERROR') httpStatus = 400;
+      else if (result.errorType === 'AUTH_ERROR') httpStatus = 401;
+      else if (result.errorType === 'CONFIG_ERROR') httpStatus = 500;
+
       res.status(httpStatus).json({
         success: false,
         error: result.error,
@@ -1154,7 +1012,7 @@ router.post('/create-single', async (req, res) => {
       stack: error.stack,
       email: emailKey
     });
-    
+
     res.status(500).json({
       success: false,
       error: error.message,

@@ -100,7 +100,7 @@ class EmsOrdersService {
           '_perPage': '100'
         });
 
-        const url = new URL(`https://piccadilly.vtexcommercestable.com.br/api/dataentities/${this.entity}/search?isSync=false`);
+        const url = new URL(`https://hope.vtexcommercestable.com.br/api/dataentities/${this.entity}/search?isSync=false`);
         const headers = this.getVtexHeaders();
 
         const options = {

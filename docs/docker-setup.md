@@ -14,7 +14,7 @@ Este guia fornece instruções completas para configurar e executar o Emarsys Co
 
 ```bash
 git clone <repository-url>
-cd piccadilly.emarsys-connector
+cd hope.emarsys-connector
 ```
 
 ### 2. Configure as variáveis de ambiente
@@ -192,7 +192,7 @@ docker-compose exec app cp data/orders.db /tmp/orders.db
 docker-compose cp app:/tmp/orders.db ./backup/orders-$(date +%Y%m%d).db
 
 # Ou diretamente do volume
-docker run --rm -v piccadilly-emarsys-connector_sqlite_data:/data -v $(pwd):/backup alpine tar czf /backup/sqlite-backup-$(date +%Y%m%d).tar.gz /data
+docker run --rm -v hope-emarsys-connector_sqlite_data:/data -v $(pwd):/backup alpine tar czf /backup/sqlite-backup-$(date +%Y%m%d).tar.gz /data
 ```
 
 ### Restaurar Backup
@@ -202,7 +202,7 @@ docker run --rm -v piccadilly-emarsys-connector_sqlite_data:/data -v $(pwd):/bac
 docker-compose cp ./backup/orders-20250124.db app:/app/data/orders.db
 
 # Ou via volume
-docker run --rm -v piccadilly-emarsys-connector_sqlite_data:/data -v $(pwd):/backup alpine tar xzf /backup/sqlite-backup-20250124.tar.gz -C /
+docker run --rm -v hope-emarsys-connector_sqlite_data:/data -v $(pwd):/backup alpine tar xzf /backup/sqlite-backup-20250124.tar.gz -C /
 ```
 
 ## 🔍 Verificação e Monitoramento

@@ -185,7 +185,7 @@ async function syncOrderInEms(orderId) {
   try {
     console.log(`🔄 Sincronizando pedido ${orderId} na EMS...`);
     
-    const url = `https://ems--piccadilly.myvtex.com/_v/orders/${orderId}/sync`;
+    const url = `https://ems--hope.myvtex.com/_v/orders/${orderId}/sync`;
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -752,8 +752,8 @@ router.get('/orders-extract-all', async (req, res) => {
       const files = await fs.readdir(outputDir);
       const existingBatch = files.find(f => {
         // Procura por arquivos que contenham a data/hora do início do período
-        // Exemplo: ems-sl-pcdly-2025-09-02T00-01-00-...
-        if (!f.startsWith('ems-sl-pcdly-') || !f.endsWith('.csv')) return false;
+        // Exemplo: ems-sl-hope-2025-09-02T00-01-00-...
+        if (!f.startsWith('ems-sl-hope-') || !f.endsWith('.csv')) return false;
         
         // Extrai a data do arquivo e compara com o período solicitado
         const startDateObj = new Date(startDate);
@@ -918,7 +918,7 @@ router.get('/orders-extract-all', async (req, res) => {
                         isSync: false,
                         order_status: orderDetail.status || orderDetail.orderStatus || null,
                         s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
-                        s_store_id: 'piccadilly',
+                        s_store_id: 'hope',
                         s_sales_channel: orderDetail.salesChannel || 'ecommerce',
                         s_discount: itemDiscount // Desconto calculado dos priceTags
                       });

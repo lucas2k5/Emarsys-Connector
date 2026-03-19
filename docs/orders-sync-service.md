@@ -144,7 +144,7 @@ Marca pedidos como sincronizados no SQLite.
   isSync: false,
   order_status: "payment-approved",
   s_channel_source: "web",
-  s_store_id: "piccadilly",
+  s_store_id: "hope",
   s_sales_channel: "ecommerce",
   s_discount: "10.00"
 }
@@ -154,7 +154,7 @@ Marca pedidos como sincronizados no SQLite.
 
 ```csv
 order,item,email,quantity,timestamp,price,s_channel_source,s_store_id,s_sales_channel,s_discount
-1234567890123-01,SKU123,cliente@email.com,2,2025-01-24T10:30:00Z,99.99,web,piccadilly,ecommerce,10.00
+1234567890123-01,SKU123,cliente@email.com,2,2025-01-24T10:30:00Z,99.99,web,hope,ecommerce,10.00
 ```
 
 ## 🔌 Integração com Rotas
