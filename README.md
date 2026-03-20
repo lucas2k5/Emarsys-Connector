@@ -115,8 +115,28 @@ Cron (30min) ou GET /api/integration/orders-extract-all
   │
   ├─ Busca pedidos na VTEX OMS API
   ├─ Salva no SQLite (flag isSync para controle)
-  └─ Envia via API Emarsys (OAuth2 client_credentials)
+  ├─ Gera CSV com 12 campos (separador: vírgula, decimal: ponto)
+  └─ POST CSV como binary para Sales Data API (OAuth2)
 ```
+
+### CSV de Pedidos
+
+O arquivo CSV é enviado como binary para a API Scarab Research (HAPI). Campos na ordem:
+
+| Campo | Descrição | Origem |
+|---|---|---|
+| `item` | SKU do produto (mesmo do catálogo) | VTEX |
+| `price` | Preço unitário (decimal com `.`) | VTEX |
+| `order` | ID do pedido | VTEX |
+| `timestamp` | Data/hora do pedido | VTEX |
+| `customer` | Identificador do cliente (CPF hash) | VTEX |
+| `quantity` | Quantidade | VTEX |
+| `s_sales_channel` | Canal de vendas | VTEX |
+| `s_store_id` | ID da loja | VTEX |
+| `s_canal` | Canal de origem | VTEX |
+| `s_loja` | Loja | VTEX |
+| `s_tipo_pagamento` | Tipo de pagamento | VTEX |
+| `s_cupom` | Cupom/desconto | VTEX |
 
 ### Autenticação OAuth2
 
@@ -126,7 +146,8 @@ O envio de pedidos utiliza OAuth2 com fluxo `client_credentials`. O token é obt
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=       # Endpoint da API (a definir)
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT=60000
 ```
 
 ## Fluxo de Contatos
@@ -398,11 +419,13 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 
 ## Pendências
 
-- [ ] Definir URL da API de pedidos (`EMARSYS_ORDERS_API_URL`)
-- [ ] Definir payload de pedidos para a API Emarsys
+- [x] ~~Definir URL da API de pedidos~~ — configurado (Scarab Research HAPI)
+- [x] ~~Definir payload/CSV de pedidos~~ — 12 campos definidos
+- [ ] Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)
 - [ ] Configurar credenciais SFTP de produtos **Hope Resort**
 - [ ] Configurar URL do webhook de contatos (`CONTACTS_WEBHOOK_URL`)
 - [ ] Configurar ambiente VTEX Hope Resort
+- [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
 
 ---
 
