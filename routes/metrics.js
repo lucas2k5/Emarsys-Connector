@@ -383,4 +383,24 @@ function formatUptime(seconds) {
   return `${days}d ${hours}h ${minutes}m ${secs}s`;
 }
 
+// Status do retry de contatos
+router.get('/contacts/retry-status', (req, res) => {
+  try {
+    const { getContactsStats } = require('../services/contactRetryService');
+    const stats = getContactsStats();
+    res.json({
+      success: true,
+      data: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao obter status de retry de contatos:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 module.exports = router;

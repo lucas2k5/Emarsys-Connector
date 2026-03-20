@@ -29,6 +29,8 @@
  */
 const axios = require('axios');
 const crypto = require('crypto');
+const { getDatabase } = require('../database/sqlite');
+const { logger, logHelpers } = require('../utils/logger');
 require('dotenv').config();
 
 class ContactWebhookService {
@@ -44,6 +46,51 @@ class ContactWebhookService {
       console.log('✅ [ContactWebhook] Configurado para:', this.webhookUrl);
       console.log(`   📋 client_type: ${this.clientType}`);
       console.log(`   🔐 Auth: ${this.authHeader ? 'Configurado' : 'Sem autenticação'}`);
+    }
+  }
+
+  /**
+   * Salva o contato no SQLite com status pending
+   * @param {Object} payload - Payload já formatado do webhook
+   * @returns {number} ID do registro criado
+   */
+  saveContact(payload) {
+    const db = getDatabase();
+    const stmt = db.db.prepare(`
+      INSERT INTO contacts (customer_id, email, cpf, payload, status, attempts)
+      VALUES (?, ?, ?, ?, 'pending', 0)
+    `);
+    const result = stmt.run(
+      payload.customer_id || '',
+      payload.email || null,
+      payload.cpf || null,
+      JSON.stringify(payload)
+    );
+    return result.lastInsertRowid;
+  }
+
+  /**
+   * Atualiza status de um contato no SQLite
+   * @param {number} id - ID do registro
+   * @param {string} status - Novo status (pending, sent, failed, dead)
+   * @param {string|null} errorMessage - Mensagem de erro (se houver)
+   */
+  updateContactStatus(id, status, errorMessage = null) {
+    const db = getDatabase();
+    if (status === 'failed' || status === 'dead') {
+      const stmt = db.db.prepare(`
+        UPDATE contacts
+        SET status = ?, attempts = attempts + 1, last_error = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `);
+      stmt.run(status, errorMessage, id);
+    } else {
+      const stmt = db.db.prepare(`
+        UPDATE contacts
+        SET status = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `);
+      stmt.run(status, id);
     }
   }
 
@@ -229,6 +276,15 @@ class ContactWebhookService {
       };
     }
 
+    // Persistir contato no SQLite ANTES de tentar enviar
+    let contactId = null;
+    try {
+      contactId = this.saveContact(payload);
+      logHelpers.logClients('info', `[ContactWebhook] Contato persistido no SQLite (id=${contactId})`, { contactId, email: payload.email });
+    } catch (dbError) {
+      logger.error('[ContactWebhook] Falha ao persistir contato no SQLite, prosseguindo com envio', { error: dbError.message });
+    }
+
     // Monta headers
     const headers = {
       'Content-Type': 'application/json',
@@ -266,12 +322,22 @@ class ContactWebhookService {
 
         console.log(`✅ [ContactWebhook] Contato enviado com sucesso (status: ${response.status})`);
 
+        // Marcar como enviado no SQLite
+        if (contactId) {
+          try {
+            this.updateContactStatus(contactId, 'sent');
+          } catch (dbError) {
+            logger.error('[ContactWebhook] Falha ao atualizar status para sent', { contactId, error: dbError.message });
+          }
+        }
+
         return {
           success: true,
           action: 'sent_to_webhook',
           data: response.data,
           status: response.status,
-          attempts: attempt
+          attempts: attempt,
+          contactId
         };
       } catch (error) {
         lastError = error;
@@ -289,6 +355,14 @@ class ContactWebhookService {
 
         if (!isRetryable) {
           // Erro não-retryável (400, 401, 403, etc.) - falha imediata
+          if (contactId) {
+            try {
+              this.updateContactStatus(contactId, 'failed', error.message);
+            } catch (dbError) {
+              logger.error('[ContactWebhook] Falha ao atualizar status para failed', { contactId, error: dbError.message });
+            }
+          }
+
           return {
             success: false,
             error: error.message,
@@ -296,7 +370,8 @@ class ContactWebhookService {
             status,
             data,
             retryable: false,
-            attempts: attempt
+            attempts: attempt,
+            contactId
           };
         }
 
@@ -308,12 +383,22 @@ class ContactWebhookService {
       }
     }
 
+    // Todas as tentativas falharam — marcar como failed no SQLite para retry posterior
+    if (contactId) {
+      try {
+        this.updateContactStatus(contactId, 'failed', lastError.message);
+      } catch (dbError) {
+        logger.error('[ContactWebhook] Falha ao atualizar status para failed após todas tentativas', { contactId, error: dbError.message });
+      }
+    }
+
     return {
       success: false,
       error: `Falha após ${maxRetries} tentativas: ${lastError.message}`,
       errorType: 'NETWORK_ERROR',
       retryable: true,
-      attempts: maxRetries
+      attempts: maxRetries,
+      contactId
     };
   }
 

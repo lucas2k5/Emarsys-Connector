@@ -3,6 +3,7 @@ const axios = require('axios');
 const moment = require('moment-timezone');
 const crashProtection = require('./crashProtection');
 const { logHelpers } = require('./logger');
+const contactRetryService = require('../services/contactRetryService');
 
 class CronService {
   constructor() {
@@ -64,7 +65,11 @@ class CronService {
     } else {
       console.log('⚠️ [CRON] ORDERS_SYNC_CRON não definido - cron de orders desabilitado');
     }
-    
+
+    // Retry de contatos com falha — sempre ativo
+    this.setupContactsRetry();
+    configuredCount++;
+
     if (configuredCount > 0) {
       console.log(`🕐 ${configuredCount} cron job(s) configurado(s) e iniciado(s)`);
     } else {
@@ -263,6 +268,42 @@ class CronService {
     const ordersSyncDisabled = ordersSyncEnabledValue === 'true' || ordersSyncEnabledValue === true || ordersSyncEnabledValue === '1';
     const status = ordersSyncDisabled ? '⏸️ DESATIVADO' : '▶️ ATIVO';
     console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job] [status: ${status}] [ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}]`);
+  }
+
+  /**
+   * Configura o cron para retry de contatos com falha (a cada 5 minutos)
+   */
+  setupContactsRetry() {
+    const contactsRetryCron = process.env.CONTACTS_RETRY_CRON || '*/5 * * * *';
+
+    const job = new cron.CronJob(contactsRetryCron, async () => {
+      const serviceName = 'contacts-retry';
+
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn('🚫 [CRON] Retry de contatos bloqueado por proteção contra crashes');
+        return;
+      }
+
+      logHelpers.logClients('info', '🔄 [CRON] Iniciando retry de contatos com falha', {
+        cronExpression: contactsRetryCron
+      });
+
+      try {
+        const result = await contactRetryService.processFailedContacts();
+
+        logHelpers.logClients('info', '✅ [CRON] Retry de contatos concluído', result);
+        crashProtection.resetCrashCount(serviceName);
+      } catch (error) {
+        logHelpers.logClientsError(error, {
+          serviceName,
+          cronExpression: contactsRetryCron
+        });
+        crashProtection.recordCrash(serviceName, error);
+      }
+    }, null, true, this.cronTimezone);
+
+    this.jobs.set('contacts-retry', job);
+    console.log(`🕐 Cron de retry de contatos configurado: ${contactsRetryCron} (${this.cronTimezone})`);
   }
 
   /**
