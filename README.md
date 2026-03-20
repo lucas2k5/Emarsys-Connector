@@ -10,12 +10,13 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 
 ```
 PRODUTOS:   App → GET VTEX Catalog API → CSV (.gz) → Upload SFTP (a cada 8h)
-PEDIDOS:    App → GET VTEX OMS API → SQLite → CSV → Upload SFTP (a cada 30min)
-CONTATOS:   VTEX Master Data → POST webhook → Webhook externo (tempo real)
+PEDIDOS:    App → GET VTEX OMS API → SQLite → API Emarsys OAuth2 (a cada 30min)
+CONTATOS:   VTEX Master Data → POST webhook → SQLite (persistência) → Webhook externo (tempo real + retry)
 ```
 
-- **Produtos e Pedidos**: A aplicação busca ativamente (pull) os dados na VTEX via API
-- **Contatos**: A VTEX envia (push) os dados via webhook quando um cliente é criado/atualizado
+- **Produtos**: A aplicação busca ativamente (pull) os dados na VTEX via API e envia via SFTP
+- **Pedidos**: A aplicação busca os pedidos na VTEX e envia via API Emarsys (OAuth2)
+- **Contatos**: A VTEX envia (push) os dados via webhook. Contatos são persistidos no SQLite antes do envio, com reprocessamento automático em caso de falha
 
 ## Arquitetura
 
@@ -31,27 +32,32 @@ hope.emarsys-connector/
 │   ├── emsOrders.js           # Sync de pedidos via Master Data
 │   ├── cronJobs.js            # Gerenciamento de cron jobs
 │   ├── alerts.js              # Sistema de alertas
-│   └── metrics.js             # Métricas e monitoramento
+│   └── metrics.js             # Métricas, monitoramento e status de contatos
 ├── services/                   # Lógica de negócio
-│   ├── contactWebhookService.js    # Envio de contatos via webhook (NOVO)
-│   ├── ordersSftpService.js        # Upload de pedidos via SFTP dedicado (NOVO)
+│   ├── contactWebhookService.js    # Envio de contatos via webhook + persistência SQLite
+│   ├── contactRetryService.js      # Reprocessamento de contatos com backoff exponencial
+│   ├── emarsysOAuth2Service.js     # Autenticação OAuth2 (client_credentials)
+│   ├── emarsysOrdersApiService.js  # Envio de pedidos via API Emarsys (OAuth2)
+│   ├── ordersSftpService.js        # Upload de pedidos via SFTP (legado)
 │   ├── vtexProductService.js       # Produtos VTEX → CSV → SFTP
 │   ├── emarsysCsvService.js        # Geração de CSV para Emarsys
 │   ├── vtexOrdersService.js        # Busca e processamento de pedidos
 │   ├── ordersSyncService.js        # Orquestração do sync de pedidos
 │   ├── emarsysHapiService.js       # Upload pedidos via HAPI (legado)
-│   ├── emarsysContactImportService.js # Contatos via API Emarsys (legado)
 │   ├── contactService.js           # Extração de contatos da VTEX
 │   └── integrationService.js       # Serviço de integração unificado
-├── database/                   # SQLite (WAL mode) para tracking de pedidos
+├── database/                   # SQLite (WAL mode) para tracking de pedidos e contatos
 │   ├── sqlite.js
 │   └── migrations/
+│       ├── 001_create_orders_table.sql
+│       └── 002_create_contacts_table.sql
 ├── utils/                      # Utilitários (auth, logger, cron, métricas)
+│   └── cronService.js         # Cron jobs (produtos, pedidos, retry contatos)
 ├── helpers/                    # Helpers de sync de pedidos
 ├── config/                     # Configurações de memória e monitoramento
 ├── scripts/                    # Scripts de manutenção
 ├── exports/                    # Arquivos CSV gerados
-├── data/                       # Cache local (products.json, etc.)
+├── data/                       # Cache local (products.json, SQLite DB)
 └── logs/                       # Logs da aplicação
 ```
 
@@ -90,13 +96,13 @@ Cron (8h) ou POST /api/vtex/products/sync
 
 ### SFTP de Produtos
 
-Usa variáveis `SFTP_PRODUCTS_*` com fallback para `SFTP_*` (legado):
+Ambiente **Hope** configurado. Ambiente **Hope Resort** pendente.
 
 ```env
-SFTP_PRODUCTS_HOST=
+SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
 SFTP_PRODUCTS_PORT=22
-SFTP_PRODUCTS_USERNAME=
-SFTP_PRODUCTS_PASSWORD=
+SFTP_PRODUCTS_USERNAME=bu_hope
+SFTP_PRODUCTS_PASSWORD=***
 SFTP_PRODUCTS_REMOTE_PATH=/catalog/
 ```
 
@@ -109,25 +115,23 @@ Cron (30min) ou GET /api/integration/orders-extract-all
   │
   ├─ Busca pedidos na VTEX OMS API
   ├─ Salva no SQLite (flag isSync para controle)
-  ├─ Gera CSV de vendas
-  └─ Envia via SFTP dedicado (ou HAPI como fallback)
+  └─ Envia via API Emarsys (OAuth2 client_credentials)
 ```
 
-### SFTP de Pedidos
+### Autenticação OAuth2
 
-Usa variáveis `SFTP_ORDERS_*` dedicadas:
+O envio de pedidos utiliza OAuth2 com fluxo `client_credentials`. O token é obtido automaticamente e mantido em cache com renovação antes da expiração.
 
 ```env
-SFTP_ORDERS_HOST=
-SFTP_ORDERS_PORT=22
-SFTP_ORDERS_USERNAME=
-SFTP_ORDERS_PASSWORD=
-SFTP_ORDERS_REMOTE_PATH=/orders/
+EMARSYS_OAUTH2_CLIENT_ID=
+EMARSYS_OAUTH2_CLIENT_SECRET=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL=       # Endpoint da API (a definir)
 ```
 
 ## Fluxo de Contatos
 
-### Processo (tempo real)
+### Processo (tempo real + retry automático)
 
 ```
 VTEX Master Data (cliente criado/atualizado)
@@ -136,7 +140,31 @@ VTEX Master Data (cliente criado/atualizado)
        │
        ├─ Valida e normaliza dados (CPF, telefone, gênero, opt-in)
        ├─ Gera customer_id: base64(md5(cpf ou email))
-       └─ Envia via HTTP POST para webhook externo
+       ├─ Persiste no SQLite (status: pending)
+       ├─ Envia via HTTP POST para webhook externo
+       │   ├─ Sucesso → status: sent
+       │   └─ Falha → status: failed
+       │
+       └─ Cron (5min) reprocessa contatos com falha
+            ├─ Backoff exponencial: attempts * 2 min (2, 4, 6, 8, 10 min)
+            ├─ Max 5 tentativas por contato
+            ├─ Sucesso → status: sent
+            └─ Excedeu limite → status: dead (alerta crítico)
+```
+
+### Monitoramento de Contatos
+
+```
+GET /api/metrics/contacts/retry-status
+
+Resposta:
+{
+  "pending": 3,
+  "sent": 1420,
+  "failed": 2,
+  "dead": 1,
+  "total": 1426
+}
 ```
 
 ### Payload do Webhook
@@ -170,6 +198,7 @@ CONTACTS_WEBHOOK_URL=
 CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 CONTACTS_WEBHOOK_AUTH_HEADER=
 CONTACTS_WEBHOOK_TIMEOUT=30000
+CONTACTS_RETRY_CRON=*/5 * * * *
 ```
 
 ## Instalação
@@ -226,19 +255,18 @@ SQLITE_DB_PATH=./data/orders.db
 # Upload habilitado
 ENABLE_EMARSYS_UPLOAD=true
 
-# SFTP Produtos (novo servidor dedicado)
+# SFTP Produtos
 SFTP_PRODUCTS_HOST=
 SFTP_PRODUCTS_PORT=22
 SFTP_PRODUCTS_USERNAME=
 SFTP_PRODUCTS_PASSWORD=
 SFTP_PRODUCTS_REMOTE_PATH=/catalog/
 
-# SFTP Pedidos (novo servidor dedicado)
-SFTP_ORDERS_HOST=
-SFTP_ORDERS_PORT=22
-SFTP_ORDERS_USERNAME=
-SFTP_ORDERS_PASSWORD=
-SFTP_ORDERS_REMOTE_PATH=/orders/
+# OAuth2 Pedidos (API)
+EMARSYS_OAUTH2_CLIENT_ID=
+EMARSYS_OAUTH2_CLIENT_SECRET=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL=
 
 # Webhook Contatos
 CONTACTS_WEBHOOK_URL=
@@ -249,8 +277,8 @@ CONTACTS_WEBHOOK_TIMEOUT=30000
 # Cron Jobs
 PRODUCTS_SYNC_CRON=0 */8 * * *
 ORDERS_SYNC_CRON=*/30 * * * *
+CONTACTS_RETRY_CRON=*/5 * * * *
 CRON_TIMEZONE=America/Sao_Paulo
-ORDERS_SYNC_ENABLED=true
 
 # Monitoramento
 LOG_LEVEL=info
@@ -296,6 +324,7 @@ Veja `.env.example` para a lista completa de variáveis.
 | GET | `/health` | Health check |
 | GET | `/api/metrics/dashboard` | Dashboard de métricas |
 | GET | `/api/metrics/prometheus` | Métricas Prometheus |
+| GET | `/api/metrics/contacts/retry-status` | Status do retry de contatos |
 | GET | `/api/alerts/active` | Alertas ativos |
 | GET | `/api/background/jobs` | Jobs em execução |
 | GET | `/api/cron-management/status` | Status dos cron jobs |
@@ -325,22 +354,23 @@ DEBUG=false
 
 ### Por módulo
 
-- `orders-logs-{date}.log` — Pedidos
-- `product-logs-{date}.log` — Produtos
-- `clients-logs-{date}.log` — Clientes
+- `ems-pcy-cro-orders-{date}.log` — Pedidos
+- `ems-pcy-cro-products-{date}.log` — Produtos
+- `ems-pcy-cro-clients-{date}.log` — Clientes/Contatos
 
 ### Gerais
 
-- `hope-emarsys-system-{date}.log` — Sistema
-- `hope-emarsys-errors-{date}.log` — Erros
-- `hope-emarsys-http-{date}.log` — Requisições HTTP
+- `ems-pcy-system-{date}.log` — Sistema
+- `ems-pcy-errors-{date}.log` — Erros
+- `ems-pcy-http-{date}.log` — Requisições HTTP
+- `ems-pcy-retry-{date}.log` — Reprocessamento
 
 ```bash
 # Logs em tempo real
 npm run logs
 
 # Logs de erro
-tail -f logs/hope-emarsys-errors-$(date +%Y-%m-%d).log
+tail -f logs/ems-pcy-errors-$(date +%d-%m-%Y).log
 
 # Limpar logs
 npm run clear-logs
@@ -368,10 +398,11 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 
 ## Pendências
 
-- [ ] Preencher credenciais SFTP de **produtos** (`SFTP_PRODUCTS_*`)
-- [ ] Preencher credenciais SFTP de **pedidos** (`SFTP_ORDERS_*`)
-- [ ] Preencher URL do **webhook de contatos** (`CONTACTS_WEBHOOK_URL`)
-- [ ] Integrar `ordersSftpService.js` no fluxo de pedidos (atualmente usa HAPI)
+- [ ] Definir URL da API de pedidos (`EMARSYS_ORDERS_API_URL`)
+- [ ] Definir payload de pedidos para a API Emarsys
+- [ ] Configurar credenciais SFTP de produtos **Hope Resort**
+- [ ] Configurar URL do webhook de contatos (`CONTACTS_WEBHOOK_URL`)
+- [ ] Configurar ambiente VTEX Hope Resort
 
 ---
 
