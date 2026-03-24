@@ -383,11 +383,12 @@ function formatUptime(seconds) {
   return `${days}d ${hours}h ${minutes}m ${secs}s`;
 }
 
-// Status do retry de contatos
+// Status do retry de contatos (filtro opcional: ?client_type=hope ou ?client_type=resort)
 router.get('/contacts/retry-status', (req, res) => {
   try {
     const { getContactsStats } = require('../services/contactRetryService');
-    const stats = getContactsStats();
+    const clientType = req.query.client_type || null;
+    const stats = getContactsStats(clientType);
     res.json({
       success: true,
       data: stats,

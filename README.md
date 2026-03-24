@@ -6,17 +6,33 @@ Sistema de integração entre VTEX e Emarsys para sincronização de produtos, p
 
 O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como ponte entre a plataforma de e-commerce VTEX e a plataforma de marketing Emarsys.
 
+### Tecnologias
+
+| Categoria | Tecnologia | Uso |
+|---|---|---|
+| Runtime | Node.js 22 (LTS) | Servidor |
+| Framework | Express.js | API REST |
+| Banco de Dados | SQLite (better-sqlite3, WAL) | Persistência de pedidos e contatos |
+| HTTP Client | Axios | VTEX API, webhooks, Emarsys API |
+| SFTP | ssh2-sftp-client | Upload de catálogo de produtos |
+| Auth | OAuth2 (client_credentials) | Autenticação Emarsys |
+| Segurança | Helmet, CORS, dotenv | Headers HTTP, variáveis de ambiente |
+| Logging | Winston | Logs estruturados por módulo |
+| Métricas | prom-client + Grafana | Monitoramento Prometheus |
+| Agendamento | node-cron | Cron jobs (produtos, pedidos, retry) |
+| Produção | PM2, Docker | Gerenciamento de processos |
+
 ### Fluxos de Dados
 
 ```
 PRODUTOS:   App → GET VTEX Catalog API → CSV (.gz) → Upload SFTP (a cada 8h)
 PEDIDOS:    App → GET VTEX OMS API → SQLite → API Emarsys OAuth2 (a cada 30min)
-CONTATOS:   VTEX Master Data → POST webhook → SQLite (persistência) → Webhook externo (tempo real + retry)
+CONTATOS:   VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 ```
 
 - **Produtos**: A aplicação busca ativamente (pull) os dados na VTEX via API e envia via SFTP
 - **Pedidos**: A aplicação busca os pedidos na VTEX e envia via API Emarsys (OAuth2)
-- **Contatos**: A VTEX envia (push) os dados via webhook. Contatos são persistidos no SQLite antes do envio, com reprocessamento automático em caso de falha
+- **Contatos**: A VTEX envia (push) os dados via webhook de entrada. Contatos são persistidos no SQLite com `client_type` (hope/resort), com filas de reprocessamento separadas por ambiente
 
 ## Arquitetura
 
@@ -50,7 +66,8 @@ hope.emarsys-connector/
 │   ├── sqlite.js
 │   └── migrations/
 │       ├── 001_create_orders_table.sql
-│       └── 002_create_contacts_table.sql
+│       ├── 002_create_contacts_table.sql
+│       └── 003_add_client_type_to_contacts.sql
 ├── utils/                      # Utilitários (auth, logger, cron, métricas)
 │   └── cronService.js         # Cron jobs (produtos, pedidos, retry contatos)
 ├── helpers/                    # Helpers de sync de pedidos
@@ -161,14 +178,16 @@ VTEX Master Data (cliente criado/atualizado)
        │
        ├─ Valida email obrigatório
        ├─ Idempotência (ignora duplicatas em janela de 15s)
-       ├─ Persiste no SQLite (status: pending)
+       ├─ Persiste no SQLite (status: pending, client_type: hope|resort)
        │
        └─ POST <CONTACTS_WEBHOOK_URL>/sync                 ← Webhook de SAÍDA
             │
             ├─ Sucesso → status: sent no SQLite
             └─ Falha → status: failed no SQLite
                  │
-                 └─ Cron (a cada 5min) reprocessa contatos failed
+                 └─ Cron (a cada 5min) reprocessa por fila separada
+                      ├─ Fila "hope"   → usa CONTACTS_WEBHOOK_URL_HOPE (ou fallback)
+                      ├─ Fila "resort" → usa CONTACTS_WEBHOOK_URL_RESORT (ou fallback)
                       ├─ Backoff exponencial: attempts * 2 min
                       ├─ Máx 5 tentativas por contato
                       ├─ Sucesso → sent
@@ -180,23 +199,34 @@ VTEX Master Data (cliente criado/atualizado)
 POST https://<seu-ngrok>.ngrok-free.app/api/emarsys/contacts/webhook
 ```
 
-**Webhook de SAÍDA** — destino externo configurado no `.env`:
+**Webhook de SAÍDA** — destino externo configurado no `.env` (suporta URLs por ambiente):
 ```
-POST ${CONTACTS_WEBHOOK_URL}
+CONTACTS_WEBHOOK_URL=https://...        # URL padrão (fallback)
+CONTACTS_WEBHOOK_URL_HOPE=https://...   # URL específica Hope (opcional)
+CONTACTS_WEBHOOK_URL_RESORT=https://... # URL específica Resort (opcional)
 ```
 
 ### Monitoramento de Contatos
 
 ```
+# Totais + breakdown por client_type
 GET /api/metrics/contacts/retry-status
 
-Resposta:
+# Filtrado por ambiente
+GET /api/metrics/contacts/retry-status?client_type=hope
+GET /api/metrics/contacts/retry-status?client_type=resort
+
+Resposta (sem filtro):
 {
   "pending": 3,
   "sent": 1420,
   "failed": 2,
   "dead": 1,
-  "total": 1426
+  "total": 1426,
+  "by_client_type": [
+    { "client_type": "hope", "pending": 2, "sent": 1000, "failed": 1, "dead": 0, "total": 1003 },
+    { "client_type": "resort", "pending": 1, "sent": 420, "failed": 1, "dead": 1, "total": 423 }
+  ]
 }
 ```
 
@@ -245,8 +275,14 @@ A VTEX envia o payload já no formato padronizado. O `client_type` distingue ent
 ### Configuração do Webhook
 
 ```env
-# Webhook de saída (destino externo)
+# Webhook de saída — URL padrão (fallback para todos os client_types)
 CONTACTS_WEBHOOK_URL=https://exemplo.ngrok-free.dev/sync
+
+# URLs específicas por ambiente (opcionais — se não definidas, usa CONTACTS_WEBHOOK_URL)
+CONTACTS_WEBHOOK_URL_HOPE=https://hope-webhook.exemplo.com/sync
+CONTACTS_WEBHOOK_URL_RESORT=https://resort-webhook.exemplo.com/sync
+
+# Configurações gerais
 CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 CONTACTS_WEBHOOK_AUTH_HEADER=
 CONTACTS_WEBHOOK_TIMEOUT=30000
@@ -465,6 +501,7 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Webhook de entrada para VTEX~~ — `/api/emarsys/contacts/webhook` + ngrok
 - [x] ~~Payload padronizado de contatos~~ — gender M/F, country numérico, client_type hope/resort
 - [x] ~~Webhook de saída configurado~~ — `CONTACTS_WEBHOOK_URL` com retry automático
+- [x] ~~Filas de retry separadas por client_type~~ — hope e resort com URLs independentes
 - [ ] Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)
 - [ ] Configurar credenciais SFTP de produtos **Hope Resort**
 - [ ] Configurar ambiente VTEX Hope Resort

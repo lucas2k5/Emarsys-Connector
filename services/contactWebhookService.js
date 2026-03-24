@@ -55,14 +55,15 @@ class ContactWebhookService {
   saveContact(payload) {
     const db = getDatabase();
     const stmt = db.db.prepare(`
-      INSERT INTO contacts (customer_id, email, cpf, payload, status, attempts)
-      VALUES (?, ?, ?, ?, 'pending', 0)
+      INSERT INTO contacts (customer_id, email, cpf, payload, status, attempts, client_type)
+      VALUES (?, ?, ?, ?, 'pending', 0, ?)
     `);
     const result = stmt.run(
       payload.customer_id || '',
       payload.email || null,
       payload.cpf || null,
-      JSON.stringify(payload)
+      JSON.stringify(payload),
+      payload.client_type || 'hope'
     );
     return result.lastInsertRowid;
   }
