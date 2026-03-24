@@ -6,23 +6,21 @@
  *
  * Payload enviado:
  * {
- *   "customer_id": "base64(md5(cpf ou email))",
+ *   "customer_id": "NDI1NzAzOTk4MTc=",
  *   "client_type": "hope",
  *   "email": "...",
- *   "cpf": "...",
- *   "bday": "YYYY-MM-DD",
+ *   "cpf": "42570399817",
  *   "first_name": "...",
  *   "last_name": "...",
- *   "phone": "+55...",
- *   "mobile": "+55...",
- *   "gender": "masculino|feminino|outro",
+ *   "phone": "+551133334444",
+ *   "mobile": "+5511999998888",
+ *   "gender": "M|F",
  *   "address": "...",
  *   "city": "...",
  *   "state": "...",
- *   "country": "Brasil",
- *   "postal_code": "...",
- *   "opt_in": true|false,
- *   "registration_data": "ISO 8601"
+ *   "country": 31,
+ *   "postal_code": "01310-100",
+ *   "opt_in": true|false
  * }
  *
  * TODO: Definir CONTACTS_WEBHOOK_URL no .env quando o endpoint for fornecido.
@@ -146,6 +144,45 @@ class ContactWebhookService {
   }
 
   /**
+   * Normaliza gênero para formato curto: "M" ou "F"
+   * @param {string|number} gender
+   * @returns {string}
+   */
+  normalizeGenderShort(gender) {
+    if (!gender && gender !== 0) return '';
+
+    const normalized = String(gender).trim().toUpperCase();
+    const map = {
+      'M': 'M',
+      'MALE': 'M',
+      'MASCULINO': 'M',
+      '1': 'M',
+      'F': 'F',
+      'FEMALE': 'F',
+      'FEMININO': 'F',
+      '2': 'F'
+    };
+
+    return map[normalized] || normalized;
+  }
+
+  /**
+   * Normaliza country para código numérico (31 = Brasil)
+   * @param {string|number} country
+   * @returns {number}
+   */
+  normalizeCountry(country) {
+    if (typeof country === 'number') return country;
+    if (!country) return 31; // Brasil padrão
+
+    const normalized = String(country).trim().toLowerCase();
+    if (normalized === 'brasil' || normalized === 'brazil' || normalized === 'br') return 31;
+    const parsed = parseInt(normalized, 10);
+    if (!isNaN(parsed)) return parsed;
+    return 31;
+  }
+
+  /**
    * Normaliza opt-in para boolean
    * @param {*} optin
    * @returns {boolean}
@@ -207,29 +244,48 @@ class ContactWebhookService {
    * @returns {Object} Payload formatado para o webhook
    */
   buildWebhookPayload(contactData) {
-    // Suporta tanto campos nomeados quanto IDs numéricos da Emarsys
+    // Se o payload já vem no formato padronizado (com customer_id e client_type),
+    // usa direto sem transformações — a VTEX envia já formatado.
+    if (contactData.customer_id && contactData.client_type) {
+      return {
+        customer_id: contactData.customer_id,
+        client_type: contactData.client_type,
+        email: (contactData.email || '').trim().toLowerCase(),
+        cpf: contactData.cpf || '',
+        first_name: contactData.first_name || '',
+        last_name: contactData.last_name || '',
+        phone: contactData.phone || '',
+        mobile: contactData.mobile || '',
+        gender: this.normalizeGenderShort(contactData.gender || ''),
+        address: contactData.address || '',
+        city: contactData.city || '',
+        state: contactData.state || '',
+        country: this.normalizeCountry(contactData.country),
+        postal_code: contactData.postal_code || '',
+        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true
+      };
+    }
+
+    // Fallback: formato legado — transforma campos antigos para o padrão
     const email = (contactData.email || contactData['3'] || '').trim().toLowerCase();
     const cpf = this.cleanDocument(contactData.cpf || contactData.document || contactData['43'] || '');
     const firstName = (contactData.first_name || contactData.firstName || contactData['1'] || '').trim();
     const lastName = (contactData.last_name || contactData.lastName || contactData['2'] || '').trim();
     const phone = this.normalizePhone(contactData.phone || contactData['15'] || '');
     const mobile = this.normalizePhone(contactData.mobile || contactData['37'] || '');
-    const birthDate = this.normalizeDate(contactData.birth_date || contactData.bday || contactData.birthDate || contactData['4'] || '');
-    const gender = this.normalizeGender(contactData.gender || contactData['5'] || '');
+    const gender = this.normalizeGenderShort(contactData.gender || contactData['5'] || '');
     const optIn = this.normalizeOptIn(contactData.opt_in ?? contactData.optin ?? contactData['31']);
     const address = (contactData.address || '').trim();
     const city = (contactData.city || contactData['11'] || '').trim();
     const state = (contactData.state || contactData['12'] || '').trim();
-    const country = (contactData.country || contactData['14'] || 'Brasil').trim();
+    const country = this.normalizeCountry(contactData.country || contactData['14']);
     const postalCode = (contactData.postal_code || contactData.zip_code || contactData['13'] || '').trim();
-    const registrationData = contactData.registration_data || contactData.createdIn || new Date().toISOString();
 
     const payload = {
       customer_id: this.generateCustomerId(cpf, email),
-      client_type: this.clientType,
+      client_type: contactData.client_type || this.clientType,
       email,
       cpf,
-      bday: birthDate,
       first_name: firstName,
       last_name: lastName,
       phone,
@@ -240,8 +296,7 @@ class ContactWebhookService {
       state,
       country,
       postal_code: postalCode,
-      opt_in: optIn,
-      registration_data: registrationData
+      opt_in: optIn
     };
 
     return payload;
@@ -288,7 +343,8 @@ class ContactWebhookService {
     // Monta headers
     const headers = {
       'Content-Type': 'application/json',
-      'Accept': 'application/json'
+      'Accept': 'application/json',
+      'ngrok-skip-browser-warning': 'true'
     };
 
     // Adiciona autenticação se configurada
@@ -350,6 +406,7 @@ class ContactWebhookService {
           status,
           message: error.message,
           code: error.code,
+          responseBody: data,
           retryable: isRetryable
         });
 

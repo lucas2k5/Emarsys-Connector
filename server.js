@@ -73,6 +73,7 @@ const ALLOWED_PREFIXES = [
   '/api/metrics',
   '/api/alerts',
   '/api/contact-errors',
+  '/api/webhook-simulator',
   '/health',
   '/favicon.ico'
 ];
@@ -216,6 +217,57 @@ app.use('/api/crash-protection', crashProtectionRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/contact-errors', contactErrorsRoutes);
+
+// ============================================================
+// Webhook Simulator (apenas desenvolvimento)
+// Simula o endpoint externo que recebe contatos da VTEX
+// ============================================================
+if (process.env.NODE_ENV !== 'production') {
+  const webhookSimulatorLogs = [];
+
+  // Recebe contatos (simula o endpoint externo)
+  app.post('/api/webhook-simulator/contacts', (req, res) => {
+    const received = {
+      timestamp: new Date().toISOString(),
+      headers: {
+        'content-type': req.get('content-type'),
+        'authorization': req.get('authorization') ? '***configured***' : null
+      },
+      payload: req.body
+    };
+    webhookSimulatorLogs.push(received);
+    // Mantém apenas os últimos 100
+    if (webhookSimulatorLogs.length > 100) webhookSimulatorLogs.shift();
+
+    console.log(`✅ [WebhookSimulator] Contato recebido: ${req.body?.email || 'sem email'}`);
+    console.log(`   📋 Payload:`, JSON.stringify(req.body, null, 2));
+
+    res.status(200).json({
+      success: true,
+      message: 'Contato recebido pelo webhook simulator',
+      received: req.body,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Lista contatos recebidos pelo simulator
+  app.get('/api/webhook-simulator/contacts', (req, res) => {
+    res.json({
+      success: true,
+      total: webhookSimulatorLogs.length,
+      contacts: webhookSimulatorLogs,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Limpa o log do simulator
+  app.delete('/api/webhook-simulator/contacts', (req, res) => {
+    webhookSimulatorLogs.length = 0;
+    res.json({ success: true, message: 'Logs limpos', timestamp: new Date().toISOString() });
+  });
+
+  console.log('🧪 [WebhookSimulator] Ativo em /api/webhook-simulator/contacts (apenas dev)');
+}
 
 // Health check básico
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));

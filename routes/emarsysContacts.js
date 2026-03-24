@@ -842,7 +842,7 @@ router.post('/create-single', async (req, res) => {
       console.warn('⚠️ Falha ao logar auditoria da requisição:', e.message);
     }
 
-    const { first_name, last_name, email, phone, mobile, birth_date, gender, optin, city, state, zip_code, country, document, address, postal_code } = req.body;
+    const { email, customer_id, client_type } = req.body;
 
     // X-Request-Id para correlação
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -868,16 +868,6 @@ router.post('/create-single', async (req, res) => {
       });
     }
 
-    // Validação de credenciais VTEX (necessárias para desofuscar email e buscar opt-in)
-    const missingCredentials = [];
-    if (!process.env.VTEX_BASE_URL) missingCredentials.push('VTEX_BASE_URL');
-    if (!process.env.VTEX_APP_KEY) missingCredentials.push('VTEX_APP_KEY');
-    if (!process.env.VTEX_APP_TOKEN) missingCredentials.push('VTEX_APP_TOKEN');
-
-    if (missingCredentials.length > 0) {
-      console.warn(`⚠️ Credenciais VTEX faltando: ${missingCredentials.join(', ')}. Enriquecimento de dados desabilitado.`);
-    }
-
     // Idempotência: evita processar múltiplas vezes o mesmo email em janela curta
     emailKey = String(email || '').trim().toLowerCase();
     const nowTs = Date.now();
@@ -897,88 +887,31 @@ router.post('/create-single', async (req, res) => {
       setTimeout(() => __inFlightCreateByEmail.delete(emailKey), IDEMPOTENCY_WINDOW_MS);
     }
 
-    // Obtém email real se necessário (desofuscar email) - só se VTEX estiver configurado
-    let realEmail = emailKey;
-    let optinStatus = optin;
-
-    if (missingCredentials.length === 0) {
-      const VtexOrdersService = require('../services/vtexOrdersService');
-      const vtexOrdersService = new VtexOrdersService();
-
-      try {
-        const emailMapping = await vtexOrdersService.getRealEmail(emailKey);
-        if (emailMapping && emailMapping.email) {
-          realEmail = emailMapping.email;
-          console.log('👤 Email desofuscado:', realEmail);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Erro ao obter email real para ${emailKey}:`, error.message);
-      }
-
-      // Busca o status de isNewsletterOptIn da CL (Customer List)
-      try {
-        const clOptIn = await vtexOrdersService.getCLOptInStatus(realEmail);
-        if (clOptIn !== null) {
-          optinStatus = clOptIn;
-          console.log('✅ Usando optinStatus da CL:', optinStatus);
-        }
-      } catch (error) {
-        console.error(`❌ Erro ao buscar isNewsletterOptIn da CL para ${realEmail}:`, error.message);
-      }
-    }
-
-    // Monta os dados do contato no formato que o contactWebhookService espera
-    const contactData = {
-      email: realEmail,
-      first_name: first_name || '',
-      last_name: last_name || '',
-      phone: phone || '',
-      mobile: mobile || '',
-      birth_date: birth_date || '',
-      gender: gender || '',
-      optin: optinStatus,
-      address: address || '',
-      city: city || '',
-      state: state || '',
-      country: country || 'Brasil',
-      postal_code: postal_code || zip_code || '',
-      document: document || ''
-    };
+    // Payload padronizado: a VTEX já envia no formato final
+    // Se vier com customer_id e client_type, encaminha direto
+    // Senão, o contactWebhookService transforma (fallback legado)
+    const contactData = { ...req.body };
 
     try {
       const { logger } = require('../utils/logger');
-      logger.info('Webhook payload preparado (pre-send)', { reqId, email: realEmail });
+      logger.info('Webhook payload recebido', { reqId, email: emailKey, client_type: client_type || 'legado', hasCustomerId: !!customer_id });
     } catch (_) {}
 
-    // Envia para o webhook usando o novo serviço
-    const retryOptions = {
+    // Envia para o webhook
+    const result = await contactWebhookService.sendContact(contactData, {
       maxRetries: 3,
       retryDelay: 1000
-    };
-
-    const result = await contactWebhookService.sendContact(contactData, retryOptions);
+    });
 
     if (result.success) {
       res.status(201).json({
         success: true,
         message: 'Contato enviado com sucesso via webhook',
         action: result.action,
+        contactId: result.contactId,
         data: {
-          contact: {
-            first_name: first_name || '',
-            last_name: last_name || '',
-            email: emailKey,
-            phone: phone || '',
-            mobile: mobile || '',
-            birth_date: normalizeBirthDate(birth_date) || '',
-            gender: gender || '',
-            opt_in: contactWebhookService.normalizeOptIn(optinStatus),
-            city: city || '',
-            state: state || '',
-            postal_code: postal_code || zip_code || '',
-            country: country || 'Brasil',
-            document: document || '',
-          },
+          client_type: client_type || contactWebhookService.clientType,
+          email: emailKey,
           webhookResponse: result.data
         },
         timestamp: new Date().toISOString()
@@ -1002,6 +935,7 @@ router.post('/create-single', async (req, res) => {
         error: result.error,
         errorType: result.errorType,
         retryable: result.retryable,
+        contactId: result.contactId,
         attempts: result.attempts,
         timestamp: new Date().toISOString()
       });
@@ -1017,6 +951,92 @@ router.post('/create-single', async (req, res) => {
       success: false,
       error: error.message,
       errorType: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route POST /api/emarsys/contacts/webhook
+ * @desc Endpoint de entrada para a VTEX enviar contatos via webhook.
+ *       Recebe o payload padronizado e encaminha para o webhook de saída.
+ *       Este endpoint é exposto externamente via ngrok para a VTEX chamar.
+ * @access Public (VTEX trigger)
+ */
+router.post('/webhook', async (req, res) => {
+  try {
+    console.log('📩 [Webhook Entrada] Contato recebido da VTEX');
+
+    const { email, customer_id, client_type } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campo email é obrigatório',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const contactWebhookService = require('../services/contactWebhookService');
+
+    if (!contactWebhookService.isConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'CONTACTS_WEBHOOK_URL (saída) não configurado',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Idempotência: mesma janela do create-single
+    const emailKey = String(email).trim().toLowerCase();
+    const nowTs = Date.now();
+    const lastTs = __inFlightCreateByEmail.get(emailKey) || 0;
+    if (emailKey && nowTs - lastTs < IDEMPOTENCY_WINDOW_MS) {
+      console.log(`⏭️ [Webhook Entrada] Duplicata ignorada (${emailKey})`);
+      return res.status(202).json({
+        success: true,
+        skipped: true,
+        reason: 'duplicate within 15s',
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (emailKey) {
+      __inFlightCreateByEmail.set(emailKey, nowTs);
+      setTimeout(() => __inFlightCreateByEmail.delete(emailKey), IDEMPOTENCY_WINDOW_MS);
+    }
+
+    console.log(`   📋 email=${emailKey}, client_type=${client_type || 'não informado'}, customer_id=${customer_id ? 'sim' : 'não'}`);
+
+    // Encaminha para o webhook de saída
+    const result = await contactWebhookService.sendContact({ ...req.body }, {
+      maxRetries: 3,
+      retryDelay: 1000
+    });
+
+    if (result.success) {
+      console.log(`✅ [Webhook Entrada] Contato encaminhado com sucesso (id=${result.contactId})`);
+      return res.status(201).json({
+        success: true,
+        message: 'Contato recebido e encaminhado com sucesso',
+        contactId: result.contactId,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.error(`❌ [Webhook Entrada] Falha ao encaminhar contato:`, result.error);
+    return res.status(result.status || 500).json({
+      success: false,
+      error: result.error,
+      errorType: result.errorType,
+      retryable: result.retryable,
+      contactId: result.contactId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ [Webhook Entrada] Erro interno:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
       timestamp: new Date().toISOString()
     });
   }
