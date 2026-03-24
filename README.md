@@ -152,25 +152,37 @@ EMARSYS_ORDERS_API_TIMEOUT=60000
 
 ## Fluxo de Contatos
 
-### Processo (tempo real + retry automático)
+### Arquitetura de Webhooks (entrada + saída)
 
 ```
 VTEX Master Data (cliente criado/atualizado)
   │
-  └─ POST /api/emarsys/contacts/create-single
+  └─ POST <ngrok-entrada>/api/emarsys/contacts/webhook    ← Webhook de ENTRADA
        │
-       ├─ Valida e normaliza dados (CPF, telefone, gênero, opt-in)
-       ├─ Gera customer_id: base64(md5(cpf ou email))
+       ├─ Valida email obrigatório
+       ├─ Idempotência (ignora duplicatas em janela de 15s)
        ├─ Persiste no SQLite (status: pending)
-       ├─ Envia via HTTP POST para webhook externo
-       │   ├─ Sucesso → status: sent
-       │   └─ Falha → status: failed
        │
-       └─ Cron (5min) reprocessa contatos com falha
-            ├─ Backoff exponencial: attempts * 2 min (2, 4, 6, 8, 10 min)
-            ├─ Max 5 tentativas por contato
-            ├─ Sucesso → status: sent
-            └─ Excedeu limite → status: dead (alerta crítico)
+       └─ POST <CONTACTS_WEBHOOK_URL>/sync                 ← Webhook de SAÍDA
+            │
+            ├─ Sucesso → status: sent no SQLite
+            └─ Falha → status: failed no SQLite
+                 │
+                 └─ Cron (a cada 5min) reprocessa contatos failed
+                      ├─ Backoff exponencial: attempts * 2 min
+                      ├─ Máx 5 tentativas por contato
+                      ├─ Sucesso → sent
+                      └─ Excedeu limite → dead (alerta crítico)
+```
+
+**Webhook de ENTRADA** — endpoint exposto via ngrok para a VTEX chamar:
+```
+POST https://<seu-ngrok>.ngrok-free.app/api/emarsys/contacts/webhook
+```
+
+**Webhook de SAÍDA** — destino externo configurado no `.env`:
+```
+POST ${CONTACTS_WEBHOOK_URL}
 ```
 
 ### Monitoramento de Contatos
@@ -190,37 +202,66 @@ Resposta:
 
 ### Payload do Webhook
 
+A VTEX envia o payload já no formato padronizado. O `client_type` distingue entre ambientes (hope/resort).
+
 ```json
 {
-  "customer_id": "base64(md5(cpf_or_email))",
+  "customer_id": "NDI1NzAzOTk4MTc=",
   "client_type": "hope",
   "email": "cliente@email.com",
-  "cpf": "12345678900",
-  "bday": "1990-05-15",
-  "first_name": "João",
-  "last_name": "Silva",
-  "phone": "+5511999999999",
-  "mobile": "+5511888888888",
-  "gender": "masculino|feminino|outro",
-  "address": "Rua Example, 123",
+  "cpf": "42570399817",
+  "first_name": "Gabriel",
+  "last_name": "Lima",
+  "phone": "+551133334444",
+  "mobile": "+5511999998888",
+  "gender": "M",
+  "address": "Avenida Paulista, 1000",
   "city": "São Paulo",
   "state": "SP",
-  "country": "Brasil",
-  "postal_code": "01001000",
-  "opt_in": true,
-  "registration_data": "2024-01-15T10:30:00.000Z"
+  "country": 31,
+  "postal_code": "01310-100",
+  "opt_in": true
 }
 ```
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `customer_id` | string | Identificador único do cliente (base64) |
+| `client_type` | string | Ambiente: `"hope"` ou `"resort"` |
+| `email` | string | Email do cliente (obrigatório) |
+| `cpf` | string | CPF somente dígitos |
+| `first_name` | string | Primeiro nome |
+| `last_name` | string | Sobrenome |
+| `phone` | string | Telefone fixo com +55 |
+| `mobile` | string | Celular com +55 |
+| `gender` | string | `"M"` ou `"F"` |
+| `address` | string | Endereço completo |
+| `city` | string | Cidade |
+| `state` | string | UF (2 letras) |
+| `country` | number | Código do país (31 = Brasil) |
+| `postal_code` | string | CEP |
+| `opt_in` | boolean | Aceite de comunicação |
 
 ### Configuração do Webhook
 
 ```env
-CONTACTS_WEBHOOK_URL=
+# Webhook de saída (destino externo)
+CONTACTS_WEBHOOK_URL=https://exemplo.ngrok-free.dev/sync
 CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 CONTACTS_WEBHOOK_AUTH_HEADER=
 CONTACTS_WEBHOOK_TIMEOUT=30000
 CONTACTS_RETRY_CRON=*/5 * * * *
 ```
+
+### Webhook Simulator (desenvolvimento)
+
+Em ambiente de desenvolvimento (`NODE_ENV !== 'production'`), um simulador de webhook está disponível para testar o fluxo sem depender do serviço externo:
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| POST | `/api/webhook-simulator/contacts` | Recebe contatos (simula destino externo) |
+| GET | `/api/webhook-simulator/contacts` | Lista contatos recebidos |
+| DELETE | `/api/webhook-simulator/contacts` | Limpa logs do simulador |
 
 ## Instalação
 
@@ -333,10 +374,10 @@ Veja `.env.example` para a lista completa de variáveis.
 
 | Método | Endpoint | Descrição |
 |---|---|---|
-| POST | `/api/emarsys/contacts/create-single` | Cria contato (webhook da VTEX) |
-| POST | `/api/emarsys/contacts/create` | Cria contato manual |
-| POST | `/api/emarsys/contacts/send` | Busca e envia contatos em lote |
-| POST | `/api/emarsys/contacts/extract-recent` | Extrai contatos recentes |
+| POST | `/api/emarsys/contacts/webhook` | Webhook de entrada (VTEX → nós → saída) |
+| POST | `/api/emarsys/contacts/create-single` | Cria contato manual (Postman/teste) |
+| POST | `/api/emarsys/contacts/create` | Cria contato (formato legado) |
+| POST | `/api/emarsys/contacts/extract-recent` | Extrai contatos recentes da VTEX |
 
 ### Monitoramento
 
@@ -421,9 +462,11 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 
 - [x] ~~Definir URL da API de pedidos~~ — configurado (Scarab Research HAPI)
 - [x] ~~Definir payload/CSV de pedidos~~ — 12 campos definidos
+- [x] ~~Webhook de entrada para VTEX~~ — `/api/emarsys/contacts/webhook` + ngrok
+- [x] ~~Payload padronizado de contatos~~ — gender M/F, country numérico, client_type hope/resort
+- [x] ~~Webhook de saída configurado~~ — `CONTACTS_WEBHOOK_URL` com retry automático
 - [ ] Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)
 - [ ] Configurar credenciais SFTP de produtos **Hope Resort**
-- [ ] Configurar URL do webhook de contatos (`CONTACTS_WEBHOOK_URL`)
 - [ ] Configurar ambiente VTEX Hope Resort
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
 
