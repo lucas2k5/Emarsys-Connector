@@ -1164,8 +1164,8 @@ class OrdersSyncService {
       // Se autoSend estiver habilitado, envia o CSV e marca como sincronizado
       if (options.autoSend === true) {
         try {
-          const emarsysSalesService = require('./emarsysSalesService');
-          const sendResult = await emarsysSalesService.sendCsvFileToEmarsys(filename);
+          const emarsysOrdersApiService = require('./emarsysOrdersApiService');
+          const sendResult = await emarsysOrdersApiService.sendCsvToApi(filePath);
           
           if (sendResult.success) {
             // Marca pedidos como sincronizados
