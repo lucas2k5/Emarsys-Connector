@@ -76,12 +76,14 @@ class EmarsysOAuth2Service {
 
     try {
       const response = await axios.post(this.tokenEndpoint, new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: this.clientId,
-        client_secret: this.clientSecret
+        grant_type: 'client_credentials'
       }).toString(), {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        auth: {
+          username: this.clientId,
+          password: this.clientSecret
         },
         timeout: 15000
       });

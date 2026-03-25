@@ -213,9 +213,9 @@ class EmarsysOrdersApiService {
 
         const response = await axios.post(this.apiUrl, csvBuffer, {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `bearer ${token}`,
             'Content-Type': 'text/csv',
-            'Accept': 'application/json'
+            'Accept': 'text/plain'
           },
           timeout: this.timeout,
           maxBodyLength: Infinity,
