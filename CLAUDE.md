@@ -22,7 +22,7 @@
 
 **Versão atual:** 1.13.0
 **Repositório:** `https://dev.azure.com/gabrielaraujo-openflow/Hope/_git/Emarsys-Connector`
-**Desenvolvido por:** Lucas Fernandes — O Consultor Mais Rápido do Oeste
+**Desenvolvido por:** Lucas Fernandes - Openflow - Tech Lead SAP
 
 ### Fluxos principais
 
