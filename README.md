@@ -509,4 +509,4 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 
 ---
 
-Desenvolvido por Openflow
+Desenvolvido por Lucas Fernandes — O Consultor Mais Rápido do Oeste
