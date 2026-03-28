@@ -502,7 +502,7 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Payload padronizado de contatos~~ — gender M/F, country numérico, client_type hope/resort
 - [x] ~~Webhook de saída configurado~~ — `CONTACTS_WEBHOOK_URL` com retry automático
 - [x] ~~Filas de retry separadas por client_type~~ — hope e resort com URLs independentes
-- [ ] Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)
+- [x] ~~Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)~~ — integrado via `autoSend: true` em `ordersSyncService.syncOrders`
 - [ ] Configurar credenciais SFTP de produtos **Hope Resort**
 - [ ] Configurar ambiente VTEX Hope Resort
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)

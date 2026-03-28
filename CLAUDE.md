@@ -616,7 +616,7 @@ POST /api/cron-management/restart-all
 
 ## Pendências Abertas
 
-- [ ] Integrar `emarsysOrdersApiService` no cron de pedidos (substituir fluxo SFTP legado)
+- [x] ~~Integrar `emarsysOrdersApiService` no cron de pedidos (substituir fluxo SFTP legado)~~ — integrado via `autoSend: true` em `ordersSyncService.syncOrders`
 - [ ] Configurar credenciais SFTP de produtos **Hope Resort**
 - [ ] Configurar ambiente VTEX **Hope Resort** (conta, app key/token)
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
