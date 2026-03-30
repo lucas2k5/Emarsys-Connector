@@ -146,15 +146,16 @@ async function handleCronOrders(req, res) {
      params,
      paramsKeys: Object.keys(params)
    });
-   const { 
-      maxOrders = 0, 
-      dateFrom, 
-      dateTo, 
-      startDate, 
-      toDate, 
-      brazilianDate, 
-      startTime, 
-      endTime 
+   const {
+      maxOrders = 0,
+      dateFrom,
+      dateTo,
+      startDate,
+      toDate,
+      brazilianDate,
+      startTime,
+      endTime,
+      store
     } = params;
     
     console.error('🔍 [Background] Parâmetros extraídos:', {
@@ -166,6 +167,7 @@ async function handleCronOrders(req, res) {
       brazilianDate,
       startTime,
       endTime,
+      store: store || 'hope',
       hasBrazilianDate: !!brazilianDate,
       hasStartTime: !!startTime,
       hasEndTime: !!endTime
@@ -392,14 +394,16 @@ async function handleCronOrders(req, res) {
           endTime
         });
         const OrdersSyncService = require('../services/ordersSyncService');
-        const ordersSyncService = new OrdersSyncService();
-        const result = await ordersSyncService.syncOrders({ 
-          maxOrders: maxOrdersNum, 
-          dataInicial: finalStartDate, 
+        const resolvedStore = store || 'hope';
+        const ordersSyncService = new OrdersSyncService(resolvedStore);
+        const result = await ordersSyncService.syncOrders({
+          maxOrders: maxOrdersNum,
+          dataInicial: finalStartDate,
           dataFinal: finalToDate,
           brazilianDate: brazilianDate,
           startTime: startTime,
-          endTime: endTime
+          endTime: endTime,
+          store: resolvedStore
         });
         console.log('✅ [Background] Resultado do syncOrders:', {
           success: result.success,

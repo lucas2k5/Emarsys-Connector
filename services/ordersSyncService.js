@@ -12,18 +12,30 @@ require('dotenv').config();
  * Consolida funcionalidades de busca VTEX, armazenamento SQLite e geração de CSV
  */
 class OrdersSyncService {
-  constructor() {
+  constructor(store = 'hope') {
+    this.store = store;
+
     // Configuração do cliente VTEX
+    // Para pedidos Resort, usa credenciais específicas se disponíveis
+    const appKey = (store === 'resort' && process.env.VTEX_APP_KEY_RESORT_ORDERS)
+      ? process.env.VTEX_APP_KEY_RESORT_ORDERS
+      : process.env.VTEX_APP_KEY;
+    const appToken = (store === 'resort' && process.env.VTEX_APP_TOKEN_RESORT_ORDERS)
+      ? process.env.VTEX_APP_TOKEN_RESORT_ORDERS
+      : process.env.VTEX_APP_TOKEN;
+
     const headers = {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
-      'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-      'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+      'X-VTEX-API-AppKey': appKey,
+      'X-VTEX-API-AppToken': appToken
     };
-    
-    const baseURL = process.env.VTEX_BASE_URL;
+
+    const baseURL = (store === 'resort' && process.env.VTEX_BASE_URL_RESORT_ORDERS)
+      ? process.env.VTEX_BASE_URL_RESORT_ORDERS
+      : process.env.VTEX_BASE_URL;
     if (!baseURL) {
-      throw new Error('VTEX_BASE_URL não configurada');
+      throw new Error(`VTEX_BASE_URL não configurada para store: ${store}`);
     }
     
     this.client = rateLimit(axios.create({
@@ -1164,7 +1176,8 @@ class OrdersSyncService {
       // Se autoSend estiver habilitado, envia o CSV e marca como sincronizado
       if (options.autoSend === true) {
         try {
-          const emarsysOrdersApiService = require('./emarsysOrdersApiService');
+          const EmarsysOrdersApiService = require('./emarsysOrdersApiService');
+          const emarsysOrdersApiService = new EmarsysOrdersApiService(options.store || this.store || 'hope');
           const sendResult = await emarsysOrdersApiService.sendCsvToApi(filePath);
           
           if (sendResult.success) {
@@ -1504,6 +1517,7 @@ class OrdersSyncService {
         csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
           ...options,
           autoSend: true,
+          store: this.store,
           startDate: options.dataInicial,
           endDate: options.dataFinal,
           brazilianDate: options.brazilianDate,

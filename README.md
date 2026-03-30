@@ -517,8 +517,11 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)~~ — integrado via `autoSend: true` em `ordersSyncService.syncOrders`
 - [x] ~~Configurar credenciais SFTP de produtos **Hope Resort**~~ — configurado (`SFTP_PRODUCTS_*_RESORT`)
 - [x] ~~Suporte multi-ambiente no sync de produtos~~ — `store: hope | resort` com `getStoreConfig()`, cron dispara ambos automaticamente
-- [ ] Configurar credenciais VTEX **Hope** (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
-- [ ] Configurar credenciais VTEX **Hope Resort** (`VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT`)
+- [x] ~~Suporte multi-ambiente no sync de pedidos (hope/resort)~~ — `store: hope | resort` em `ordersSyncService`, `emarsysOrdersApiService` e cron
+- [ ] Configurar credenciais VTEX **Hope** produtos (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
+- [ ] Configurar credenciais VTEX **Hope Resort** produtos (`VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT`)
+- [ ] Configurar credenciais VTEX **Hope** pedidos (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
+- [ ] Configurar credenciais VTEX **Hope Resort** pedidos (`VTEX_BASE_URL_RESORT_ORDERS`, `VTEX_APP_KEY_RESORT_ORDERS`, `VTEX_APP_TOKEN_RESORT_ORDERS`)
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
 
 ---

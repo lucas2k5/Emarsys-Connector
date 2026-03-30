@@ -1,8 +1,8 @@
 /**
- * Serviço de envio de pedidos para Emarsys via Sales Data API (OAuth2).
+ * Serviço de envio de pedidos para Emarsys via Sales Data API.
  *
  * Envia um arquivo CSV como binary para a API HAPI/Scarab Research.
- * Autenticação via OAuth2 client_credentials (EmarsysOAuth2Service).
+ * Autenticação via OAuth2 client_credentials (store=hope) ou token fixo (store=resort).
  *
  * Endpoint: POST https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
  * Content-Type: text/csv (binary upload)
@@ -11,9 +11,13 @@
  * item, price, order, timestamp, customer, quantity,
  * s_sales_channel, s_store_id, s_canal, s_loja, s_tipo_pagamento, s_cupom
  *
- * Variáveis de ambiente:
+ * Variáveis de ambiente (Hope — OAuth2):
  * - EMARSYS_ORDERS_API_URL — endpoint completo da API
  * - EMARSYS_ORDERS_API_TIMEOUT — timeout em ms (padrão: 60000)
+ *
+ * Variáveis de ambiente (Resort — token fixo):
+ * - EMARSYS_ORDERS_API_URL_RESORT — endpoint completo da API Resort
+ * - EMARSYS_ORDERS_BEARER_TOKEN_RESORT — bearer token estático Resort
  */
 const axios = require('axios');
 const fs = require('fs').promises;
@@ -40,15 +44,27 @@ const CSV_HEADERS = [
 ];
 
 class EmarsysOrdersApiService {
-  constructor() {
-    this.apiUrl = process.env.EMARSYS_ORDERS_API_URL || '';
+  constructor(store = 'hope') {
+    this.store = store;
+
+    if (store === 'resort') {
+      this.apiUrl = process.env.EMARSYS_ORDERS_API_URL_RESORT || '';
+      this.bearerToken = process.env.EMARSYS_ORDERS_BEARER_TOKEN_RESORT || '';
+      this.useFixedToken = true;
+    } else {
+      this.apiUrl = process.env.EMARSYS_ORDERS_API_URL || '';
+      this.bearerToken = null;
+      this.useFixedToken = false;
+    }
+
     this.timeout = parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000;
     this.maxRetries = 3;
 
     if (!this.apiUrl) {
-      console.warn('⚠️ [EmarsysOrdersAPI] EMARSYS_ORDERS_API_URL não configurado. Endpoint de pedidos pendente.');
+      console.warn(`⚠️ [EmarsysOrdersAPI][${store}] URL da API não configurada. Endpoint de pedidos pendente.`);
     } else {
-      console.log('✅ [EmarsysOrdersAPI] Configurado para:', this.apiUrl);
+      const authMode = this.useFixedToken ? 'token fixo' : 'OAuth2';
+      console.log(`✅ [EmarsysOrdersAPI][${store}] Configurado para: ${this.apiUrl} (auth: ${authMode})`);
     }
   }
 
@@ -57,6 +73,9 @@ class EmarsysOrdersApiService {
    * @returns {boolean}
    */
   isConfigured() {
+    if (this.useFixedToken) {
+      return !!(this.apiUrl && this.bearerToken);
+    }
     return !!(this.apiUrl && emarsysOAuth2Service.isConfigured());
   }
 
@@ -186,7 +205,7 @@ class EmarsysOrdersApiService {
     if (!this.isConfigured()) {
       return {
         success: false,
-        error: 'Serviço não configurado. Verifique EMARSYS_ORDERS_API_URL e credenciais OAuth2.',
+        error: `Serviço [${this.store}] não configurado. Verifique URL e credenciais.`,
         errorType: 'CONFIG_ERROR'
       };
     }
@@ -204,11 +223,17 @@ class EmarsysOrdersApiService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        const token = await emarsysOAuth2Service.getAccessToken();
+        let token;
+        if (this.useFixedToken) {
+          token = this.bearerToken;
+        } else {
+          token = await emarsysOAuth2Service.getAccessToken();
+        }
 
-        logHelpers.logOrders('info', `[EmarsysOrdersAPI] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
+        logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
           size: `${(csvBuffer.length / 1024).toFixed(2)} KB`,
-          lines: csvContent.split('\n').filter(l => l.trim()).length - 1
+          lines: csvContent.split('\n').filter(l => l.trim()).length - 1,
+          store: this.store
         });
 
         const response = await axios.post(this.apiUrl, csvBuffer, {
@@ -222,25 +247,27 @@ class EmarsysOrdersApiService {
           maxContentLength: Infinity
         });
 
-        logHelpers.logOrders('info', `[EmarsysOrdersAPI] CSV enviado com sucesso (status: ${response.status})`, {
+        logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] CSV enviado com sucesso (status: ${response.status})`, {
           status: response.status,
-          data: response.data
+          data: response.data,
+          store: this.store
         });
 
         return {
           success: true,
           data: response.data,
           status: response.status,
-          attempts: attempt
+          attempts: attempt,
+          store: this.store
         };
       } catch (error) {
         lastError = error;
         const status = error.response?.status;
         const data = error.response?.data;
 
-        // Se 401, invalidar token e tentar novamente
-        if (status === 401 && attempt < this.maxRetries) {
-          logger.warn('[EmarsysOrdersAPI] Token expirado, renovando...');
+        // Se 401, só invalidar token OAuth2 se não for token fixo
+        if (status === 401 && attempt < this.maxRetries && !this.useFixedToken) {
+          logger.warn(`[EmarsysOrdersAPI][${this.store}] Token OAuth2 expirado, renovando...`);
           emarsysOAuth2Service.invalidateToken();
           continue;
         }
@@ -253,7 +280,8 @@ class EmarsysOrdersApiService {
           maxRetries: this.maxRetries,
           status,
           responseData: data,
-          retryable: isRetryable
+          retryable: isRetryable,
+          store: this.store
         });
 
         if (!isRetryable) {
@@ -263,7 +291,8 @@ class EmarsysOrdersApiService {
             status,
             data,
             retryable: false,
-            attempts: attempt
+            attempts: attempt,
+            store: this.store
           };
         }
 
@@ -276,9 +305,10 @@ class EmarsysOrdersApiService {
 
     return {
       success: false,
-      error: `Falha após ${this.maxRetries} tentativas: ${lastError.message}`,
+      error: `[${this.store}] Falha após ${this.maxRetries} tentativas: ${lastError.message}`,
       retryable: true,
-      attempts: this.maxRetries
+      attempts: this.maxRetries,
+      store: this.store
     };
   }
 
@@ -301,7 +331,7 @@ class EmarsysOrdersApiService {
       return { success: true, total: 0, message: 'Nenhum pedido para enviar' };
     }
 
-    logHelpers.logOrders('info', `[EmarsysOrdersAPI] Iniciando fluxo completo: ${orders.length} pedidos`);
+    logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Iniciando fluxo completo: ${orders.length} pedidos`, { store: this.store });
 
     // 1. Gerar CSV
     const csvResult = await this.generateAndSaveCsv(orders, options);
@@ -336,21 +366,34 @@ class EmarsysOrdersApiService {
       };
     }
 
-    logHelpers.logOrders('info', `[EmarsysOrdersAPI] Enviando arquivo CSV: ${path.basename(filePath)}`);
+    logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando arquivo CSV: ${path.basename(filePath)}`, { store: this.store });
     return this.sendCsvToApi(filePath);
   }
 
   /**
-   * Testa conectividade com a API (obtém token OAuth2)
+   * Testa conectividade com a API
+   * - Hope: valida token OAuth2
+   * - Resort: valida presença do token fixo e URL
    * @returns {Promise<Object>}
    */
   async testConnection() {
-    if (!emarsysOAuth2Service.isConfigured()) {
-      return { success: false, error: 'OAuth2 não configurado', configured: false };
+    if (!this.apiUrl) {
+      return { success: false, error: `[${this.store}] URL da API não configurada`, configured: false, store: this.store };
     }
 
-    if (!this.apiUrl) {
-      return { success: false, error: 'EMARSYS_ORDERS_API_URL não configurado', configured: false };
+    if (this.useFixedToken) {
+      return {
+        success: !!(this.apiUrl && this.bearerToken),
+        configured: !!(this.apiUrl && this.bearerToken),
+        apiUrl: this.apiUrl,
+        store: this.store,
+        authMode: 'fixed-token',
+        csvHeaders: CSV_HEADERS
+      };
+    }
+
+    if (!emarsysOAuth2Service.isConfigured()) {
+      return { success: false, error: 'OAuth2 não configurado', configured: false, store: this.store };
     }
 
     try {
@@ -360,16 +403,19 @@ class EmarsysOrdersApiService {
         configured: true,
         apiUrl: this.apiUrl,
         csvHeaders: CSV_HEADERS,
+        store: this.store,
+        authMode: 'oauth2',
         oauth2: oauth2Test
       };
     } catch (error) {
       return {
         success: false,
         configured: true,
-        error: error.message
+        error: error.message,
+        store: this.store
       };
     }
   }
 }
 
-module.exports = new EmarsysOrdersApiService();
+module.exports = EmarsysOrdersApiService;

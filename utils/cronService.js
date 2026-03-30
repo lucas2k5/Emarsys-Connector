@@ -236,30 +236,33 @@ class CronService {
       });
       
       try {
-        // POST para rota de background job (responde imediatamente com jobId)
-        const response = await axios.post(url, payload, { 
-          timeout: 10000, // timeout curto pois a rota responde imediatamente
+        const timeout = 10000; // timeout curto pois a rota responde imediatamente
+
+        // Hope (sempre)
+        const hopeResponse = await axios.post(url, { ...payload, store: 'hope' }, {
+          timeout,
           headers: { 'Content-Type': 'application/json' }
         });
-        
-        if (response.data && response.data.success) {
-          const jobId = response.data.jobId;
-          logHelpers.logOrders('info', '✅ Job de sincronização de orders criado com sucesso', {
+
+        if (hopeResponse.data && hopeResponse.data.success) {
+          const jobId = hopeResponse.data.jobId;
+          logHelpers.logOrders('info', '✅ [hope] Job de sincronização de orders criado com sucesso', {
             jobId,
-            checkStatusUrl: response.data.checkStatus,
-            status: response.status
+            checkStatusUrl: hopeResponse.data.checkStatus,
+            status: hopeResponse.status,
+            store: 'hope'
           });
-          
-          console.log(`✅ [CRON] Job criado: ${jobId}`);
-          console.log(`   📊 Acompanhe em: ${this.baseUrl}${response.data.checkStatus}`);
-          
+
+          console.log(`✅ [CRON][hope] Job criado: ${jobId}`);
+          console.log(`   📊 Acompanhe em: ${this.baseUrl}${hopeResponse.data.checkStatus}`);
+
           // Exibir previsão da próxima execução
           if (nextExecution) {
             const nextDate = moment(nextExecution.nextExecution).tz('America/Sao_Paulo');
             const nextDateFormatted = nextDate.format('DD/MM/YYYY [às] HH:mm:ss');
-            
+
             console.log(`⏰ [CRON] O próximo cron de pedidos será executado dia ${nextDateFormatted}`);
-            
+
             logHelpers.logOrders('info', '⏰ Previsão da próxima extração', {
               nextExecution: nextExecution.nextExecution,
               nextExecutionFormatted: nextDateFormatted,
@@ -271,10 +274,44 @@ class CronService {
             });
           }
         }
-        
+
+        // Resort (só se credenciais VTEX de pedidos estiverem configuradas)
+        if (process.env.VTEX_BASE_URL_RESORT_ORDERS && process.env.VTEX_APP_KEY_RESORT_ORDERS) {
+          logHelpers.logOrders('info', '🚀 [resort] Iniciando sincronização de orders via CRON', {
+            endpoint: url,
+            store: 'resort'
+          });
+
+          try {
+            const resortResponse = await axios.post(url, { ...payload, store: 'resort' }, {
+              timeout,
+              headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (resortResponse.data && resortResponse.data.success) {
+              logHelpers.logOrders('info', '✅ [resort] Job de sincronização de orders criado com sucesso', {
+                jobId: resortResponse.data.jobId,
+                checkStatusUrl: resortResponse.data.checkStatus,
+                status: resortResponse.status,
+                store: 'resort'
+              });
+              console.log(`✅ [CRON][resort] Job criado: ${resortResponse.data.jobId}`);
+            }
+          } catch (resortError) {
+            logHelpers.logOrdersError(resortError, {
+              serviceName: 'orders-sync-resort',
+              store: 'resort',
+              endpoint: url,
+              cronExpression: this.ordersSyncCron
+            });
+          }
+        } else {
+          logHelpers.logOrders('info', '⏭️ [resort] Sync Resort de orders ignorado — VTEX_BASE_URL_RESORT_ORDERS ou VTEX_APP_KEY_RESORT_ORDERS não configurados');
+        }
+
         // Resetar contador de crashes em caso de sucesso
         crashProtection.resetCrashCount(serviceName);
-        
+
       } catch (error) {
         // Log específico para orders com contexto detalhado
         logHelpers.logOrdersError(error, {
