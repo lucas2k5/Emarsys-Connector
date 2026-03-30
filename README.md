@@ -167,17 +167,28 @@ O arquivo CSV é enviado como binary para a API Scarab Research (HAPI). Campos n
 | `s_tipo_pagamento` | Tipo de pagamento | VTEX |
 | `s_cupom` | Cupom/desconto | VTEX |
 
-### Autenticação OAuth2
+### Autenticação OAuth2 (multi-ambiente)
 
-O envio de pedidos utiliza OAuth2 com fluxo `client_credentials`. O token é obtido automaticamente e mantido em cache com renovação antes da expiração.
+O envio de pedidos utiliza OAuth2 com fluxo `client_credentials`. O token é obtido automaticamente e mantido em cache com renovação antes da expiração. Cada ambiente (hope/resort) tem suas próprias credenciais e endpoint.
 
+**Hope:**
 ```env
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_HOPE}/sales-data/api
 EMARSYS_ORDERS_API_TIMEOUT=60000
 ```
+
+**Hope Resort:**
+```env
+EMARSYS_OAUTH2_CLIENT_ID_RESORT=
+EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
+```
+
+> O token é obtido via `POST {TOKEN_ENDPOINT}` com `grant_type=client_credentials` e `ClientID:ClientSecret` em Basic Auth. O `emarsysOAuth2Service` instancia um contexto por store com cache e renovação independentes.
 
 ## Fluxo de Contatos
 
@@ -372,11 +383,17 @@ SFTP_PRODUCTS_USERNAME=
 SFTP_PRODUCTS_PASSWORD=
 SFTP_PRODUCTS_REMOTE_PATH=/catalog/
 
-# OAuth2 Pedidos (API)
+# OAuth2 Pedidos - Hope
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
 EMARSYS_ORDERS_API_URL=
+
+# OAuth2 Pedidos - Hope Resort
+EMARSYS_OAUTH2_CLIENT_ID_RESORT=
+EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
 
 # Webhook Contatos
 CONTACTS_WEBHOOK_URL=
