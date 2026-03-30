@@ -2,7 +2,7 @@
  * Serviço de envio de pedidos para Emarsys via Sales Data API.
  *
  * Envia um arquivo CSV como binary para a API HAPI/Scarab Research.
- * Autenticação via OAuth2 client_credentials (store=hope) ou token fixo (store=resort).
+ * Autenticação via OAuth2 client_credentials (mesmas credenciais para hope e resort).
  *
  * Endpoint: POST https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
  * Content-Type: text/csv (binary upload)
@@ -11,13 +11,13 @@
  * item, price, order, timestamp, customer, quantity,
  * s_sales_channel, s_store_id, s_canal, s_loja, s_tipo_pagamento, s_cupom
  *
- * Variáveis de ambiente (Hope — OAuth2):
- * - EMARSYS_ORDERS_API_URL — endpoint completo da API
+ * Variáveis de ambiente (Hope):
+ * - EMARSYS_ORDERS_API_URL — endpoint completo da API Hope
  * - EMARSYS_ORDERS_API_TIMEOUT — timeout em ms (padrão: 60000)
  *
- * Variáveis de ambiente (Resort — token fixo):
+ * Variáveis de ambiente (Resort):
  * - EMARSYS_ORDERS_API_URL_RESORT — endpoint completo da API Resort
- * - EMARSYS_ORDERS_BEARER_TOKEN_RESORT — bearer token estático Resort
+ * (OAuth2: mesmas credenciais EMARSYS_OAUTH2_CLIENT_ID / EMARSYS_OAUTH2_CLIENT_SECRET)
  */
 const axios = require('axios');
 const fs = require('fs').promises;
@@ -47,15 +47,9 @@ class EmarsysOrdersApiService {
   constructor(store = 'hope') {
     this.store = store;
 
-    if (store === 'resort') {
-      this.apiUrl = process.env.EMARSYS_ORDERS_API_URL_RESORT || '';
-      this.bearerToken = process.env.EMARSYS_ORDERS_BEARER_TOKEN_RESORT || '';
-      this.useFixedToken = true;
-    } else {
-      this.apiUrl = process.env.EMARSYS_ORDERS_API_URL || '';
-      this.bearerToken = null;
-      this.useFixedToken = false;
-    }
+    this.apiUrl = store === 'resort'
+      ? (process.env.EMARSYS_ORDERS_API_URL_RESORT || '')
+      : (process.env.EMARSYS_ORDERS_API_URL || '');
 
     this.timeout = parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000;
     this.maxRetries = 3;
@@ -63,8 +57,7 @@ class EmarsysOrdersApiService {
     if (!this.apiUrl) {
       console.warn(`⚠️ [EmarsysOrdersAPI][${store}] URL da API não configurada. Endpoint de pedidos pendente.`);
     } else {
-      const authMode = this.useFixedToken ? 'token fixo' : 'OAuth2';
-      console.log(`✅ [EmarsysOrdersAPI][${store}] Configurado para: ${this.apiUrl} (auth: ${authMode})`);
+      console.log(`✅ [EmarsysOrdersAPI][${store}] Configurado para: ${this.apiUrl} (auth: OAuth2)`);
     }
   }
 
@@ -73,9 +66,6 @@ class EmarsysOrdersApiService {
    * @returns {boolean}
    */
   isConfigured() {
-    if (this.useFixedToken) {
-      return !!(this.apiUrl && this.bearerToken);
-    }
     return !!(this.apiUrl && emarsysOAuth2Service.isConfigured());
   }
 
@@ -223,12 +213,7 @@ class EmarsysOrdersApiService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        let token;
-        if (this.useFixedToken) {
-          token = this.bearerToken;
-        } else {
-          token = await emarsysOAuth2Service.getAccessToken();
-        }
+        const token = await emarsysOAuth2Service.getAccessToken();
 
         logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
           size: `${(csvBuffer.length / 1024).toFixed(2)} KB`,
@@ -265,8 +250,8 @@ class EmarsysOrdersApiService {
         const status = error.response?.status;
         const data = error.response?.data;
 
-        // Se 401, só invalidar token OAuth2 se não for token fixo
-        if (status === 401 && attempt < this.maxRetries && !this.useFixedToken) {
+        // Se 401, invalidar token OAuth2 e tentar novamente
+        if (status === 401 && attempt < this.maxRetries) {
           logger.warn(`[EmarsysOrdersAPI][${this.store}] Token OAuth2 expirado, renovando...`);
           emarsysOAuth2Service.invalidateToken();
           continue;
@@ -371,25 +356,12 @@ class EmarsysOrdersApiService {
   }
 
   /**
-   * Testa conectividade com a API
-   * - Hope: valida token OAuth2
-   * - Resort: valida presença do token fixo e URL
+   * Testa conectividade com a API via OAuth2
    * @returns {Promise<Object>}
    */
   async testConnection() {
     if (!this.apiUrl) {
       return { success: false, error: `[${this.store}] URL da API não configurada`, configured: false, store: this.store };
-    }
-
-    if (this.useFixedToken) {
-      return {
-        success: !!(this.apiUrl && this.bearerToken),
-        configured: !!(this.apiUrl && this.bearerToken),
-        apiUrl: this.apiUrl,
-        store: this.store,
-        authMode: 'fixed-token',
-        csvHeaders: CSV_HEADERS
-      };
     }
 
     if (!emarsysOAuth2Service.isConfigured()) {
