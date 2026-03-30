@@ -62,7 +62,9 @@ class EmarsysOrdersApiService {
         })
       : emarsysOAuth2Singleton;
 
-    this.timeout = parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000;
+    this.timeout = store === 'resort'
+      ? (parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT_RESORT) || parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000)
+      : (parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000);
     this.maxRetries = 3;
 
     if (!this.apiUrl) {

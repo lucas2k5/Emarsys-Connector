@@ -186,6 +186,7 @@ EMARSYS_OAUTH2_CLIENT_ID_RESORT=
 EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
 EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
 ```
 
 > O token é obtido via `POST {TOKEN_ENDPOINT}` com `grant_type=client_credentials` e `ClientID:ClientSecret` em Basic Auth. O `emarsysOAuth2Service` instancia um contexto por store com cache e renovação independentes.
@@ -394,6 +395,7 @@ EMARSYS_OAUTH2_CLIENT_ID_RESORT=
 EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
 EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
 
 # Webhook Contatos
 CONTACTS_WEBHOOK_URL=
