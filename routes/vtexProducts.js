@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const vtexProductService = require('../services/vtexProductService');
+const VtexProductService = require('../services/vtexProductService');
+
+// Instância padrão (hope) para endpoints que não recebem parâmetro store
+const vtexProductService = new VtexProductService('hope');
 
 
 /**
@@ -266,16 +269,17 @@ router.get('/', async (req, res) => {
  */
 router.post('/sync', async (req, res) => {
   try {
-    console.log(`🚀 Iniciando sincronização de produtos em background`);
-    const { maxProducts = 0, forceRefresh = false, batchSize = 50 } = req.body || {};
-    const jobId = `sync-products-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+    const { maxProducts = 0, forceRefresh = false, batchSize = 50, store: storeParam } = req.body || {};
+    const store = storeParam || req.query?.store || 'hope';
+    console.log(`🚀 Iniciando sincronização de produtos em background [store: ${store}]`);
+    const jobId = `sync-products-${store}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     if (!global.jobStatus) {
       global.jobStatus = new Map();
     }
-    
+
     const jobStatus = global.jobStatus;
-    
+
     // Inicializar status do job
     jobStatus.set(jobId, {
       id: jobId,
@@ -283,9 +287,9 @@ router.post('/sync', async (req, res) => {
       status: 'starting',
       progress: 0,
       startTime: new Date().toISOString(),
-      config: { maxProducts, forceRefresh, batchSize }
+      config: { maxProducts, forceRefresh, batchSize, store }
     });
-    
+
     // Executar sincronização diretamente em background
     setImmediate(async () => {
       try {
@@ -295,9 +299,10 @@ router.post('/sync', async (req, res) => {
           status: 'running',
           progress: 5
         });
-        
-        const result = await vtexProductService.syncProducts({ maxProducts, forceRefresh, batchSize });
-        
+
+        const service = new VtexProductService(store);
+        const result = await service.syncProducts({ maxProducts, forceRefresh, batchSize });
+
         // Atualizar status do job
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
@@ -306,10 +311,10 @@ router.post('/sync', async (req, res) => {
           endTime: new Date().toISOString(),
           result
         });
-        
-        console.log(`✅ [Background] Sincronização ${jobId} concluída com sucesso`);
+
+        console.log(`✅ [Background] Sincronização ${jobId} [store: ${store}] concluída com sucesso`);
       } catch (error) {
-        console.error(`❌ [Background] Erro no sync de produtos ${jobId}:`, error);
+        console.error(`❌ [Background] Erro no sync de produtos ${jobId} [store: ${store}]:`, error);
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
           status: 'failed',
@@ -319,22 +324,23 @@ router.post('/sync', async (req, res) => {
         });
       }
     });
-    
+
     // Retornar resposta imediata
     res.json({
       success: true,
       jobId,
-      message: 'Sincronização iniciada em background - o processo continuará mesmo se você fechar esta janela',
+      store,
+      message: `Sincronização [${store}] iniciada em background - o processo continuará mesmo se você fechar esta janela`,
       checkStatus: `/api/background/status/${jobId}`,
       backgroundEndpoint: `/api/background/sync-products`,
-      config: { maxProducts, forceRefresh, batchSize },
+      config: { maxProducts, forceRefresh, batchSize, store },
       instructions: {
         pt: 'Use o endpoint checkStatus para acompanhar o progresso',
         en: 'Use the checkStatus endpoint to track progress'
       },
       timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error(`❌ Erro ao iniciar sincronização em background:`, error?.data || error.message);
     res.status(500).json({
@@ -411,20 +417,20 @@ router.get('/test-connectivity', async (req, res) => {
  */
 router.get('/sync', async (req, res) => {
   try {
-    console.log(`🚀 Iniciando sincronização de produtos em background [GET]`);
-    
-    const { maxProducts = '0', forceRefresh = 'false', batchSize = '50' } = req.query;
-    
+    const { maxProducts = '0', forceRefresh = 'false', batchSize = '50', store: storeParam } = req.query;
+    const store = storeParam || 'hope';
+    console.log(`🚀 Iniciando sincronização de produtos em background [GET] [store: ${store}]`);
+
     // Gerar ID único para o job
-    const jobId = `sync-products-get-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+    const jobId = `sync-products-get-${store}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     // Armazenamento temporário para status dos jobs
     if (!global.jobStatus) {
       global.jobStatus = new Map();
     }
-    
+
     const jobStatus = global.jobStatus;
-    
+
     // Inicializar status do job
     jobStatus.set(jobId, {
       id: jobId,
@@ -432,9 +438,9 @@ router.get('/sync', async (req, res) => {
       status: 'starting',
       progress: 0,
       startTime: new Date().toISOString(),
-      config: { maxProducts: parseInt(maxProducts) || 0, forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) || 50 }
+      config: { maxProducts: parseInt(maxProducts) || 0, forceRefresh: forceRefresh === 'true', batchSize: parseInt(batchSize) || 50, store }
     });
-    
+
     // Executar sincronização diretamente em background
     setImmediate(async () => {
       try {
@@ -444,20 +450,21 @@ router.get('/sync', async (req, res) => {
           status: 'running',
           progress: 5
         });
-        
+
         // Adicionar timeout para evitar operações infinitas
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Timeout: Sincronização de produtos excedeu 30 minutos')), 30 * 60 * 1000);
         });
-        
-        const syncPromise = vtexProductService.syncProducts({ 
-          maxProducts: parseInt(maxProducts) || 0, 
-          forceRefresh: forceRefresh === 'true', 
-          batchSize: parseInt(batchSize) || 50 
+
+        const service = new VtexProductService(store);
+        const syncPromise = service.syncProducts({
+          maxProducts: parseInt(maxProducts) || 0,
+          forceRefresh: forceRefresh === 'true',
+          batchSize: parseInt(batchSize) || 50
         });
-        
+
         const result = await Promise.race([syncPromise, timeoutPromise]);
-        
+
         // Atualizar status do job
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
@@ -466,12 +473,12 @@ router.get('/sync', async (req, res) => {
           endTime: new Date().toISOString(),
           result
         });
-        
-        console.log(`✅ [Background] Sincronização GET ${jobId} concluída com sucesso`);
+
+        console.log(`✅ [Background] Sincronização GET ${jobId} [store: ${store}] concluída com sucesso`);
       } catch (error) {
-        console.error(`❌ [Background] Erro no sync GET de produtos ${jobId}:`, error);
+        console.error(`❌ [Background] Erro no sync GET de produtos ${jobId} [store: ${store}]:`, error);
         console.error(`❌ [Background] Stack trace completo:`, error?.data || error.stack);
-        
+
         jobStatus.set(jobId, {
           ...jobStatus.get(jobId),
           status: 'failed',
@@ -481,11 +488,12 @@ router.get('/sync', async (req, res) => {
           stack: error.stack,
           type: error.constructor.name
         });
-        
+
         // Log adicional para debug em produção
         if (process.env.NODE_ENV === 'production') {
           console.error(`❌ [PRODUCTION ERROR] Product sync failed:`, {
             jobId,
+            store,
             error: error.message,
             stack: error.stack,
             timestamp: new Date().toISOString()
@@ -493,18 +501,20 @@ router.get('/sync', async (req, res) => {
         }
       }
     });
-    
+
     // Retornar resposta imediata
     res.json({
       success: true,
       jobId,
-      message: 'Sincronização iniciada em background [GET] - o processo continuará mesmo se você fechar esta janela',
+      store,
+      message: `Sincronização [${store}] iniciada em background [GET] - o processo continuará mesmo se você fechar esta janela`,
       checkStatus: `/api/background/status/${jobId}`,
       backgroundEndpoint: `/api/background/sync-products`,
-      config: { 
-        maxProducts: parseInt(maxProducts), 
-        forceRefresh: forceRefresh === 'true', 
-        batchSize: parseInt(batchSize) 
+      config: {
+        maxProducts: parseInt(maxProducts),
+        forceRefresh: forceRefresh === 'true',
+        batchSize: parseInt(batchSize),
+        store
       },
       instructions: {
         pt: 'Use o endpoint checkStatus para acompanhar o progresso',
@@ -512,7 +522,7 @@ router.get('/sync', async (req, res) => {
       },
       timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error(`❌ Erro ao iniciar sincronização GET em background:`, error?.data || error.message);
     res.status(500).json({

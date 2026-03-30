@@ -113,8 +113,9 @@ Cron (8h) ou POST /api/vtex/products/sync
 
 ### SFTP de Produtos
 
-Ambiente **Hope** configurado. Ambiente **Hope Resort** pendente.
+Suporte multi-ambiente implementado. O parâmetro `store` (`hope` | `resort`) seleciona automaticamente as credenciais VTEX e SFTP corretas.
 
+**Hope** (configurado):
 ```env
 SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
 SFTP_PRODUCTS_PORT=22
@@ -122,6 +123,17 @@ SFTP_PRODUCTS_USERNAME=bu_hope
 SFTP_PRODUCTS_PASSWORD=***
 SFTP_PRODUCTS_REMOTE_PATH=/catalog/
 ```
+
+**Hope Resort** (configurado):
+```env
+SFTP_PRODUCTS_HOST_RESORT=exchange.si.emarsys.net
+SFTP_PRODUCTS_PORT_RESORT=22
+SFTP_PRODUCTS_USERNAME_RESORT=hope_resort
+SFTP_PRODUCTS_PASSWORD_RESORT=***
+SFTP_PRODUCTS_REMOTE_PATH_RESORT=/catalog/
+```
+
+> Credenciais VTEX de ambos os ambientes pendentes. Quando disponíveis, preencher `VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE` e `VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT` no `.env`.
 
 ## Fluxo de Pedidos
 
@@ -503,8 +515,10 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Webhook de saída configurado~~ — `CONTACTS_WEBHOOK_URL` com retry automático
 - [x] ~~Filas de retry separadas por client_type~~ — hope e resort com URLs independentes
 - [x] ~~Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)~~ — integrado via `autoSend: true` em `ordersSyncService.syncOrders`
-- [ ] Configurar credenciais SFTP de produtos **Hope Resort**
-- [ ] Configurar ambiente VTEX Hope Resort
+- [x] ~~Configurar credenciais SFTP de produtos **Hope Resort**~~ — configurado (`SFTP_PRODUCTS_*_RESORT`)
+- [x] ~~Suporte multi-ambiente no sync de produtos~~ — `store: hope | resort` com `getStoreConfig()`, cron dispara ambos automaticamente
+- [ ] Configurar credenciais VTEX **Hope** (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
+- [ ] Configurar credenciais VTEX **Hope Resort** (`VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT`)
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
 
 ---

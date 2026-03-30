@@ -7,56 +7,98 @@ const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../
 const { Client } = require('ssh2');
 require('dotenv').config();
 
+/**
+ * Retorna as credenciais VTEX e SFTP para o store informado.
+ * Suporta: 'hope' (padrão) e 'resort'.
+ * @param {string} store
+ * @returns {{ vtex: Object, sftp: Object }}
+ */
+function getStoreConfig(store = 'hope') {
+  if (store === 'resort') {
+    return {
+      vtex: {
+        baseURL: process.env.VTEX_BASE_URL_RESORT || '',
+        appKey: process.env.VTEX_APP_KEY_RESORT || '',
+        appToken: process.env.VTEX_APP_TOKEN_RESORT || '',
+      },
+      sftp: {
+        host: process.env.SFTP_PRODUCTS_HOST_RESORT || process.env.SFTP_PRODUCTS_HOST,
+        port: parseInt(process.env.SFTP_PRODUCTS_PORT_RESORT || process.env.SFTP_PRODUCTS_PORT),
+        username: process.env.SFTP_PRODUCTS_USERNAME_RESORT || process.env.SFTP_PRODUCTS_USERNAME,
+        password: process.env.SFTP_PRODUCTS_PASSWORD_RESORT || process.env.SFTP_PRODUCTS_PASSWORD,
+        remotePath: process.env.SFTP_PRODUCTS_REMOTE_PATH_RESORT || process.env.SFTP_PRODUCTS_REMOTE_PATH,
+      }
+    };
+  }
+  // hope (default)
+  return {
+    vtex: {
+      baseURL: process.env.VTEX_BASE_URL_HOPE || process.env.VTEX_BASE_URL || '',
+      appKey: process.env.VTEX_APP_KEY_HOPE || process.env.VTEX_APP_KEY || '',
+      appToken: process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '',
+    },
+    sftp: {
+      host: process.env.SFTP_PRODUCTS_HOST,
+      port: parseInt(process.env.SFTP_PRODUCTS_PORT),
+      username: process.env.SFTP_PRODUCTS_USERNAME,
+      password: process.env.SFTP_PRODUCTS_PASSWORD,
+      remotePath: process.env.SFTP_PRODUCTS_REMOTE_PATH,
+    }
+  };
+}
+
 class VtexProductService {
-  constructor() {
+  constructor(store = 'hope') {
+    this.store = store;
+    const config = getStoreConfig(store);
+
     const headers = {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
-      'X-VTEX-API-AppKey': process.env.VTEX_APP_KEY,
-      'X-VTEX-API-AppToken': process.env.VTEX_APP_TOKEN
+      'X-VTEX-API-AppKey': config.vtex.appKey,
+      'X-VTEX-API-AppToken': config.vtex.appToken
     };
-    
-    const baseURL = process.env.VTEX_BASE_URL;
+
+    const baseURL = config.vtex.baseURL;
     this.client = rateLimit(axios.create({
       baseURL: baseURL,
       headers
     }), { maxRequests: 3900, perMilliseconds: 1000 });
-    
+
     // Initialize axios-retry asynchronously
     this._initializeAxiosRetry();
-    
+
     // Configurações de diretórios
     const defaultDataDir =  path.join(__dirname, '..', 'data');
     const defaultExports =  path.join(__dirname, '..', 'exports');
     this.dataDir = process.env.DATA_DIR || defaultDataDir;
     this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
-    
+
     // Arquivos de dados
     this.productsFile = path.join(this.dataDir, 'products.json');
     this.lastProductSyncFile = path.join(this.dataDir, 'last-product-sync.json');
-    
+
     // Controle de sincronização
     this._isSyncRunning = false;
-    
+
     // Otimizador de memória
     this.memoryOptimizer = new MemoryOptimizer();
-    
+
     // Configurações SFTP para Emarsys - PRODUTOS
-    // Usa SFTP_PRODUCTS_* se disponível, senão faz fallback para SFTP_* (legado)
-    let sftpPassword = process.env.SFTP_PRODUCTS_PASSWORD || process.env.SFTP_PASSWORD;
+    let sftpPassword = config.sftp.password || process.env.SFTP_PASSWORD;
     try {
       // Tenta decodificar apenas se contiver caracteres encoded (%)
       if (sftpPassword && sftpPassword.includes('%')) {
         sftpPassword = decodeURIComponent(sftpPassword);
       }
     } catch (e) {
-      console.warn('⚠️ Não foi possível decodificar SFTP_PRODUCTS_PASSWORD, usando valor original');
+      console.warn(`⚠️ [${store}] Não foi possível decodificar senha SFTP, usando valor original`);
     }
 
     this.sftpConfig = {
-      host: process.env.SFTP_PRODUCTS_HOST || process.env.SFTP_HOST,
-      port: parseInt(process.env.SFTP_PRODUCTS_PORT || process.env.SFTP_PORT),
-      username: process.env.SFTP_PRODUCTS_USERNAME || process.env.SFTP_USERNAME,
+      host: config.sftp.host || process.env.SFTP_HOST,
+      port: config.sftp.port || parseInt(process.env.SFTP_PORT),
+      username: config.sftp.username || process.env.SFTP_USERNAME,
       password: sftpPassword,
       readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 90000, // 90 segundos para handshake
       keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 10000, // Keepalive a cada 10s
@@ -97,8 +139,8 @@ class VtexProductService {
         ]
       }
     };
-    this.sftpRemotePath = process.env.SFTP_PRODUCTS_REMOTE_PATH || process.env.SFTP_REMOTE_PATH;
-    
+    this.sftpRemotePath = config.sftp.remotePath || process.env.SFTP_REMOTE_PATH;
+
     // Validação das configurações SFTP
     this._validateSftpConfig();
   }
@@ -212,19 +254,16 @@ class VtexProductService {
   }
 
   /**
-   * Valida as configurações SFTP
+   * Valida as configurações SFTP usando this.sftpConfig (já populado pelo constructor via getStoreConfig)
    */
   _validateSftpConfig() {
-    // Valida usando as variáveis de produtos OU legadas (fallback)
-    const hasProductsConfig = process.env.SFTP_PRODUCTS_HOST && process.env.SFTP_PRODUCTS_USERNAME && process.env.SFTP_PRODUCTS_PASSWORD;
-    const hasLegacyConfig = process.env.SFTP_HOST && process.env.SFTP_USERNAME && process.env.SFTP_PASSWORD;
+    const hasConfig = this.sftpConfig.host && this.sftpConfig.username && this.sftpConfig.password;
 
-    if (!hasProductsConfig && !hasLegacyConfig) {
-      console.warn('⚠️ Variáveis SFTP de PRODUTOS não configuradas (SFTP_PRODUCTS_* ou SFTP_* legado)');
-      console.warn('📤 Upload SFTP de produtos será desabilitado até que as variáveis sejam configuradas');
+    if (!hasConfig) {
+      console.warn(`⚠️ [${this.store}] Variáveis SFTP de PRODUTOS não configuradas`);
+      console.warn(`📤 [${this.store}] Upload SFTP de produtos será desabilitado até que as variáveis sejam configuradas`);
     } else {
-      const source = hasProductsConfig ? 'SFTP_PRODUCTS_*' : 'SFTP_* (legado)';
-      console.log(`✅ Configurações SFTP de PRODUTOS validadas (usando ${source})`);
+      console.log(`✅ [${this.store}] Configurações SFTP de PRODUTOS validadas`);
       console.log(`   🌐 Host: ${this.sftpConfig.host}`);
       console.log(`   🔌 Porta: ${this.sftpConfig.port}`);
       console.log(`   👤 Usuário: ${this.sftpConfig.username}`);
@@ -1361,18 +1400,19 @@ class VtexProductService {
   async syncProducts() {
     try {
       if (this._isSyncRunning) {
-        console.warn('⚠️ Uma sincronização já está em execução. Ignorando nova chamada.');
-        return { success: false, error: 'Sync already running' };
+        console.warn(`⚠️ [${this.store}] Uma sincronização já está em execução. Ignorando nova chamada.`);
+        return { success: false, error: 'Sync already running', store: this.store };
       }
       this._isSyncRunning = true;
-      console.log(`🔄 Iniciando sincronização de produtos`);
+      console.log(`🔄 [${this.store}] Iniciando sincronização de produtos`);
 
       // Testa conectividade antes de iniciar
       const connectivityTest = await this.testConnectivity();
       if (!connectivityTest.success) {
-        console.error('❌ Falha no teste de conectividade. Abortando sincronização.');
+        console.error(`❌ [${this.store}] Falha no teste de conectividade. Abortando sincronização.`);
         return {
           success: false,
+          store: this.store,
           error: connectivityTest.message,
           connectivityTest,
           totalProducts: 0,
@@ -1386,15 +1426,16 @@ class VtexProductService {
       await this.ensureDataDirectory();
 
       // Busca todos os produtos da API da VTEX
-      console.log('🔍 Buscando todos os produtos da API da VTEX...');
-      
+      console.log(`🔍 [${this.store}] Buscando todos os produtos da API da VTEX...`);
+
       try {
         const allProducts = await this.getAllProductsFromApi();
-        
+
         if (allProducts.length === 0) {
-          console.log('⚠️ Nenhum produto encontrado na API da VTEX');
+          console.log(`⚠️ [${this.store}] Nenhum produto encontrado na API da VTEX`);
           return {
             success: false,
+            store: this.store,
             error: 'Nenhum produto encontrado na API da VTEX',
             totalProducts: 0,
             successCount: 0,
@@ -1403,27 +1444,27 @@ class VtexProductService {
             errors: []
           };
         }
-        
-        console.log(`📋 Encontrados ${allProducts.length} produtos na API da VTEX`);
-        
+
+        console.log(`📋 [${this.store}] Encontrados ${allProducts.length} produtos na API da VTEX`);
+
         // Salva produtos usando método otimizado
         let saveSuccess = false;
         try {
           await this.saveProductsToFileOptimized(allProducts);
           saveSuccess = true;
-          console.log('✅ Produtos salvos com sucesso!');
+          console.log(`✅ [${this.store}] Produtos salvos com sucesso!`);
         } catch (saveError) {
-          console.error('❌ Erro ao salvar produtos:', saveError.message);
+          console.error(`❌ [${this.store}] Erro ao salvar produtos:`, saveError.message);
           // Fallback para método tradicional
           try {
             await this.saveProductsToFile(allProducts);
             saveSuccess = true;
-            console.log('✅ Produtos salvos com método fallback!');
+            console.log(`✅ [${this.store}] Produtos salvos com método fallback!`);
           } catch (fallbackError) {
-            console.error('❌ Erro no método fallback:', fallbackError.message);
+            console.error(`❌ [${this.store}] Erro no método fallback:`, fallbackError.message);
           }
         }
-        
+
         // Salva informações da sincronização
         await this.saveLastSyncInfo({
           timestamp: getBrazilianTimestamp(),
@@ -1431,57 +1472,59 @@ class VtexProductService {
           successCount: allProducts.length,
           errorCount: 0,
           source: 'API VTEX',
+          store: this.store,
           errors: [],
           saveSuccess: saveSuccess
         });
-        
-        console.log(`\n🎉 Sincronização de catalog concluída!`);
+
+        console.log(`\n🎉 [${this.store}] Sincronização de catalog concluída!`);
         console.log(`   ✅ Produtos encontrados: ${allProducts.length}`);
         console.log(`   📊 Total processado: ${allProducts.length}`);
-        
+
         // Gerar CSV após salvar produtos
         let csvResult = null;
         try {
-          console.log('📄 Gerando CSV de produtos...');
+          console.log(`📄 [${this.store}] Gerando CSV de produtos...`);
           csvResult = await this.generateEmarsysProductCsv(allProducts);
-          console.log(`✅ CSV gerado: ${csvResult.filename}`);
+          console.log(`✅ [${this.store}] CSV gerado: ${csvResult.filename}`);
         } catch (csvError) {
-          console.error('❌ Erro ao gerar CSV:', csvError.message);
+          console.error(`❌ [${this.store}] Erro ao gerar CSV:`, csvError.message);
         }
-        
+
         // Tentar upload SOMENTE do arquivo .gz
         let uploadResult = null;
         let gzUploadResult = null;
         if (csvResult && process.env.ENABLE_EMARSYS_UPLOAD === 'true') {
           if (!csvResult.gzFilepath) {
-            console.error('❌ Arquivo .gz não foi gerado. Abortando upload.');
+            console.error(`❌ [${this.store}] Arquivo .gz não foi gerado. Abortando upload.`);
           } else {
             try {
               // Aguarda o .gz estar fisicamente pronto no disco
               await this._waitUntilFileReady(csvResult.gzFilepath, { timeoutMs: 120000, intervalMs: 300, minSize: 10 });
-              console.log('📤 Enviando arquivo .gz para SFTP...');
+              console.log(`📤 [${this.store}] Enviando arquivo .gz para SFTP...`);
               gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
-              
+
               // Validar resultado do upload
               if (gzUploadResult && gzUploadResult.success) {
-                console.log('✅ Upload .gz concluído com sucesso');
+                console.log(`✅ [${this.store}] Upload .gz concluído com sucesso`);
                 console.log(`   📊 Bytes enviados: ${gzUploadResult.bytesSent}`);
                 console.log(`   📂 Caminho remoto: ${gzUploadResult.remotePath}`);
               } else {
                 const errorMsg = gzUploadResult?.error || 'Erro desconhecido';
-                console.error(`❌ Upload .gz falhou: ${errorMsg}`);
+                console.error(`❌ [${this.store}] Upload .gz falhou: ${errorMsg}`);
               }
             } catch (gzUploadError) {
-              console.error('❌ Erro no upload .gz:', gzUploadError.message);
+              console.error(`❌ [${this.store}] Erro no upload .gz:`, gzUploadError.message);
               gzUploadResult = { success: false, error: gzUploadError.message };
             }
           }
         } else {
-          console.log('📤 Upload SFTP desabilitado (ENABLE_EMARSYS_UPLOAD != true)');
+          console.log(`📤 [${this.store}] Upload SFTP desabilitado (ENABLE_EMARSYS_UPLOAD != true)`);
         }
-        
+
         return {
           success: saveSuccess,
+          store: this.store,
           totalProducts: allProducts.length,
           successCount: allProducts.length,
           errorCount: 0,
@@ -1491,14 +1534,15 @@ class VtexProductService {
           gzGenerated: csvResult?.gzFilename || null,
           uploadSuccess: uploadResult?.success || false,
           gzUploadSuccess: gzUploadResult?.success || false,
-          message: `Sincronização concluída com ${allProducts.length} produtos da API da VTEX`
+          message: `[${this.store}] Sincronização concluída com ${allProducts.length} produtos da API da VTEX`
         };
-        
+
       } catch (error) {
-        console.error('❌ Erro ao buscar produtos da API:', error.message);
-        
+        console.error(`❌ [${this.store}] Erro ao buscar produtos da API:`, error.message);
+
         return {
           success: false,
+          store: this.store,
           error: `Erro ao buscar produtos da API: ${error.message}`,
           totalProducts: 0,
           successCount: 0,
@@ -1508,11 +1552,12 @@ class VtexProductService {
           message: 'Erro na sincronização'
         };
       }
-      
+
     } catch (error) {
-      console.error('❌ Erro na sincronização de produtos:', error.message);
+      console.error(`❌ [${this.store}] Erro na sincronização de produtos:`, error.message);
       return {
         success: false,
+        store: this.store,
         error: error.message,
         totalProducts: 0,
         successCount: 0,
@@ -1593,9 +1638,7 @@ class VtexProductService {
   }
 }
 
-// Criar instância singleton para compatibilidade com código existente
-const vtexProductService = new VtexProductService();
-
-// Exportar a instância e a classe
-module.exports = vtexProductService;
+// Exportar a classe para permitir instanciação por store (hope, resort, ...)
+module.exports = VtexProductService;
 module.exports.VtexProductService = VtexProductService;
+module.exports.getStoreConfig = getStoreConfig;

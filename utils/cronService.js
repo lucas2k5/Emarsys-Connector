@@ -103,27 +103,55 @@ class CronService {
       });
       
       try {
-        // Timeout otimizado para operações de produtos
-        const response = await axios.get(`${this.baseUrl}/api/vtex/products/sync`, {
-          timeout: this.productsTimeout
+        const timeout = this.productsTimeout;
+
+        // Sync Hope (sempre)
+        const hopeResponse = await axios.get(`${this.baseUrl}/api/vtex/products/sync?store=hope`, { timeout });
+
+        logHelpers.logProducts('info', '✅ [hope] Sincronização de produtos concluída com sucesso', {
+          status: hopeResponse.status,
+          statusText: hopeResponse.statusText
         });
-        
-        logHelpers.logProducts('info', '✅ Sincronização de produtos concluída com sucesso', {
-          status: response.status,
-          statusText: response.statusText
-        });
-        
-        // Resetar contador de crashes em caso de sucesso
+
+        // Sync Resort (somente se as credenciais VTEX estiverem configuradas)
+        if (process.env.VTEX_BASE_URL_RESORT && process.env.VTEX_APP_KEY_RESORT) {
+          logHelpers.logProducts('info', '🚀 [resort] Iniciando sincronização de produtos via CRON', {
+            cronExpression: this.productsSyncCron,
+            timeout
+          });
+
+          try {
+            const resortResponse = await axios.get(`${this.baseUrl}/api/vtex/products/sync?store=resort`, { timeout });
+
+            logHelpers.logProducts('info', '✅ [resort] Sincronização de produtos concluída com sucesso', {
+              status: resortResponse.status,
+              statusText: resortResponse.statusText
+            });
+          } catch (resortError) {
+            logHelpers.logProductsError(resortError, {
+              serviceName: 'products-sync-resort',
+              store: 'resort',
+              endpoint: `${this.baseUrl}/api/vtex/products/sync?store=resort`,
+              timeout,
+              cronExpression: this.productsSyncCron
+            });
+          }
+        } else {
+          logHelpers.logProducts('info', '⏭️ [resort] Sync Resort ignorado — VTEX_BASE_URL_RESORT ou VTEX_APP_KEY_RESORT não configurados');
+        }
+
+        // Resetar contador de crashes em caso de sucesso geral
         crashProtection.resetCrashCount(serviceName);
       } catch (error) {
         // Log específico para produtos com contexto detalhado
         logHelpers.logProductsError(error, {
           serviceName,
-          endpoint: `${this.baseUrl}/api/vtex/products/sync`,
+          store: 'hope',
+          endpoint: `${this.baseUrl}/api/vtex/products/sync?store=hope`,
           timeout: this.productsTimeout,
           cronExpression: this.productsSyncCron
         });
-        
+
         // Registrar crash para proteção
         crashProtection.recordCrash(serviceName, error);
       }

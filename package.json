@@ -31,7 +31,8 @@
     "postinstall": "node scripts/postinstall.js",
     "deploy": "node scripts/deploy.js",
     "beta:build": "tsc",
-    "beta:start": "node dist/server.js"
+    "beta:start": "node dist/server.js",
+    "tunnel": "ngrok http --url=dangelo-unadopted-hsiu.ngrok-free.app 3000"
   },
   "keywords": [
     "emarsys",
