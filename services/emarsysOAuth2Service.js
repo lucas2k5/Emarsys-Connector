@@ -4,20 +4,33 @@
  * Gerencia o fluxo client_credentials para obter e renovar tokens de acesso.
  * Mantém o token em cache e renova automaticamente antes de expirar.
  *
- * Variáveis de ambiente:
+ * Variáveis de ambiente (Hope — padrão):
  * - EMARSYS_OAUTH2_CLIENT_ID
  * - EMARSYS_OAUTH2_CLIENT_SECRET
  * - EMARSYS_OAUTH2_TOKEN_ENDPOINT
+ *
+ * Variáveis de ambiente (Resort):
+ * - EMARSYS_OAUTH2_CLIENT_ID_RESORT
+ * - EMARSYS_OAUTH2_CLIENT_SECRET_RESORT
+ * - EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT (opcional — usa o mesmo endpoint se não definido)
  */
 const axios = require('axios');
 const { logger, logHelpers } = require('../utils/logger');
 require('dotenv').config();
 
 class EmarsysOAuth2Service {
-  constructor() {
-    this.clientId = process.env.EMARSYS_OAUTH2_CLIENT_ID;
-    this.clientSecret = process.env.EMARSYS_OAUTH2_CLIENT_SECRET;
-    this.tokenEndpoint = process.env.EMARSYS_OAUTH2_TOKEN_ENDPOINT;
+  /**
+   * @param {Object} [credentials] - Credenciais opcionais (sobrescreve env vars)
+   * @param {string} [credentials.clientId]
+   * @param {string} [credentials.clientSecret]
+   * @param {string} [credentials.tokenEndpoint]
+   * @param {string} [credentials.store] - Label para logs ('hope' | 'resort')
+   */
+  constructor(credentials = {}) {
+    this.store = credentials.store || 'hope';
+    this.clientId = credentials.clientId || process.env.EMARSYS_OAUTH2_CLIENT_ID;
+    this.clientSecret = credentials.clientSecret || process.env.EMARSYS_OAUTH2_CLIENT_SECRET;
+    this.tokenEndpoint = credentials.tokenEndpoint || process.env.EMARSYS_OAUTH2_TOKEN_ENDPOINT;
 
     // Cache do token
     this.accessToken = null;
@@ -27,9 +40,9 @@ class EmarsysOAuth2Service {
     this.expiryMarginSeconds = 60;
 
     if (!this.clientId || !this.clientSecret || !this.tokenEndpoint) {
-      console.warn('⚠️ [EmarsysOAuth2] Credenciais OAuth2 não configuradas. Envio de pedidos via API desabilitado.');
+      console.warn(`⚠️ [EmarsysOAuth2][${this.store}] Credenciais OAuth2 não configuradas. Envio de pedidos via API desabilitado.`);
     } else {
-      console.log('✅ [EmarsysOAuth2] Configurado:', this.tokenEndpoint);
+      console.log(`✅ [EmarsysOAuth2][${this.store}] Configurado:`, this.tokenEndpoint);
     }
   }
 
@@ -176,4 +189,7 @@ class EmarsysOAuth2Service {
   }
 }
 
-module.exports = new EmarsysOAuth2Service();
+// Singleton padrão (Hope)
+const instance = new EmarsysOAuth2Service();
+instance.EmarsysOAuth2Service = EmarsysOAuth2Service;
+module.exports = instance;

@@ -22,7 +22,8 @@
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
-const emarsysOAuth2Service = require('./emarsysOAuth2Service');
+const emarsysOAuth2Singleton = require('./emarsysOAuth2Service');
+const { EmarsysOAuth2Service } = emarsysOAuth2Singleton;
 const { logger, logHelpers } = require('../utils/logger');
 const { getBrazilianTimestampForFilename, getBrazilianTimestamp } = require('../utils/dateUtils');
 require('dotenv').config();
@@ -51,6 +52,16 @@ class EmarsysOrdersApiService {
       ? (process.env.EMARSYS_ORDERS_API_URL_RESORT || '')
       : (process.env.EMARSYS_ORDERS_API_URL || '');
 
+    // Instancia OAuth2 com credenciais do store correto
+    this.oauth2 = store === 'resort'
+      ? new EmarsysOAuth2Service({
+          store: 'resort',
+          clientId: process.env.EMARSYS_OAUTH2_CLIENT_ID_RESORT,
+          clientSecret: process.env.EMARSYS_OAUTH2_CLIENT_SECRET_RESORT,
+          tokenEndpoint: process.env.EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT || process.env.EMARSYS_OAUTH2_TOKEN_ENDPOINT
+        })
+      : emarsysOAuth2Singleton;
+
     this.timeout = parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000;
     this.maxRetries = 3;
 
@@ -66,7 +77,7 @@ class EmarsysOrdersApiService {
    * @returns {boolean}
    */
   isConfigured() {
-    return !!(this.apiUrl && emarsysOAuth2Service.isConfigured());
+    return !!(this.apiUrl && this.oauth2.isConfigured());
   }
 
   /**
@@ -213,7 +224,7 @@ class EmarsysOrdersApiService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        const token = await emarsysOAuth2Service.getAccessToken();
+        const token = await this.oauth2.getAccessToken();
 
         logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
           size: `${(csvBuffer.length / 1024).toFixed(2)} KB`,
@@ -253,7 +264,7 @@ class EmarsysOrdersApiService {
         // Se 401, invalidar token OAuth2 e tentar novamente
         if (status === 401 && attempt < this.maxRetries) {
           logger.warn(`[EmarsysOrdersAPI][${this.store}] Token OAuth2 expirado, renovando...`);
-          emarsysOAuth2Service.invalidateToken();
+          this.oauth2.invalidateToken();
           continue;
         }
 
@@ -364,12 +375,12 @@ class EmarsysOrdersApiService {
       return { success: false, error: `[${this.store}] URL da API não configurada`, configured: false, store: this.store };
     }
 
-    if (!emarsysOAuth2Service.isConfigured()) {
+    if (!this.oauth2.isConfigured()) {
       return { success: false, error: 'OAuth2 não configurado', configured: false, store: this.store };
     }
 
     try {
-      const oauth2Test = await emarsysOAuth2Service.testConnection();
+      const oauth2Test = await this.oauth2.testConnection();
       return {
         success: oauth2Test.success,
         configured: true,
