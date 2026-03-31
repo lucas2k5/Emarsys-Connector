@@ -41,32 +41,11 @@ function escapeField(value) {
 }
 
 /**
- * Monta o nome do arquivo CSV com o timestamp em America/Sao_Paulo.
- * Formato: produtos_YYYY-MM-DD_HHh.csv
+ * Retorna o nome padrão do arquivo CSV de produtos.
  * @returns {string}
  */
 function buildFileName() {
-  const now = new Date();
-  const brDate = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-
-  const parts = {};
-  brDate.forEach(({ type, value }) => {
-    parts[type] = value;
-  });
-
-  const year = parts.year;
-  const month = parts.month;
-  const day = parts.day;
-  const hour = parts.hour === '24' ? '00' : parts.hour;
-
-  return `produtos_${year}-${month}-${day}_${hour}h.csv`;
+  return 'products.csv';
 }
 
 /**
