@@ -537,11 +537,15 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Configurar credenciais SFTP de produtos **Hope Resort**~~ — configurado (`SFTP_PRODUCTS_*_RESORT`)
 - [x] ~~Suporte multi-ambiente no sync de produtos~~ — `store: hope | resort` com `getStoreConfig()`, cron dispara ambos automaticamente
 - [x] ~~Suporte multi-ambiente no sync de pedidos (hope/resort)~~ — `store: hope | resort` em `ordersSyncService`, `emarsysOrdersApiService` e cron
-- [ ] Configurar credenciais VTEX **Hope** produtos (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
-- [ ] Configurar credenciais VTEX **Hope Resort** produtos (`VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT`)
-- [ ] Configurar credenciais VTEX **Hope** pedidos (`VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE`)
-- [ ] Configurar credenciais VTEX **Hope Resort** pedidos (`VTEX_BASE_URL_RESORT_ORDERS`, `VTEX_APP_KEY_RESORT_ORDERS`, `VTEX_APP_TOKEN_RESORT_ORDERS`)
+- [x] ~~Configurar credenciais VTEX Hope~~ — `hopelingerie.vtexcommercestable.com.br` (775 produtos ✅)
+- [x] ~~Configurar credenciais VTEX Hope Resort~~ — `lojahr.vtexcommercestable.com.br` (574 produtos ✅)
+- [x] ~~Configurar OAuth2 Emarsys Hope Resort~~ — client_id/secret configurados e testados ✅
+- [ ] Configurar credenciais SFTP **Hope** produtos (`SFTP_PRODUCTS_USERNAME`, `SFTP_PRODUCTS_PASSWORD`) — inserir credenciais reais
+- [ ] Testar sync completo de produtos Hope e Resort end-to-end (VTEX → CSV → SFTP)
+- [ ] Testar sync completo de pedidos Hope e Resort end-to-end (VTEX → SQLite → CSV → Emarsys API)
+- [ ] Configurar webhook de contatos **Hope Resort** (`CONTACTS_WEBHOOK_URL_RESORT`)
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
+- [ ] Implementar suite de testes automatizados
 
 ---
 
