@@ -544,7 +544,6 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Padronizar nome do CSV de produtos~~ — fixo como `products.csv` ✅
 - [ ] Testar sync completo de produtos Hope e Resort end-to-end (VTEX → CSV → SFTP)
 - [ ] Testar sync completo de pedidos Hope e Resort end-to-end (VTEX → SQLite → CSV → Emarsys API)
-- [ ] Configurar webhook de contatos **Hope Resort** (`CONTACTS_WEBHOOK_URL_RESORT`)
 - [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
 - [ ] Implementar suite de testes automatizados
 
