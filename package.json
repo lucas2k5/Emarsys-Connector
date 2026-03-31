@@ -32,7 +32,8 @@
     "deploy": "node scripts/deploy.js",
     "beta:build": "tsc",
     "beta:start": "node dist/server.js",
-    "tunnel": "ngrok http --url=dangelo-unadopted-hsiu.ngrok-free.app 3000"
+    "tunnel": "ngrok http --url=dangelo-unadopted-hsiu.ngrok-free.app 3000",
+    "sync:products": "node scripts/syncProducts.js"
   },
   "keywords": [
     "emarsys",
@@ -59,9 +60,11 @@
     "moment": "^2.29.4",
     "moment-timezone": "^0.6.0",
     "morgan": "^1.10.1",
+    "node-cron": "^4.2.1",
     "pm2": "^5.3.0",
     "prom-client": "^13.2.0",
     "ssh2": "^1.16.0",
+    "ssh2-sftp-client": "^12.1.1",
     "webdav": "^5.7.0",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0"
