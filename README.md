@@ -498,9 +498,10 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado com merchant ID separado ✅
 - [x] ~~Sync de produtos Hope Resort~~ — `hope_resort` em `/catalog/`, cron 03h ✅
 - [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 10min ✅
+- [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
 - [ ] Carga histórica de pedidos (2 anos) — via CSV manual no SFTP Emarsys
-- [ ] Testar sync produtos Resort end-to-end em produção
-- [ ] Testar sync pedidos Resort end-to-end em produção
+- [ ] Validar sync produtos Resort em produção (primeira execução)
+- [ ] Validar sync pedidos Resort em produção (primeira execução)
 - [ ] Implementar suite de testes automatizados
 
 ---
