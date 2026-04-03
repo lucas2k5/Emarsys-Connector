@@ -4,24 +4,23 @@ require('dotenv').config();
 const axios  = require('axios');
 const crypto = require('crypto');
 
-const BASE_URL  = process.env.VTEX_BASE_URL_HOPE || process.env.VTEX_BASE_URL || '';
-const APP_KEY   = process.env.VTEX_APP_KEY_HOPE  || process.env.VTEX_APP_KEY   || '';
+// Credenciais Hope Lingerie
+const BASE_URL  = process.env.VTEX_BASE_URL_HOPE  || process.env.VTEX_BASE_URL  || '';
+const APP_KEY   = process.env.VTEX_APP_KEY_HOPE   || process.env.VTEX_APP_KEY   || '';
 const APP_TOKEN = process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '';
+
+// Credenciais Hope Resort
+const RESORT_BASE_URL  = process.env.RESORT_VTEX_BASE_URL  || '';
+const RESORT_APP_KEY   = process.env.RESORT_VTEX_APP_KEY   || '';
+const RESORT_APP_TOKEN = process.env.RESORT_VTEX_APP_TOKEN || '';
 
 const CONFIG = {
   ORDERS_PER_PAGE:      100,
-  DELAY_BETWEEN_ORDERS: 300,   // ms entre chamadas de detalhe
-  DELAY_BETWEEN_PAGES:  200,   // ms entre páginas da listagem
+  DELAY_BETWEEN_ORDERS: 300,
+  DELAY_BETWEEN_PAGES:  200,
   MAX_RETRIES:            3,
   RETRY_DELAY:         2000,
   RATE_LIMIT_DELAY:    5000,
-};
-
-const VTEX_HEADERS = {
-  'X-VTEX-API-AppKey':   APP_KEY,
-  'X-VTEX-API-AppToken': APP_TOKEN,
-  'Content-Type': 'application/json',
-  'Accept': 'application/json',
 };
 
 const CSV_HEADERS = [
@@ -30,11 +29,20 @@ const CSV_HEADERS = [
   's_tipo_pagamento', 's_cupom',
 ];
 
+function makeHeaders(key, token) {
+  return {
+    'X-VTEX-API-AppKey':   key,
+    'X-VTEX-API-AppToken': token,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchWithRetry(url, options = {}, retries = 0) {
+async function fetchWithRetry(url, options = {}, retries = 0, tag = 'orders') {
   try {
     const response = await axios.get(url, { ...options, timeout: 30000 });
     return response.data;
@@ -42,42 +50,43 @@ async function fetchWithRetry(url, options = {}, retries = 0) {
     const status = err.response?.status;
 
     if (status === 429) {
-      console.log(`[orders] 429 rate limit — aguardando ${CONFIG.RATE_LIMIT_DELAY}ms`);
+      console.log(`[${tag}] 429 rate limit — aguardando ${CONFIG.RATE_LIMIT_DELAY}ms`);
       await sleep(CONFIG.RATE_LIMIT_DELAY);
-      return fetchWithRetry(url, options, retries);
+      return fetchWithRetry(url, options, retries, tag);
     }
 
     if (status === 404) return null;
 
     if (retries < CONFIG.MAX_RETRIES) {
-      console.log(`[orders] Erro ${status || err.code} — retry ${retries + 1}/${CONFIG.MAX_RETRIES}`);
+      console.log(`[${tag}] Erro ${status || err.code} — retry ${retries + 1}/${CONFIG.MAX_RETRIES}`);
       await sleep(CONFIG.RETRY_DELAY);
-      return fetchWithRetry(url, options, retries + 1);
+      return fetchWithRetry(url, options, retries + 1, tag);
     }
 
-    console.warn(`[orders] Falha após ${CONFIG.MAX_RETRIES} tentativas: ${url}`);
+    console.warn(`[${tag}] Falha após ${CONFIG.MAX_RETRIES} tentativas: ${url}`);
     return null;
   }
 }
 
-// PASSO 2 — Listar orderIds no período
-async function fetchOrderIds(sinceDate, untilDate) {
+async function fetchOrderIds(sinceDate, untilDate, baseUrl, headers, tag) {
   const orderIds  = [];
   let currentPage = 1;
   let totalPages  = null;
 
   while (true) {
     const data = await fetchWithRetry(
-      `${BASE_URL}/api/oms/pvt/orders`,
+      `${baseUrl}/api/oms/pvt/orders`,
       {
-        headers: VTEX_HEADERS,
+        headers,
         params: {
           orderBy:        'creationDate,asc',
           page:           currentPage,
           per_page:       CONFIG.ORDERS_PER_PAGE,
           f_creationDate: `creationDate:[${sinceDate} TO ${untilDate}]`,
         },
-      }
+      },
+      0,
+      tag
     );
 
     if (!data || !Array.isArray(data.list)) break;
@@ -85,7 +94,7 @@ async function fetchOrderIds(sinceDate, untilDate) {
     const paging = data.paging || {};
     if (totalPages === null) {
       totalPages = paging.pages || 1;
-      console.log(`[orders] ${paging.total || 0} pedidos encontrados`);
+      console.log(`[${tag}] ${paging.total || 0} pedidos encontrados`);
     }
 
     for (const order of data.list) {
@@ -100,11 +109,10 @@ async function fetchOrderIds(sinceDate, untilDate) {
   return orderIds;
 }
 
-// PASSO 3 — Mapear pedido para linhas CSV
-function mapOrderToRows(order) {
+function mapOrderToRows(order, tag) {
   const cpf = order.clientProfileData?.document || '';
   if (!cpf) {
-    console.warn(`[orders] Pedido ${order.orderId} sem CPF — ignorando`);
+    console.warn(`[${tag}] Pedido ${order.orderId} sem CPF — ignorando`);
     return [];
   }
 
@@ -148,7 +156,6 @@ function mapOrderToRows(order) {
   return rows;
 }
 
-// PASSO 4 — Gerar CSV como string (EmarsysOrdersApiService converte para binary)
 function generateOrdersCsv(rows) {
   function escapeField(value) {
     if (value === null || value === undefined) return '';
@@ -166,30 +173,29 @@ function generateOrdersCsv(rows) {
   return [header, ...lines].join('\n') + '\n';
 }
 
-// Função principal exportada
-// untilDate deve ser passado pelo caller (capturado antes do sync iniciar)
-async function fetchNewOrderRows(sinceDate, untilDate) {
-  // Passo 1: listar orderIds
-  const orderIds = await fetchOrderIds(sinceDate, untilDate);
+// Lógica compartilhada — recebe credenciais como parâmetro
+async function _fetchNewOrderRows(sinceDate, untilDate, baseUrl, headers, tag) {
+  const orderIds = await fetchOrderIds(sinceDate, untilDate, baseUrl, headers, tag);
 
   if (orderIds.length === 0) return [];
 
-  // Passo 2: buscar detalhes 1 a 1
-  const allRows  = [];
-  let sem_cpf    = 0;
-  let sem_itens  = 0;
+  const allRows = [];
+  let sem_cpf   = 0;
+  let sem_itens = 0;
 
   for (let i = 0; i < orderIds.length; i++) {
     const order = await fetchWithRetry(
-      `${BASE_URL}/api/oms/pvt/orders/${orderIds[i]}`,
-      { headers: VTEX_HEADERS }
+      `${baseUrl}/api/oms/pvt/orders/${orderIds[i]}`,
+      { headers },
+      0,
+      tag
     );
 
     if (order) {
       if (!order.items || order.items.length === 0) {
         sem_itens++;
       } else {
-        const rows = mapOrderToRows(order);
+        const rows = mapOrderToRows(order, tag);
         if (rows.length === 0) sem_cpf++;
         allRows.push(...rows);
       }
@@ -198,10 +204,18 @@ async function fetchNewOrderRows(sinceDate, untilDate) {
     if (i + 1 < orderIds.length) await sleep(CONFIG.DELAY_BETWEEN_ORDERS);
   }
 
-  if (sem_cpf   > 0) console.log(`[orders] ${sem_cpf} pedidos ignorados (sem CPF)`);
-  if (sem_itens > 0) console.log(`[orders] ${sem_itens} pedidos ignorados (sem itens)`);
+  if (sem_cpf   > 0) console.log(`[${tag}] ${sem_cpf} pedidos ignorados (sem CPF)`);
+  if (sem_itens > 0) console.log(`[${tag}] ${sem_itens} pedidos ignorados (sem itens)`);
 
   return allRows;
 }
 
-module.exports = { fetchNewOrderRows, generateOrdersCsv, mapOrderToRows };
+async function fetchNewOrderRows(sinceDate, untilDate) {
+  return _fetchNewOrderRows(sinceDate, untilDate, BASE_URL, makeHeaders(APP_KEY, APP_TOKEN), 'orders');
+}
+
+async function fetchNewOrderRowsResort(sinceDate, untilDate) {
+  return _fetchNewOrderRows(sinceDate, untilDate, RESORT_BASE_URL, makeHeaders(RESORT_APP_KEY, RESORT_APP_TOKEN), 'orders-resort');
+}
+
+module.exports = { fetchNewOrderRows, fetchNewOrderRowsResort, generateOrdersCsv, mapOrderToRows };

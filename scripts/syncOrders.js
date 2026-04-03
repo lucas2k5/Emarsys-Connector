@@ -6,48 +6,46 @@ const fs   = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 
-const { fetchNewOrderRows, generateOrdersCsv } = require('../services/vtexOrderService');
+const { fetchNewOrderRows, fetchNewOrderRowsResort, generateOrdersCsv } = require('../services/vtexOrderService');
 const EmarsysOrdersApiService = require('../services/emarsysOrdersApiService');
 
-const SYNC_CONTROL_FILE = path.join(__dirname, '..', 'data', 'lastOrderSync.json');
+const SYNC_CONTROL_FILE        = path.join(__dirname, '..', 'data', 'lastOrderSync.json');
+const SYNC_CONTROL_FILE_RESORT = path.join(__dirname, '..', 'data', 'lastOrderSyncResort.json');
 
-const emarsys = new EmarsysOrdersApiService('hope');
+const emarsys       = new EmarsysOrdersApiService('hope');
+const emarsysResort = new EmarsysOrdersApiService('resort');
 
-let isRunning = false;
+let isRunning       = false;
+let isRunningResort = false;
 
-function getLastSyncDate() {
+function getLastSyncDate(controlFile) {
   try {
-    if (fs.existsSync(SYNC_CONTROL_FILE)) {
-      const control = JSON.parse(fs.readFileSync(SYNC_CONTROL_FILE, 'utf-8'));
+    if (fs.existsSync(controlFile)) {
+      const control = JSON.parse(fs.readFileSync(controlFile, 'utf-8'));
       if (control.lastSync) return control.lastSync;
     }
   } catch (err) {
-    console.warn(`[orders] Arquivo de controle inválido, usando fallback: ${err.message}`);
+    console.warn(`[orders] Arquivo de controle inválido (${path.basename(controlFile)}), usando fallback: ${err.message}`);
   }
-  // Primeira execução ou arquivo corrompido: últimos 10 minutos
   return new Date(Date.now() - 10 * 60 * 1000).toISOString();
 }
 
-function saveLastSyncDate(date) {
-  fs.mkdirSync(path.dirname(SYNC_CONTROL_FILE), { recursive: true });
-  fs.writeFileSync(SYNC_CONTROL_FILE, JSON.stringify({
+function saveLastSyncDate(controlFile, date) {
+  fs.mkdirSync(path.dirname(controlFile), { recursive: true });
+  fs.writeFileSync(controlFile, JSON.stringify({
     lastSync:  date,
     updatedAt: new Date().toISOString(),
   }));
 }
 
+// Hope Lingerie
 async function runSync() {
-  if (isRunning) {
-    console.log('[orders] Já em execução, pulando');
-    return;
-  }
+  if (isRunning) { console.log('[orders] Já em execução, pulando'); return; }
   isRunning = true;
 
   const startedAt = new Date();
-  // now capturado aqui — antes de qualquer chamada à API
-  // garante que pedidos criados DURANTE o sync entram no próximo ciclo
-  const now      = startedAt.toISOString();
-  const lastSync = getLastSyncDate();
+  const now       = startedAt.toISOString();
+  const lastSync  = getLastSyncDate(SYNC_CONTROL_FILE);
 
   console.log(`[orders] Sync: ${lastSync} → ${now}`);
 
@@ -56,33 +54,66 @@ async function runSync() {
 
     if (rows.length === 0) {
       console.log('[orders] Nenhum pedido novo');
-      saveLastSyncDate(now);
+      saveLastSyncDate(SYNC_CONTROL_FILE, now);
       return;
     }
 
     console.log(`[orders] ${rows.length} linhas geradas`);
 
-    const csv    = generateOrdersCsv(rows);
-    const result = await emarsys.sendCsvToApi(csv);
+    const result = await emarsys.sendCsvToApi(generateOrdersCsv(rows));
+    if (!result.success) throw new Error(result.error);
 
-    if (!result.success) {
-      throw new Error(result.error);
-    }
-
-    saveLastSyncDate(now);
+    saveLastSyncDate(SYNC_CONTROL_FILE, now);
 
     const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
     console.log(`[orders] ✓ Concluído em ${duration}s`);
   } catch (err) {
     console.error('[orders] ✗ ERRO:', err.message);
-    // lastSync NÃO atualizado — próxima execução reprocessa desde o mesmo ponto
   } finally {
     isRunning = false;
   }
 }
 
-// Cron: a cada 10 minutos
-cron.schedule('*/10 * * * *', runSync, { timezone: 'America/Sao_Paulo' });
+// Hope Resort
+async function runSyncResort() {
+  if (isRunningResort) { console.log('[orders-resort] Já em execução, pulando'); return; }
+  isRunningResort = true;
+
+  const startedAt = new Date();
+  const now       = startedAt.toISOString();
+  const lastSync  = getLastSyncDate(SYNC_CONTROL_FILE_RESORT);
+
+  console.log(`[orders-resort] Sync: ${lastSync} → ${now}`);
+
+  try {
+    const rows = await fetchNewOrderRowsResort(lastSync, now);
+
+    if (rows.length === 0) {
+      console.log('[orders-resort] Nenhum pedido novo');
+      saveLastSyncDate(SYNC_CONTROL_FILE_RESORT, now);
+      return;
+    }
+
+    console.log(`[orders-resort] ${rows.length} linhas geradas`);
+
+    const result = await emarsysResort.sendCsvToApi(generateOrdersCsv(rows));
+    if (!result.success) throw new Error(result.error);
+
+    saveLastSyncDate(SYNC_CONTROL_FILE_RESORT, now);
+
+    const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`[orders-resort] ✓ Concluído em ${duration}s`);
+  } catch (err) {
+    console.error('[orders-resort] ✗ ERRO:', err.message);
+  } finally {
+    isRunningResort = false;
+  }
+}
+
+// Cron: a cada 10 minutos — ambos os ambientes
+cron.schedule('*/10 * * * *', runSync,        { timezone: 'America/Sao_Paulo' });
+cron.schedule('*/10 * * * *', runSyncResort,  { timezone: 'America/Sao_Paulo' });
 
 // Executa imediatamente ao iniciar
 runSync();
+runSyncResort();

@@ -20,12 +20,11 @@ function escapeField(value) {
   return str;
 }
 
-function generateCsv(rows) {
+function generateCsv(rows, fileName = 'products.csv') {
   if (!fs.existsSync(TMP_DIR)) {
     fs.mkdirSync(TMP_DIR, { recursive: true });
   }
 
-  const fileName = 'products.csv';
   const filePath = path.join(TMP_DIR, fileName);
 
   const headerLine = CSV_HEADERS.join(',');

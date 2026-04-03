@@ -3,37 +3,46 @@
 require('dotenv').config();
 const axios = require('axios');
 
-const BASE_URL = process.env.VTEX_BASE_URL_HOPE || process.env.VTEX_BASE_URL || '';
-const APP_KEY = process.env.VTEX_APP_KEY_HOPE || process.env.VTEX_APP_KEY || '';
-const APP_TOKEN = process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '';
+// Credenciais Hope Lingerie
+const BASE_URL      = process.env.VTEX_BASE_URL_HOPE  || process.env.VTEX_BASE_URL  || '';
+const APP_KEY       = process.env.VTEX_APP_KEY_HOPE   || process.env.VTEX_APP_KEY   || '';
+const APP_TOKEN     = process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '';
 const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://www.hopelingerie.com.br';
+
+// Credenciais Hope Resort
+const RESORT_BASE_URL       = process.env.RESORT_VTEX_BASE_URL   || '';
+const RESORT_APP_KEY        = process.env.RESORT_VTEX_APP_KEY    || '';
+const RESORT_APP_TOKEN      = process.env.RESORT_VTEX_APP_TOKEN  || '';
+const RESORT_STORE_BASE_URL = process.env.RESORT_STORE_BASE_URL  || 'https://www.lojahr.com.br';
 
 const CATEGORIAS_INVALIDAS = ['INATIVO', 'OUT'];
 
 const CONFIG = {
-  PAGE_SIZE:                      50,
-  SEARCH_BATCH_SIZE:              50,
-  INACTIVE_BATCH_SIZE:            25,
-  DELAY_BETWEEN_PAGES:           200,
-  DELAY_BETWEEN_SEARCH_BATCHES:  200,
-  DELAY_BETWEEN_INACTIVE_BATCHES:150,
-  MAX_RETRIES:                     3,
-  RETRY_DELAY:                  2000,
-  RATE_LIMIT_DELAY:             5000,
+  PAGE_SIZE:                       50,
+  SEARCH_BATCH_SIZE:               50,
+  INACTIVE_BATCH_SIZE:             25,
+  DELAY_BETWEEN_PAGES:            200,
+  DELAY_BETWEEN_SEARCH_BATCHES:   200,
+  DELAY_BETWEEN_INACTIVE_BATCHES: 150,
+  MAX_RETRIES:                      3,
+  RETRY_DELAY:                   2000,
+  RATE_LIMIT_DELAY:              5000,
 };
 
-const VTEX_HEADERS = {
-  'X-VTEX-API-AppKey':   APP_KEY,
-  'X-VTEX-API-AppToken': APP_TOKEN,
-  'Content-Type': 'application/json',
-  'Accept': 'application/json',
-};
+function makeHeaders(key, token) {
+  return {
+    'X-VTEX-API-AppKey':   key,
+    'X-VTEX-API-AppToken': token,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchWithRetry(url, options = {}, retries = 0) {
+async function fetchWithRetry(url, options = {}, retries = 0, tag = 'vtex') {
   try {
     const response = await axios.get(url, { ...options, timeout: 30000 });
     return response.data;
@@ -41,20 +50,20 @@ async function fetchWithRetry(url, options = {}, retries = 0) {
     const status = err.response?.status;
 
     if (status === 429) {
-      console.log(`[vtex] 429 rate limit — aguardando ${CONFIG.RATE_LIMIT_DELAY}ms`);
+      console.log(`[${tag}] 429 rate limit — aguardando ${CONFIG.RATE_LIMIT_DELAY}ms`);
       await sleep(CONFIG.RATE_LIMIT_DELAY);
-      return fetchWithRetry(url, options, retries);
+      return fetchWithRetry(url, options, retries, tag);
     }
 
     if (status === 404) return null;
 
     if (retries < CONFIG.MAX_RETRIES) {
-      console.log(`[vtex] Erro ${status || err.code} — retry ${retries + 1}/${CONFIG.MAX_RETRIES}`);
+      console.log(`[${tag}] Erro ${status || err.code} — retry ${retries + 1}/${CONFIG.MAX_RETRIES}`);
       await sleep(CONFIG.RETRY_DELAY);
-      return fetchWithRetry(url, options, retries + 1);
+      return fetchWithRetry(url, options, retries + 1, tag);
     }
 
-    console.warn(`[vtex] Falha após ${CONFIG.MAX_RETRIES} tentativas: ${url}`);
+    console.warn(`[${tag}] Falha após ${CONFIG.MAX_RETRIES} tentativas: ${url}`);
     return null;
   }
 }
@@ -74,7 +83,6 @@ function formatCategoryPath(categoryPath) {
 
 function formatCategoryFromObject(categories) {
   if (!categories) return '';
-  // Object.values() ordena chaves numéricas em ordem crescente (pai → filho)
   const parts = Object.values(categories);
   if (isInvalidCategory(parts)) return '';
   return parts.join(' > ');
@@ -94,24 +102,24 @@ function chunkArray(arr, size) {
 }
 
 // PASSO 1 — GetProductAndSkuIds
-async function fetchAllSkuIds() {
+async function fetchAllSkuIds(baseUrl, headers, tag) {
   const allSkuIds = [];
   let from = 1;
   let pageNum = 0;
   let total = null;
 
   while (true) {
-    const to = from + CONFIG.PAGE_SIZE - 1;
+    const to  = from + CONFIG.PAGE_SIZE - 1;
     pageNum++;
-    const url = `${BASE_URL}/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=${from}&_to=${to}`;
-    const data = await fetchWithRetry(url, { headers: VTEX_HEADERS });
+    const url = `${baseUrl}/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=${from}&_to=${to}`;
+    const data = await fetchWithRetry(url, { headers }, 0, tag);
 
     if (!data || typeof data !== 'object') break;
 
     const range = data.range || {};
     if (total === null) {
       total = range.total || 0;
-      console.log(`[vtex] Coletando IDs... total: ${total.toLocaleString('pt-BR')} produtos`);
+      console.log(`[${tag}] Coletando IDs... total: ${total.toLocaleString('pt-BR')} produtos`);
     }
 
     const productData = data.data || data;
@@ -119,13 +127,11 @@ async function fetchAllSkuIds() {
     if (entries.length === 0) break;
 
     for (const [, skuIds] of entries) {
-      if (Array.isArray(skuIds) && skuIds.length > 0) {
-        allSkuIds.push(...skuIds);
-      }
+      if (Array.isArray(skuIds) && skuIds.length > 0) allSkuIds.push(...skuIds);
     }
 
     const totalPages = Math.ceil(total / CONFIG.PAGE_SIZE);
-    console.log(`[vtex] Página ${pageNum}/${totalPages} → ${allSkuIds.length.toLocaleString('pt-BR')} skuIds`);
+    console.log(`[${tag}] Página ${pageNum}/${totalPages} → ${allSkuIds.length.toLocaleString('pt-BR')} skuIds`);
 
     if (total !== null && from + CONFIG.PAGE_SIZE - 1 >= total) break;
     from += CONFIG.PAGE_SIZE;
@@ -133,7 +139,7 @@ async function fetchAllSkuIds() {
   }
 
   const unique = [...new Set(allSkuIds)];
-  console.log(`[vtex] IDs coletados: ${unique.length.toLocaleString('pt-BR')} SKUs únicos`);
+  console.log(`[${tag}] IDs coletados: ${unique.length.toLocaleString('pt-BR')} SKUs únicos`);
   return unique;
 }
 
@@ -163,51 +169,45 @@ function mapSearchProductToRows(product) {
     .filter(Boolean);
 }
 
-async function fetchActiveProductRows(allSkuIds) {
+async function fetchActiveProductRows(allSkuIds, baseUrl, headers, tag) {
   const batches = chunkArray(allSkuIds, CONFIG.SEARCH_BATCH_SIZE);
   const rows = [];
   const totalBatches = batches.length;
 
-  console.log(`[vtex] Buscando ativos via products/search...`);
+  console.log(`[${tag}] Buscando ativos via products/search...`);
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     const queryString = batch.map((id) => `fq=skuId:${id}`).join('&');
-    const url = `${BASE_URL}/api/catalog_system/pub/products/search?${queryString}`;
+    const url = `${baseUrl}/api/catalog_system/pub/products/search?${queryString}`;
 
     try {
-      const products = await fetchWithRetry(url, { headers: VTEX_HEADERS });
+      const products = await fetchWithRetry(url, { headers }, 0, tag);
       if (Array.isArray(products)) {
-        for (const product of products) {
-          rows.push(...mapSearchProductToRows(product));
-        }
+        for (const product of products) rows.push(...mapSearchProductToRows(product));
       }
     } catch (err) {
-      console.warn(`[vtex] Lote search ${i + 1}/${totalBatches} falhou: ${err.message}`);
+      console.warn(`[${tag}] Lote search ${i + 1}/${totalBatches} falhou: ${err.message}`);
     }
 
     if ((i + 1) % 100 === 0 || i + 1 === totalBatches) {
-      console.log(`[vtex] ${rows.length.toLocaleString('pt-BR')} SKUs ativos encontrados (lote ${i + 1}/${totalBatches})`);
+      console.log(`[${tag}] ${rows.length.toLocaleString('pt-BR')} SKUs ativos encontrados (lote ${i + 1}/${totalBatches})`);
     }
 
-    if (i + 1 < batches.length) {
-      await sleep(CONFIG.DELAY_BETWEEN_SEARCH_BATCHES);
-    }
+    if (i + 1 < batches.length) await sleep(CONFIG.DELAY_BETWEEN_SEARCH_BATCHES);
   }
 
   return rows;
 }
 
 // PASSO 3 — stockkeepingunitbyid para inativos/invisíveis
-function mapSkuDetailsToRow(sku) {
-  const category = formatCategoryFromObject(sku.ProductCategories);
-
+function mapSkuDetailsToRow(sku, storeBaseUrl) {
   return {
     item:         String(sku.Id),
     title:        sku.ProductName || '',
-    link:         STORE_BASE_URL + (sku.DetailUrl || ''),
+    link:         storeBaseUrl + (sku.DetailUrl || ''),
     image:        sku.Images?.[0]?.ImageUrl || '',
-    category:     category,
+    category:     formatCategoryFromObject(sku.ProductCategories),
     available:    String(sku.IsActive ?? false),
     description:  cleanText(sku.ProductDescription),
     price:        '',
@@ -219,26 +219,25 @@ function mapSkuDetailsToRow(sku) {
   };
 }
 
-async function fetchInactiveProductRows(inactiveSkuIds) {
+async function fetchInactiveProductRows(inactiveSkuIds, baseUrl, headers, storeBaseUrl, tag) {
   const rows = [];
   let errors = 0;
   const total = inactiveSkuIds.length;
 
-  console.log(`[vtex] ${total.toLocaleString('pt-BR')} SKUs inativos para buscar via stockkeepingunitbyid`);
+  console.log(`[${tag}] ${total.toLocaleString('pt-BR')} SKUs inativos para buscar via stockkeepingunitbyid`);
 
   for (let i = 0; i < inactiveSkuIds.length; i += CONFIG.INACTIVE_BATCH_SIZE) {
     const batch = inactiveSkuIds.slice(i, i + CONFIG.INACTIVE_BATCH_SIZE);
 
     const results = await Promise.all(
-      batch.map((id) => {
-        const url = `${BASE_URL}/api/catalog_system/pvt/sku/stockkeepingunitbyid/${id}`;
-        return fetchWithRetry(url, { headers: VTEX_HEADERS });
-      })
+      batch.map((id) =>
+        fetchWithRetry(`${baseUrl}/api/catalog_system/pvt/sku/stockkeepingunitbyid/${id}`, { headers }, 0, tag)
+      )
     );
 
     for (const sku of results) {
       if (sku && sku.Id) {
-        rows.push(mapSkuDetailsToRow(sku));
+        rows.push(mapSkuDetailsToRow(sku, storeBaseUrl));
       } else {
         errors++;
       }
@@ -247,42 +246,52 @@ async function fetchInactiveProductRows(inactiveSkuIds) {
     const processed = Math.min(i + CONFIG.INACTIVE_BATCH_SIZE, total);
     if (processed % 5000 < CONFIG.INACTIVE_BATCH_SIZE || processed === total) {
       const suffix = processed === total && errors > 0 ? ` (${errors} erros ignorados)` : '';
-      console.log(`[vtex] Inativos: ${processed.toLocaleString('pt-BR')}/${total.toLocaleString('pt-BR')} processados${suffix}`);
+      console.log(`[${tag}] Inativos: ${processed.toLocaleString('pt-BR')}/${total.toLocaleString('pt-BR')} processados${suffix}`);
     }
 
-    if (i + CONFIG.INACTIVE_BATCH_SIZE < inactiveSkuIds.length) {
-      await sleep(CONFIG.DELAY_BETWEEN_INACTIVE_BATCHES);
-    }
+    if (i + CONFIG.INACTIVE_BATCH_SIZE < inactiveSkuIds.length) await sleep(CONFIG.DELAY_BETWEEN_INACTIVE_BATCHES);
   }
 
   return rows;
 }
 
-async function fetchAllProductRows() {
-  // PASSO 1: coletar todos os skuIds (ativos + inativos + invisíveis)
-  const allSkuIds = await fetchAllSkuIds();
+// Lógica compartilhada — recebe credenciais como parâmetro
+async function _fetchAllProductRows({ baseUrl, headers, storeBaseUrl, tag }) {
+  const allSkuIds  = await fetchAllSkuIds(baseUrl, headers, tag);
+  const activeRows = await fetchActiveProductRows(allSkuIds, baseUrl, headers, tag);
 
-  // PASSO 2: buscar SKUs visíveis via products/search
-  const activeRows = await fetchActiveProductRows(allSkuIds);
-
-  // PASSO 3: buscar inativos/invisíveis via stockkeepingunitbyid
   const returnedSkuIds = new Set(activeRows.map((r) => String(r.item)));
   const inactiveSkuIds = allSkuIds.filter((id) => !returnedSkuIds.has(String(id)));
+  const inactiveRows   = await fetchInactiveProductRows(inactiveSkuIds, baseUrl, headers, storeBaseUrl, tag);
 
-  const inactiveRows = await fetchInactiveProductRows(inactiveSkuIds);
-
-  // Deduplicar: ativos têm prioridade (price, msrp, c_stock preenchidos)
   const map = new Map();
   for (const row of activeRows)   map.set(String(row.item), row);
   for (const row of inactiveRows) { if (!map.has(String(row.item))) map.set(String(row.item), row); }
   const allRows = Array.from(map.values());
 
   const duplicates = activeRows.length + inactiveRows.length - allRows.length;
-  if (duplicates > 0) console.log(`[vtex] ${duplicates} duplicatas removidas (mantida versão ativa)`);
+  if (duplicates > 0) console.log(`[${tag}] ${duplicates} duplicatas removidas (mantida versão ativa)`);
 
-  console.log(`[vtex] Concluído: ${activeRows.length.toLocaleString('pt-BR')} ativos + ${inactiveRows.length.toLocaleString('pt-BR')} inativos = ${allRows.length.toLocaleString('pt-BR')} SKUs total`);
-
+  console.log(`[${tag}] Concluído: ${activeRows.length.toLocaleString('pt-BR')} ativos + ${inactiveRows.length.toLocaleString('pt-BR')} inativos = ${allRows.length.toLocaleString('pt-BR')} SKUs total`);
   return allRows;
 }
 
-module.exports = { fetchAllSkuIds, fetchActiveProductRows, fetchInactiveProductRows, fetchAllProductRows };
+async function fetchAllProductRows() {
+  return _fetchAllProductRows({
+    baseUrl:      BASE_URL,
+    headers:      makeHeaders(APP_KEY, APP_TOKEN),
+    storeBaseUrl: STORE_BASE_URL,
+    tag:          'vtex',
+  });
+}
+
+async function fetchAllProductRowsResort() {
+  return _fetchAllProductRows({
+    baseUrl:      RESORT_BASE_URL,
+    headers:      makeHeaders(RESORT_APP_KEY, RESORT_APP_TOKEN),
+    storeBaseUrl: RESORT_STORE_BASE_URL,
+    tag:          'vtex-resort',
+  });
+}
+
+module.exports = { fetchAllProductRows, fetchAllProductRowsResort };
