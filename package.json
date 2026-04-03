@@ -33,7 +33,9 @@
     "beta:build": "tsc",
     "beta:start": "node dist/server.js",
     "tunnel": "ngrok http --url=dangelo-unadopted-hsiu.ngrok-free.app 3000",
-    "sync:products": "node scripts/syncProducts.js"
+    "sync:products": "node scripts/syncProducts.js",
+    "sync:orders": "node scripts/syncOrders.js",
+    "sync:orders:historical": "node -e \"require('./scripts/syncOrders').runHistoricalSync()\""
   },
   "keywords": [
     "emarsys",

@@ -1,1644 +1,288 @@
-const axios = require('axios');
-const rateLimit = require('axios-rate-limit');
-const MemoryOptimizer = require('../utils/memoryOptimizer');
-const fs = require('fs-extra');
-const path = require('path');
-const { getBrazilianTimestamp, getBrazilianTimestampForFilename } = require('../utils/dateUtils');
-const { Client } = require('ssh2');
-require('dotenv').config();
+'use strict';
 
-/**
- * Retorna as credenciais VTEX e SFTP para o store informado.
- * Suporta: 'hope' (padrão) e 'resort'.
- * @param {string} store
- * @returns {{ vtex: Object, sftp: Object }}
- */
-function getStoreConfig(store = 'hope') {
-  if (store === 'resort') {
-    return {
-      vtex: {
-        baseURL: process.env.VTEX_BASE_URL_RESORT || '',
-        appKey: process.env.VTEX_APP_KEY_RESORT || '',
-        appToken: process.env.VTEX_APP_TOKEN_RESORT || '',
-      },
-      sftp: {
-        host: process.env.SFTP_PRODUCTS_HOST_RESORT || process.env.SFTP_PRODUCTS_HOST,
-        port: parseInt(process.env.SFTP_PRODUCTS_PORT_RESORT || process.env.SFTP_PRODUCTS_PORT),
-        username: process.env.SFTP_PRODUCTS_USERNAME_RESORT || process.env.SFTP_PRODUCTS_USERNAME,
-        password: process.env.SFTP_PRODUCTS_PASSWORD_RESORT || process.env.SFTP_PRODUCTS_PASSWORD,
-        remotePath: process.env.SFTP_PRODUCTS_REMOTE_PATH_RESORT || process.env.SFTP_PRODUCTS_REMOTE_PATH,
-      }
-    };
-  }
-  // hope (default)
-  return {
-    vtex: {
-      baseURL: process.env.VTEX_BASE_URL_HOPE || process.env.VTEX_BASE_URL || '',
-      appKey: process.env.VTEX_APP_KEY_HOPE || process.env.VTEX_APP_KEY || '',
-      appToken: process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '',
-    },
-    sftp: {
-      host: process.env.SFTP_PRODUCTS_HOST,
-      port: parseInt(process.env.SFTP_PRODUCTS_PORT),
-      username: process.env.SFTP_PRODUCTS_USERNAME,
-      password: process.env.SFTP_PRODUCTS_PASSWORD,
-      remotePath: process.env.SFTP_PRODUCTS_REMOTE_PATH,
+require('dotenv').config();
+const axios = require('axios');
+
+const BASE_URL = process.env.VTEX_BASE_URL_HOPE || process.env.VTEX_BASE_URL || '';
+const APP_KEY = process.env.VTEX_APP_KEY_HOPE || process.env.VTEX_APP_KEY || '';
+const APP_TOKEN = process.env.VTEX_APP_TOKEN_HOPE || process.env.VTEX_APP_TOKEN || '';
+const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://www.hopelingerie.com.br';
+
+const CATEGORIAS_INVALIDAS = ['INATIVO', 'OUT'];
+
+const CONFIG = {
+  PAGE_SIZE:                      50,
+  SEARCH_BATCH_SIZE:              50,
+  INACTIVE_BATCH_SIZE:            25,
+  DELAY_BETWEEN_PAGES:           200,
+  DELAY_BETWEEN_SEARCH_BATCHES:  200,
+  DELAY_BETWEEN_INACTIVE_BATCHES:150,
+  MAX_RETRIES:                     3,
+  RETRY_DELAY:                  2000,
+  RATE_LIMIT_DELAY:             5000,
+};
+
+const VTEX_HEADERS = {
+  'X-VTEX-API-AppKey':   APP_KEY,
+  'X-VTEX-API-AppToken': APP_TOKEN,
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+};
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchWithRetry(url, options = {}, retries = 0) {
+  try {
+    const response = await axios.get(url, { ...options, timeout: 30000 });
+    return response.data;
+  } catch (err) {
+    const status = err.response?.status;
+
+    if (status === 429) {
+      console.log(`[vtex] 429 rate limit — aguardando ${CONFIG.RATE_LIMIT_DELAY}ms`);
+      await sleep(CONFIG.RATE_LIMIT_DELAY);
+      return fetchWithRetry(url, options, retries);
     }
+
+    if (status === 404) return null;
+
+    if (retries < CONFIG.MAX_RETRIES) {
+      console.log(`[vtex] Erro ${status || err.code} — retry ${retries + 1}/${CONFIG.MAX_RETRIES}`);
+      await sleep(CONFIG.RETRY_DELAY);
+      return fetchWithRetry(url, options, retries + 1);
+    }
+
+    console.warn(`[vtex] Falha após ${CONFIG.MAX_RETRIES} tentativas: ${url}`);
+    return null;
+  }
+}
+
+function isInvalidCategory(parts) {
+  return parts.some((p) =>
+    CATEGORIAS_INVALIDAS.includes(p.trim().replace(/[\[\]]/g, '').toUpperCase())
+  );
+}
+
+function formatCategoryPath(categoryPath) {
+  if (!categoryPath) return '';
+  const parts = categoryPath.split('/').filter(Boolean);
+  if (isInvalidCategory(parts)) return '';
+  return parts.join(' > ');
+}
+
+function formatCategoryFromObject(categories) {
+  if (!categories) return '';
+  // Object.values() ordena chaves numéricas em ordem crescente (pai → filho)
+  const parts = Object.values(categories);
+  if (isInvalidCategory(parts)) return '';
+  return parts.join(' > ');
+}
+
+function cleanText(text) {
+  if (!text) return '';
+  return text.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// PASSO 1 — GetProductAndSkuIds
+async function fetchAllSkuIds() {
+  const allSkuIds = [];
+  let from = 1;
+  let pageNum = 0;
+  let total = null;
+
+  while (true) {
+    const to = from + CONFIG.PAGE_SIZE - 1;
+    pageNum++;
+    const url = `${BASE_URL}/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=${from}&_to=${to}`;
+    const data = await fetchWithRetry(url, { headers: VTEX_HEADERS });
+
+    if (!data || typeof data !== 'object') break;
+
+    const range = data.range || {};
+    if (total === null) {
+      total = range.total || 0;
+      console.log(`[vtex] Coletando IDs... total: ${total.toLocaleString('pt-BR')} produtos`);
+    }
+
+    const productData = data.data || data;
+    const entries = Object.entries(productData).filter(([k]) => k !== 'range');
+    if (entries.length === 0) break;
+
+    for (const [, skuIds] of entries) {
+      if (Array.isArray(skuIds) && skuIds.length > 0) {
+        allSkuIds.push(...skuIds);
+      }
+    }
+
+    const totalPages = Math.ceil(total / CONFIG.PAGE_SIZE);
+    console.log(`[vtex] Página ${pageNum}/${totalPages} → ${allSkuIds.length.toLocaleString('pt-BR')} skuIds`);
+
+    if (total !== null && from + CONFIG.PAGE_SIZE - 1 >= total) break;
+    from += CONFIG.PAGE_SIZE;
+    await sleep(CONFIG.DELAY_BETWEEN_PAGES);
+  }
+
+  const unique = [...new Set(allSkuIds)];
+  console.log(`[vtex] IDs coletados: ${unique.length.toLocaleString('pt-BR')} SKUs únicos`);
+  return unique;
+}
+
+// PASSO 2 — products/search em lotes de 50
+function mapSearchProductToRows(product) {
+  if (!product.items || !Array.isArray(product.items)) return [];
+  return product.items
+    .map((sku) => {
+      const offer = sku.sellers?.[0]?.commertialOffer;
+      if (!offer) return null;
+      return {
+        item:         String(sku.itemId),
+        title:        product.productName || '',
+        link:         product.link || '',
+        image:        sku.images?.[0]?.imageUrl || '',
+        category:     formatCategoryPath(product.categories?.[0]),
+        available:    String(offer.IsAvailable ?? false),
+        description:  cleanText(product.description),
+        price:        offer.Price ?? '',
+        msrp:         offer.ListPrice ?? '',
+        group_id:     String(product.productId),
+        c_stock:      offer.AvailableQuantity ?? 0,
+        c_sku_id:     String(sku.itemId),
+        c_product_id: String(product.productId),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function fetchActiveProductRows(allSkuIds) {
+  const batches = chunkArray(allSkuIds, CONFIG.SEARCH_BATCH_SIZE);
+  const rows = [];
+  const totalBatches = batches.length;
+
+  console.log(`[vtex] Buscando ativos via products/search...`);
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const queryString = batch.map((id) => `fq=skuId:${id}`).join('&');
+    const url = `${BASE_URL}/api/catalog_system/pub/products/search?${queryString}`;
+
+    try {
+      const products = await fetchWithRetry(url, { headers: VTEX_HEADERS });
+      if (Array.isArray(products)) {
+        for (const product of products) {
+          rows.push(...mapSearchProductToRows(product));
+        }
+      }
+    } catch (err) {
+      console.warn(`[vtex] Lote search ${i + 1}/${totalBatches} falhou: ${err.message}`);
+    }
+
+    if ((i + 1) % 100 === 0 || i + 1 === totalBatches) {
+      console.log(`[vtex] ${rows.length.toLocaleString('pt-BR')} SKUs ativos encontrados (lote ${i + 1}/${totalBatches})`);
+    }
+
+    if (i + 1 < batches.length) {
+      await sleep(CONFIG.DELAY_BETWEEN_SEARCH_BATCHES);
+    }
+  }
+
+  return rows;
+}
+
+// PASSO 3 — stockkeepingunitbyid para inativos/invisíveis
+function mapSkuDetailsToRow(sku) {
+  const category = formatCategoryFromObject(sku.ProductCategories);
+
+  return {
+    item:         String(sku.Id),
+    title:        sku.ProductName || '',
+    link:         STORE_BASE_URL + (sku.DetailUrl || ''),
+    image:        sku.Images?.[0]?.ImageUrl || '',
+    category:     category,
+    available:    String(sku.IsActive ?? false),
+    description:  cleanText(sku.ProductDescription),
+    price:        '',
+    msrp:         '',
+    group_id:     String(sku.ProductId),
+    c_stock:      0,
+    c_sku_id:     String(sku.Id),
+    c_product_id: String(sku.ProductId),
   };
 }
 
-class VtexProductService {
-  constructor(store = 'hope') {
-    this.store = store;
-    const config = getStoreConfig(store);
+async function fetchInactiveProductRows(inactiveSkuIds) {
+  const rows = [];
+  let errors = 0;
+  const total = inactiveSkuIds.length;
 
-    const headers = {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'X-VTEX-API-AppKey': config.vtex.appKey,
-      'X-VTEX-API-AppToken': config.vtex.appToken
-    };
+  console.log(`[vtex] ${total.toLocaleString('pt-BR')} SKUs inativos para buscar via stockkeepingunitbyid`);
 
-    const baseURL = config.vtex.baseURL;
-    this.client = rateLimit(axios.create({
-      baseURL: baseURL,
-      headers
-    }), { maxRequests: 3900, perMilliseconds: 1000 });
+  for (let i = 0; i < inactiveSkuIds.length; i += CONFIG.INACTIVE_BATCH_SIZE) {
+    const batch = inactiveSkuIds.slice(i, i + CONFIG.INACTIVE_BATCH_SIZE);
 
-    // Initialize axios-retry asynchronously
-    this._initializeAxiosRetry();
-
-    // Configurações de diretórios
-    const defaultDataDir =  path.join(__dirname, '..', 'data');
-    const defaultExports =  path.join(__dirname, '..', 'exports');
-    this.dataDir = process.env.DATA_DIR || defaultDataDir;
-    this.exportsDir = process.env.EXPORTS_DIR || defaultExports;
-
-    // Arquivos de dados
-    this.productsFile = path.join(this.dataDir, 'products.json');
-    this.lastProductSyncFile = path.join(this.dataDir, 'last-product-sync.json');
-
-    // Controle de sincronização
-    this._isSyncRunning = false;
-
-    // Otimizador de memória
-    this.memoryOptimizer = new MemoryOptimizer();
-
-    // Configurações SFTP para Emarsys - PRODUTOS
-    let sftpPassword = config.sftp.password || process.env.SFTP_PASSWORD;
-    try {
-      // Tenta decodificar apenas se contiver caracteres encoded (%)
-      if (sftpPassword && sftpPassword.includes('%')) {
-        sftpPassword = decodeURIComponent(sftpPassword);
-      }
-    } catch (e) {
-      console.warn(`⚠️ [${store}] Não foi possível decodificar senha SFTP, usando valor original`);
-    }
-
-    this.sftpConfig = {
-      host: config.sftp.host || process.env.SFTP_HOST,
-      port: config.sftp.port || parseInt(process.env.SFTP_PORT),
-      username: config.sftp.username || process.env.SFTP_USERNAME,
-      password: sftpPassword,
-      readyTimeout: parseInt(process.env.SFTP_READY_TIMEOUT) || 90000, // 90 segundos para handshake
-      keepaliveInterval: parseInt(process.env.SFTP_KEEPALIVE_INTERVAL) || 10000, // Keepalive a cada 10s
-      keepaliveCountMax: parseInt(process.env.SFTP_KEEPALIVE_COUNT_MAX) || 10, // Até 10 keepalives falhos
-      // Configurações adicionais para estabilidade
-      strictVendor: false,
-      timeout: 180000, // 3 minutos timeout geral de conexão
-      // Configurações para compatibilidade com servidores FTP/SFTP
-      algorithms: {
-        kex: [
-          'diffie-hellman-group1-sha1',
-          'diffie-hellman-group14-sha1',
-          'diffie-hellman-group-exchange-sha1',
-          'diffie-hellman-group-exchange-sha256'
-        ],
-        cipher: [
-          'aes128-ctr',
-          'aes192-ctr',
-          'aes256-ctr',
-          'aes128-gcm',
-          'aes256-gcm',
-          'aes128-cbc',
-          'aes192-cbc',
-          'aes256-cbc',
-          '3des-cbc'
-        ],
-        serverHostKey: [
-          'ssh-rsa',
-          'ssh-dss',
-          'ecdsa-sha2-nistp256',
-          'ecdsa-sha2-nistp384',
-          'ecdsa-sha2-nistp521'
-        ],
-        hmac: [
-          'hmac-sha2-256',
-          'hmac-sha2-512',
-          'hmac-sha1'
-        ]
-      }
-    };
-    this.sftpRemotePath = config.sftp.remotePath || process.env.SFTP_REMOTE_PATH;
-
-    // Validação das configurações SFTP
-    this._validateSftpConfig();
-  }
-
-  // Aguarda até que um arquivo exista e tenha tamanho mínimo
-  async _waitUntilFileReady(filePath, { timeoutMs = 60000, intervalMs = 200, minSize = 1 } = {}) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const stats = await fs.stat(filePath);
-        if (stats.size >= minSize) return true;
-      } catch (_) { /* arquivo ainda não existe */ }
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-    throw new Error(`Arquivo não ficou pronto a tempo: ${filePath}`);
-  }
-
-  /**
-   * Busca todos os produtos da API da VTEX - STEP1
-   * @param {number} limit - Limite de produtos
-   * @returns {Promise<Array>} Array de produtos
-   */
-  async getAllProductsFromApi(limit = null) {
-    console.log('🔍 Buscando produtos da API da VTEX...');
-    
-    const productData = await this.getProductIdsAndSkusFromPrivateApi();
-    
-    if (!productData || Object.keys(productData).length === 0) {
-      console.log('⚠️ Nenhum produto encontrado na API');
-      return [];
-    }
-    
-    // Filtrar produtos que têm SKUs válidos (ignorar produtos com array vazio)
-    const allProductIds = Object.keys(productData);
-    let productsWithSkus = 0;
-    let productsWithoutSkus = 0;
-    
-    const productIds = allProductIds
-      .map(id => parseInt(id))
-      .filter(id => {
-        const skus = productData[id]?.skus || [];
-        if (skus.length === 0) {
-          productsWithoutSkus++;
-          console.log(`⏭️ Ignorando produto ${id}: sem SKUs na API privada`);
-          return false;
-        }
-        productsWithSkus++;
-        return true;
-      });
-    
-    console.log(`📊 Estatísticas da API privada:`);
-    console.log(`   ✅ Produtos com SKUs: ${productsWithSkus}`);
-    console.log(`   ⏭️ Produtos ignorados (sem SKUs): ${productsWithoutSkus}`);
-    console.log(`   📋 Total a processar: ${productIds.length}`);
-    
-    if (limit) {
-      productIds.splice(limit);
-      console.log(`📋 Aplicando limite: ${limit} produtos`);
-    }
-    
-    const products = [];
-    const batchSize = 10; // Reduzido para melhor controle
-    let processedCount = 0;
-    let successCount = 0;
-    let failureCount = 0;
-    
-    for (let i = 0; i < productIds.length; i += batchSize) {
-      const batch = productIds.slice(i, i + batchSize);
-      console.log(`\n🔄 Processando lote ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)}: produtos ${i+1} a ${Math.min(i+batchSize, productIds.length)}`);
-      
-      const batchPromises = batch.map(async (productId) => {
-        try {
-          const skuIds = productData[productId]?.skus || [];
-          const productDetails = await this.fetchProductDetails(productId, skuIds);
-          
-          if (productDetails) {
-            successCount++;
-            console.log(`   ✅ Produto ${productId}: processado com sucesso`);
-            return productDetails;
-          } else {
-            failureCount++;
-            console.log(`   ⚠️ Produto ${productId}: não foi possível obter detalhes`);
-            return null;
-          }
-        } catch (error) {
-          failureCount++;
-          console.error(`   ❌ Produto ${productId}: erro - ${error.message}`);
-          return null;
-        }
-      });
-      
-      const batchResults = await Promise.all(batchPromises);
-      products.push(...batchResults.filter(p => p !== null));
-      processedCount += batch.length;
-      
-      console.log(`   📊 Progresso: ${processedCount}/${productIds.length} (Sucesso: ${successCount}, Falha: ${failureCount})`);
-      
-      // Aguarda entre lotes
-      if (i + batchSize < productIds.length) {
-        console.log(`   ⏳ Aguardando 500ms antes do próximo lote...`);
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-    
-    console.log(`\n✅ Processamento concluído!`);
-    console.log(`   📦 Produtos válidos: ${products.length}`);
-    console.log(`   ✅ Sucesso: ${successCount}`);
-    console.log(`   ❌ Falha: ${failureCount}`);
-    
-    return products;
-  }
-
-  /**
-   * Valida as configurações SFTP usando this.sftpConfig (já populado pelo constructor via getStoreConfig)
-   */
-  _validateSftpConfig() {
-    const hasConfig = this.sftpConfig.host && this.sftpConfig.username && this.sftpConfig.password;
-
-    if (!hasConfig) {
-      console.warn(`⚠️ [${this.store}] Variáveis SFTP de PRODUTOS não configuradas`);
-      console.warn(`📤 [${this.store}] Upload SFTP de produtos será desabilitado até que as variáveis sejam configuradas`);
-    } else {
-      console.log(`✅ [${this.store}] Configurações SFTP de PRODUTOS validadas`);
-      console.log(`   🌐 Host: ${this.sftpConfig.host}`);
-      console.log(`   🔌 Porta: ${this.sftpConfig.port}`);
-      console.log(`   👤 Usuário: ${this.sftpConfig.username}`);
-      console.log(`   📂 Caminho remoto: ${this.sftpRemotePath}`);
-    }
-  }
-
-  _initializeAxiosRetry() {
-    try {
-      // Configurar retry automático simples
-      this.client.interceptors.response.use(
-        response => response,
-        async error => {
-          const config = error.config;
-          config.retryCount = config.retryCount || 0;
-          
-          if (config.retryCount < 3 && (
-            !error.response || 
-            error.response.status >= 500 || 
-            error.code === 'ECONNRESET' ||
-            error.code === 'ETIMEDOUT'
-          )) {
-            config.retryCount++;
-            console.log(`🔄 Tentativa ${config.retryCount}/3 para ${config.url}`);
-            
-            // Aguarda antes de tentar novamente (backoff exponencial)
-            await new Promise(resolve => setTimeout(resolve, Math.pow(2, config.retryCount) * 1000));
-            
-            return this.client.request(config);
-          }
-          
-          return Promise.reject(error);
-        }
-      );
-      console.log('✅ Retry nativo configurado com sucesso');
-    } catch (error) {
-      console.error('Failed to initialize retry nativo:', error);
-    }
-  }
-
-  /**
-   * Garante que o diretório de dados existe
-   */
-  async ensureDataDirectory() {
-    try {
-      await fs.ensureDir(this.dataDir);
-      await fs.ensureDir(this.exportsDir);
-    } catch (error) {
-      console.error('Erro ao criar diretório de dados:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Testa a conectividade com a API da VTEX
-   * @returns {Promise<Object>} Resultado do teste de conectividade
-   */
-  async testConnectivity() {
-    console.log('🌐 Testando conectividade com a API da VTEX...');
-    
-    try {
-      const response = await this.client.get('/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=0&_to=9');
-      
-      console.log(`✅ Conectividade OK - Status: ${response.status}`);
-      
-      return {
-        success: true,
-        status: response.status,
-        message: 'Conectividade com a API da VTEX está funcionando'
-      };
-      
-    } catch (error) {
-      console.error('❌ Erro de conectividade com a API da VTEX:', error.message);
-      
-      let errorType = 'Desconhecido';
-      if (error.code === 'ECONNABORTED') {
-        errorType = 'Timeout';
-      } else if (error.code === 'ENOTFOUND') {
-        errorType = 'DNS não encontrado';
-      } else if (error.code === 'ECONNREFUSED') {
-        errorType = 'Conexão recusada';
-      } else if (error.response) {
-        errorType = `HTTP ${error.response.status}`;
-      }
-      
-      return {
-        success: false,
-        error: error.message,
-        errorType,
-        message: `Falha na conectividade: ${errorType}`
-      };
-    }
-  }
-
-  /**
-   * Busca todos os produtos
-   * @returns {Promise<Object>} Lista de produtos
-   */
-  async getAllProducts() {
-    try {
-      const response = await this.client.get('/api/catalog_system/pvt/products/GetProductAndSkuIds');
-      return { success: true, data: response.data };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Busca e armazena todos os productIds e SKUs da API privada da VTEX
-   * @returns {Promise<Object>} Objeto com productIds e SKUs
-   */
-  async getProductIdsAndSkusFromPrivateApi() {
-    console.log('🔍 Buscando productIds na API privada da VTEX...');
-    
-    try {
-      const allProductData = {};
-      let currentPage = 0;
-      const pageSize = 250;
-      let hasMore = true;
-      let totalProducts = 0;
-      
-      console.log(`🔄 Iniciando paginação com ${pageSize} produtos por página...`);
-      
-      while (hasMore) {
-        const from = currentPage * pageSize;
-        const to = from + pageSize - 1;
-        const url = `/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=${from}&_to=${to}`;
-        
-        console.log(`📄 Página ${currentPage + 1}: buscando produtos ${from} a ${to}...`);
-        
-        const response = await this.client.get(url);
-        
-        if (!response.data) {
-          console.log(`⚠️ Página ${currentPage + 1}: Resposta vazia`);
-          break;
-        }
-        
-        // Processar resposta baseado na estrutura
-        if (typeof response.data === 'object') {
-          // Verificar se há range info para paginação
-          if (response.data.range) {
-            totalProducts = response.data.range.total || 0;
-            hasMore = response.data.range.to < totalProducts - 1;
-            console.log(`📊 Total de produtos: ${totalProducts}, Tem mais páginas: ${hasMore}`);
-          }
-          
-          // Processar os dados dos produtos
-          if (response.data.data && typeof response.data.data === 'object') {
-            const productKeys = Object.keys(response.data.data);
-            
-            // Se for um objeto com productIds como chaves
-            if (productKeys.length > 0 && !isNaN(parseInt(productKeys[0]))) {
-              productKeys.forEach(key => {
-                const productId = parseInt(key);
-                const skuData = response.data.data[key];
-                
-                if (Array.isArray(skuData) && skuData.length > 0) {
-                  const validSkus = skuData.filter(sku => typeof sku === 'number' && sku > 0);
-                  allProductData[productId] = {
-                    productId: productId,
-                    skus: validSkus,
-                    lastUpdated: new Date().toISOString()
-                  };
-                }
-              });
-            }
-          }
-          // Fallback: se não tem .data, tenta processar response.data diretamente
-          else {
-            const keys = Object.keys(response.data);
-            
-            // Se for um objeto com productIds como chaves
-            if (keys.length > 0 && !isNaN(parseInt(keys[0]))) {
-              keys.forEach(key => {
-                const productId = parseInt(key);
-                const skuData = response.data[key];
-                
-                if (Array.isArray(skuData) && skuData.length > 0) {
-                  const validSkus = skuData.filter(sku => typeof sku === 'number' && sku > 0);
-                  allProductData[productId] = {
-                    productId: productId,
-                    skus: validSkus,
-                    lastUpdated: new Date().toISOString()
-                  };
-                }
-              });
-            }
-          }
-        }
-        
-        // Se não encontrou produtos nesta página, para a paginação
-        const foundProductsInPage = response.data.data ? Object.keys(response.data.data).length : 0;
-        if (foundProductsInPage === 0) {
-          console.log(`⚠️ Página ${currentPage + 1}: Nenhum produto encontrado, parando paginação`);
-          break;
-        }
-        
-        currentPage++;
-        
-        // Pausa mínima entre páginas
-        if (hasMore) {
-          await new Promise(resolve => setTimeout(resolve, 25));
-        }
-      }
-      
-      const foundProducts = Object.keys(allProductData).length;
-      console.log(`✅ Paginação concluída! Total de produtos encontrados: ${foundProducts}`);
-      
-      return allProductData;
-      
-    } catch (error) {
-      console.error('❌ Erro na API privada:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Testa diferentes endpoints da API privada da VTEX
-   * @returns {Promise<Object>} Resultados dos testes
-   */
-  async testPrivateApiEndpoints() {
-    console.log('🔍 Testando diferentes endpoints da API privada da VTEX...');
-    
-    const endpoints = [
-      {
-        name: 'GetProductAndSkuIds',
-        url: `/api/catalog_system/pvt/products/GetProductAndSkuIds?_from=0&_to=9`,
-        description: 'Lista produtos com paginação'
-      },
-      {
-        name: 'GetProductAndSkuIds (sem paginação)',
-        url: `/api/catalog_system/pvt/products/GetProductAndSkuIds`,
-        description: 'Lista produtos sem paginação'
-      }
-    ];
-    
-    const results = {};
-    
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`🔍 Testando endpoint: ${endpoint.name}`);
-        
-        const response = await this.client.get(endpoint.url);
-        
-        results[endpoint.name] = {
-          success: true,
-          status: response.status,
-          dataType: typeof response.data,
-          isArray: Array.isArray(response.data),
-          length: Array.isArray(response.data) ? response.data.length : 'N/A',
-          sample: Array.isArray(response.data) && response.data.length > 0 ? response.data[0] : null,
-          description: endpoint.description
-        };
-        
-        console.log(`✅ ${endpoint.name}: ${response.status} - ${Array.isArray(response.data) ? response.data.length : 'N/A'} items`);
-        
-      } catch (error) {
-        results[endpoint.name] = {
-          success: false,
-          error: error.message,
-          status: error.response?.status,
-          description: endpoint.description
-        };
-        
-        console.log(`❌ ${endpoint.name}: ${error.response?.status || 'No response'} - ${error.message}`);
-      }
-      
-      // Pausa entre testes
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    return results;
-  }
-
-  /**
-   * Carrega os productIds e SKUs do arquivo JSON
-   * @returns {Promise<Object>} Dados dos produtos
-   */
-  async loadProductIdsFromFile() {
-    try {
-      const filePath = path.join(this.dataDir, 'vtex-product-ids.json');
-      
-      if (!await fs.pathExists(filePath)) {
-        console.log('📋 Arquivo de productIds não encontrado');
-        return null;
-      }
-      
-      const data = await fs.readJson(filePath);
-      console.log(`📋 ProductIds carregados: ${Object.keys(data.products || {}).length} produtos`);
-      return data;
-    } catch (error) {
-      console.error('❌ Erro ao carregar productIds:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Carrega produtos do arquivo JSON
-   * @returns {Promise<Array>} Array de produtos
-   */
-  async loadProductsFromFile() {
-    try {
-      if (await fs.pathExists(this.productsFile)) {
-        const products = await fs.readJson(this.productsFile);
-        console.log(`📖 ${products.length} produtos carregados de ${this.productsFile}`);
-        return products;
-      } else {
-        console.log('📖 Arquivo de produtos não encontrado, retornando array vazio');
-        return [];
-      }
-    } catch (error) {
-      console.error('❌ Erro ao carregar produtos:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Salva produtos no arquivo JSON
-   * @param {Array} products - Array de produtos
-   */
-  async saveProductsToFile(products) {
-    try {
-      console.log(`💾 Salvando ${products.length} produtos...`);
-      await this.ensureDataDirectory();
-      await fs.writeJson(this.productsFile, products, { spaces: 0 });
-      console.log(`✅ ${products.length} produtos salvos em ${this.productsFile}`);
-    } catch (error) {
-      console.error('❌ Erro ao salvar produtos:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Salva produtos no arquivo JSON de forma otimizada (sem formatação)
-   * @param {Array} products - Array de produtos
-   */
-  async saveProductsToFileOptimized(products) {
-    try {
-      console.log(`💾 Salvando ${products.length} produtos (otimizado)...`);
-      await this.ensureDataDirectory();
-      
-      // Usa JSON.stringify diretamente para economizar memória
-      const jsonString = JSON.stringify(products);
-      const fsPromises = require('fs').promises;
-      await fsPromises.writeFile(this.productsFile, jsonString, 'utf8');
-      
-      // Força garbage collection após salvar
-      if (global.gc) {
-        console.log('🧹 Executando garbage collection após salvar produtos...');
-        global.gc();
-      }
-      
-      console.log(`✅ ${products.length} produtos salvos em ${this.productsFile} (otimizado)`);
-    } catch (error) {
-      console.error('❌ Erro ao salvar produtos (otimizado):', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Salva informações da última sincronização
-   * @param {Object} syncInfo - Informações da sincronização
-   */
-  async saveLastSyncInfo(syncInfo) {
-    try {
-      await this.ensureDataDirectory();
-      await fs.writeJson(this.lastProductSyncFile, syncInfo, { spaces: 2 });
-      console.log(`💾 Informações de sincronização salvas`);
-    } catch (error) {
-      console.error('❌ Erro ao salvar informações de sincronização:', error.message);
-    }
-  }
-
-  /**
-   * Obtém informações da última sincronização
-   * @returns {Promise<Object>} Informações da última sincronização
-   */
-  async getLastSyncInfo() {
-    try {
-      if (await fs.pathExists(this.lastProductSyncFile)) {
-        return await fs.readJson(this.lastProductSyncFile);
-      } else {
-        return null;
-      }
-    } catch (error) {
-      console.error('❌ Erro ao carregar informações de sincronização:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Obtém estatísticas dos produtos
-   * @returns {Promise<Object>} Estatísticas
-   */
-  async getStats() {
-    try {
-      const products = await this.loadProductsFromFile();
-      const lastSync = await this.getLastSyncInfo();
-      
-      return {
-        totalProducts: products.length,
-        lastSync: lastSync?.timestamp || 'Nunca',
-        lastSyncSuccess: lastSync?.success || false,
-        fileSize: await fs.pathExists(this.productsFile) ? (await fs.stat(this.productsFile)).size : 0
-      };
-    } catch (error) {
-      console.error('❌ Erro ao obter estatísticas:', error.message);
-      return {
-        totalProducts: 0,
-        lastSync: 'Erro',
-        lastSyncSuccess: false,
-        fileSize: 0
-      };
-    }
-  }
-
-  /**
-   * Busca SKUs de um produto via API privada (para produtos inativos)
-   * @param {number} productId - ID do produto
-   * @param {number} retryCount - Contador de tentativas
-   * @returns {Promise<Array>} Array de SKUs
-   */
-  async fetchSkusByProductId(productId, retryCount = 0) {
-    const maxRetries = 3;
-    const baseDelay = 2000; // 2 segundos base
-    
-    try {
-      const response = await this.client.get(`/api/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`);
-      const skus = response.data || [];
-      
-      // Valida se os SKUs têm RefId válido
-      const validSkus = skus.filter(sku => sku && sku.RefId && sku.RefId.trim() !== '');
-      
-      if (validSkus.length === 0 && skus.length > 0 && retryCount < maxRetries) {
-        // Se não há SKUs válidos mas existem SKUs, tenta novamente com delay maior
-        const delay = baseDelay * Math.pow(2, retryCount); // Backoff exponencial
-        console.log(`⚠️ Produto ${productId}: SKUs sem RefId válido, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return await this.fetchSkusByProductId(productId, retryCount + 1);
-      }
-      
-      if (validSkus.length === 0 && skus.length > 0) {
-        console.warn(`⚠️ Produto ${productId}: Todos os SKUs sem RefId válido após ${maxRetries} tentativas`);
-        // Retorna os SKUs mesmo sem RefId válido, mas com fallback
-        return skus.map(sku => ({
-          ...sku,
-          RefId: sku.RefId || `SKU-${sku.Id || 'UNKNOWN'}` // Fallback para ID do SKU
-        }));
-      }
-      
-      return validSkus;
-    } catch (error) {
-      console.error(`❌ Erro ao buscar SKUs do produto ${productId}:`, error.message);
-      
-      // Retry em caso de erro de rede/timeout
-      if (retryCount < maxRetries && (
-        error.code === 'ECONNRESET' || 
-        error.code === 'ETIMEDOUT' || 
-        error.response?.status >= 500
-      )) {
-        const delay = baseDelay * Math.pow(2, retryCount);
-        console.log(`🔄 Produto ${productId}: Erro de rede, tentativa ${retryCount + 1}/${maxRetries} em ${delay}ms`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return await this.fetchSkusByProductId(productId, retryCount + 1);
-      }
-      
-      return [];
-    }
-  }
-
-  /**
-   * Busca detalhes de um SKU específico via API privada
-   * @param {number} skuId - ID do SKU
-   * @returns {Promise<Object>} Detalhes do SKU
-   */
-  async fetchSkuDetailsFromPrivateApi(skuId) {
-    try {
-      const url = `/api/catalog/pvt/stockkeepingunit/${skuId}`;
-      const response = await this.client.get(url);
-      
-      if (response.data && response.data.Id) {
-        return response.data;
-      }
-      
-      return null;
-    } catch (error) {
-      if (error.response?.status === 404) {
-        // SKU não existe
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Busca dados completos do produto na API privada da VTEX
-   * @param {number} productId - ID do produto
-   * @returns {Promise<Object>} Dados completos do produto
-   */
-  async fetchProductDetailsFromPrivateApi(productId) {
-    try {
-      const url = `https://hope.vtexcommercestable.com.br/api/catalog/pvt/product/${productId}`;
-      const response = await this.client.get(url);
-      
-      if (response.data) {
-        return response.data;
-      }
-      
-      return null;
-    } catch (error) {
-      console.warn(`⚠️ Erro ao buscar detalhes do produto ${productId} na API privada:`, error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Constrói um objeto produto a partir de SKUs da API privada
-   * @param {number} productId - ID do produto
-   * @param {Array} skus - Array de SKUs com detalhes
-   * @param {Object} productDetails - Dados do produto da API privada (opcional)
-   * @returns {Promise<Object>} Objeto produto estruturado
-   */
-  async buildProductFromSkus(productId, skus, productDetails = null) {
-    if (!skus || skus.length === 0) {
-      return null;
-    }
-
-    // Se não recebeu productDetails, busca agora
-    if (!productDetails) {
-      productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
-    }
-    
-    // Extrai dados do produto
-    let productName = '';
-    let productDescription = '';
-    let productCategory = '';
-    let productIsActive = false;
-    let productLinkId = '';
-    let extractedCategory = 'inativo'; // Padrão: inativo
-    
-    if (productDetails) {
-      productName = productDetails.Name || productDetails.name || '';
-      productDescription = productDetails.Description || '';
-      productCategory = productDetails.CategoryName || '';
-      productIsActive = productDetails.IsActive === true || productDetails.isActive === true;
-      productLinkId = productDetails.LinkId || productId.toString();
-      
-      // Validação de categoria conforme overview.md
-      // Se não tem CategoryName ou é vazio, usar "inativo"
-      if (productCategory && productCategory.trim() !== '') {
-        extractedCategory = productCategory.trim();
-      } else {
-        // Sem categoria = inativo
-        extractedCategory = 'inativo';
-      }
-      
-      console.log(`         ✓ Nome: "${productName}"`);
-      console.log(`         ✓ Categoria: "${extractedCategory}"`);
-      console.log(`         ✓ Ativo: ${productIsActive}`);
-    } else {
-      console.log(`         ⚠️ Sem dados do produto na API privada`);
-      productLinkId = productId.toString();
-    }
-    
-    // Verifica se a categoria indica produto inativo
-    const isCategoryInactive = extractedCategory.toLowerCase().includes('inativo');
-    
-    // Pega o primeiro SKU como base para alguns campos
-    const firstSku = skus[0];
-    
-    // Constrói o objeto produto no formato esperado pela planilha
-    const product = {
-      productId: productId,
-      productName: productName,
-      description: productDescription,
-      link: `https://www.hope.com.br/${productLinkId}/p`,
-      category: extractedCategory,
-      categories: [extractedCategory],
-      releaseDate: firstSku.DateUpdated || firstSku.CreationDate || '',
-      price: 0, // API privada não retorna preço
-      listPrice: 0,
-      images: [],
-      // Constrói os items (SKUs) no formato esperado
-      items: skus.map(sku => {
-        // Validação robusta do RefId
-        let refId = '';
-        
-        if (sku.RefId && typeof sku.RefId === 'string' && sku.RefId.trim() !== '') {
-          refId = sku.RefId.trim();
-        } else if (sku.Id) {
-          refId = `SKU-${sku.Id}`;
-          console.warn(`         ⚠️ SKU ${sku.Id}: usando ID como RefId fallback`);
-        } else {
-          refId = `PROD-${productId}-UNKNOWN`;
-          console.warn(`         ⚠️ SKU sem ID: RefId gerado automaticamente`);
-        }
-        
-        // Determina disponibilidade
-        // Produto deve estar ativo E SKU deve estar ativo E categoria não pode ser "inativo"
-        const skuIsActive = sku.IsActive === true || sku.ActivateIfPossible === true;
-        const isAvailable = productIsActive && skuIsActive && !isCategoryInactive;
-        
-        return {
-          referenceId: [{ Value: refId }],
-          ean: sku.EAN || '',
-          images: [],
-          sellers: [{
-            commertialOffer: {
-              Price: 0,
-              ListPrice: 0,
-              IsAvailable: isAvailable,
-              AvailableQuantity: isAvailable ? 0 : 0 // API privada não retorna estoque
-            }
-          }],
-          Tamanho: sku.Name || '',
-          releaseDate: sku.DateUpdated || sku.CreationDate || ''
-        };
+    const results = await Promise.all(
+      batch.map((id) => {
+        const url = `${BASE_URL}/api/catalog_system/pvt/sku/stockkeepingunitbyid/${id}`;
+        return fetchWithRetry(url, { headers: VTEX_HEADERS });
       })
-    };
+    );
 
-    return product;
-  }
-
-  /**
-   * Busca detalhes de um produto específico
-   * @param {number} productId - ID do produto
-   * @param {Array} skuIds - Array de IDs dos SKUs do produto (da API privada)
-   * @param {number} retryCount - Contador de tentativas
-   * @returns {Promise<Object>} Detalhes do produto
-   */
-  async fetchProductDetails(productId, skuIds = [], retryCount = 0) {
-    const maxRetries = 2;
-    const baseDelay = 1000; // 1 segundo base
-    
-    try {
-      // PASSO 1: Tentar API pública primeiro (produtos ativos com dados completos)
-      const url = `https://www.hope.com.br/api/catalog_system/pub/products/search?fq=productId%3A${productId}`;
-      const response = await axios.get(url, {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 8000,
-        validateStatus: function (status) {
-          return status < 500;
-        }
-      });
-
-      // Se encontrou na API pública
-      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-        const product = response.data[0];
-        console.log(`      ✓ API pública: produto encontrado`);
-        
-        // CORREÇÃO: Verificar se todos os SKUs esperados estão presentes
-        // A API pública só retorna SKUs ativos, precisamos complementar com os inativos
-        if (skuIds && skuIds.length > 0 && product.items && Array.isArray(product.items)) {
-          // Extrai os IDs dos SKUs retornados pela API pública
-          const returnedSkuIds = new Set();
-          product.items.forEach(item => {
-            // O item pode ter itemId como string ou número
-            if (item.itemId) {
-              returnedSkuIds.add(parseInt(item.itemId));
-            }
-          });
-          
-          // Identifica SKUs faltantes (inativos que não vieram da API pública)
-          const missingSkuIds = skuIds.filter(skuId => !returnedSkuIds.has(skuId));
-          
-          if (missingSkuIds.length > 0) {
-            console.log(`      ⚠️ API pública retornou ${returnedSkuIds.size}/${skuIds.length} SKUs`);
-            console.log(`      🔍 Buscando ${missingSkuIds.length} SKUs inativos na API privada...`);
-            
-            // Busca detalhes do produto na API privada para obter categoria correta
-            const productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
-            
-            // Busca os SKUs faltantes na API privada
-            const missingSkusDetails = [];
-            for (const skuId of missingSkuIds) {
-              try {
-                const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
-                if (skuDetail && skuDetail.RefId) {
-                  missingSkusDetails.push(skuDetail);
-                  console.log(`         ✓ SKU ${skuId}: encontrado na API privada (inativo)`);
-                } else if (skuDetail) {
-                  // SKU existe mas não tem RefId, usa fallback
-                  skuDetail.RefId = `SKU-${skuId}`;
-                  missingSkusDetails.push(skuDetail);
-                  console.log(`         ⚠️ SKU ${skuId}: sem RefId, usando fallback`);
-                } else {
-                  console.log(`         ⚠️ SKU ${skuId}: não encontrado na API privada`);
-                }
-              } catch (skuError) {
-                console.log(`         ⚠️ SKU ${skuId}: erro ao buscar - ${skuError.message}`);
-              }
-            }
-            
-            // Mescla os SKUs inativos com o produto da API pública
-            if (missingSkusDetails.length > 0) {
-              console.log(`      ✓ Adicionando ${missingSkusDetails.length} SKUs inativos ao produto`);
-              
-              // Determina se a categoria indica inativo
-              const productCategory = productDetails?.CategoryName || product.categories?.[0] || '';
-              const isCategoryInactive = productCategory.toLowerCase().includes('inativo');
-              
-              // Converte os SKUs da API privada para o formato de items
-              const inactiveItems = missingSkusDetails.map(sku => {
-                return {
-                  itemId: String(sku.Id),
-                  referenceId: [{ Value: sku.RefId }],
-                  ean: sku.EAN || '',
-                  images: [],
-                  sellers: [{
-                    commertialOffer: {
-                      Price: 0,
-                      ListPrice: 0,
-                      IsAvailable: false, // SKUs inativos nunca estão disponíveis
-                      AvailableQuantity: 0
-                    }
-                  }],
-                  Tamanho: sku.Name || '',
-                  releaseDate: sku.DateUpdated || sku.CreationDate || '',
-                  isInactive: true // Marca como inativo para referência
-                };
-              });
-              
-              // Adiciona os items inativos ao produto
-              product.items = [...product.items, ...inactiveItems];
-              
-              console.log(`      ✓ Total de SKUs no produto: ${product.items.length}`);
-            }
-          } else {
-            console.log(`      ✓ Todos os ${skuIds.length} SKUs estão presentes`);
-          }
-        }
-        
-        return product;
-      }
-
-      // PASSO 2: API pública não retornou dados, tentar API privada (produtos completamente inativos)
-      console.log(`      ℹ️ API pública: sem dados, buscando na API privada...`);
-      
-      // Busca detalhes do produto pela API privada
-      const productDetails = await this.fetchProductDetailsFromPrivateApi(productId);
-      
-      if (!productDetails) {
-        console.log(`      ❌ API privada: produto não encontrado`);
-        return null;
-      }
-      
-      console.log(`      ✓ API privada: dados do produto encontrados`);
-      
-      // Busca SKUs individuais para obter detalhes completos
-      const skusDetails = [];
-      
-      if (skuIds && skuIds.length > 0) {
-        console.log(`      🔍 Buscando detalhes de ${skuIds.length} SKUs...`);
-        
-        // Busca detalhes de cada SKU
-        for (const skuId of skuIds) {
-          try {
-            const skuDetail = await this.fetchSkuDetailsFromPrivateApi(skuId);
-            if (skuDetail && skuDetail.RefId) {
-              skusDetails.push(skuDetail);
-            } else if (skuDetail) {
-              // SKU existe mas não tem RefId, usa fallback
-              skuDetail.RefId = `SKU-${skuId}`;
-              skusDetails.push(skuDetail);
-              console.log(`         ⚠️ SKU ${skuId}: sem RefId, usando fallback`);
-            } else {
-              console.log(`         ⚠️ SKU ${skuId}: sem RefId válido`);
-            }
-          } catch (skuError) {
-            console.log(`         ⚠️ SKU ${skuId}: erro ao buscar detalhes`);
-          }
-        }
-      }
-      
-      if (skusDetails.length === 0) {
-        console.log(`      ❌ Nenhum SKU com dados válidos encontrado`);
-        return null;
-      }
-      
-      console.log(`      ✓ ${skusDetails.length} SKUs válidos encontrados`);
-      
-      // Constrói objeto produto a partir dos dados da API privada
-      return await this.buildProductFromSkus(productId, skusDetails, productDetails);
-
-    } catch (error) {
-      console.error(`      ❌ Erro ao buscar produto ${productId}:`, error.message);
-      
-      // Retry em caso de erro de rede/timeout
-      if (retryCount < maxRetries && (
-        error.code === 'ECONNRESET' || 
-        error.code === 'ETIMEDOUT' || 
-        error.code === 'ECONNABORTED' ||
-        error.response?.status >= 500
-      )) {
-        const delay = baseDelay * Math.pow(2, retryCount);
-        console.log(`      🔄 Retry ${retryCount + 1}/${maxRetries} em ${delay}ms...`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return await this.fetchProductDetails(productId, skuIds, retryCount + 1);
-      }
-      
-      return null;
-    }
-  }
-
-  /**
-   * Gera CSV específico para importação de produtos no Emarsys
-   * @param {Array} products - Array de produtos
-   * @param {Object} filters - Filtros opcionais
-   * @param {Object} options - Opções
-   * @returns {Promise<Object>} Dados do CSV
-   */
-  async generateEmarsysProductCsv(products, filters = {}, options = {}) {
-    try {
-      if (!products || products.length === 0) {
-        throw new Error('Nenhum produto fornecido para gerar CSV');
-      }
-      
-      console.log(`📊 Iniciando geração de CSV com ${products.length} produtos...`);
-      
-      const timestamp = getBrazilianTimestampForFilename();
-      const filename = options.filename || `emarsys-products-import-${timestamp}.csv`;
-      
-      // Usa a nova função otimizada do emarsysCsvService
-      const emarsysCsvService = require('./emarsysCsvService');
-      const result = await emarsysCsvService.generateCatalogCsv(products, filename, {
-        ...options,
-        generateGz: true // Sempre gera o arquivo .gz para produtos
-      });
-      
-      return {
-        ...result,
-        format: 'SAP Emarsys Product Import'
-      };
-      
-    } catch (error) {
-      console.error('❌ Erro ao gerar CSV Emarsys:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Testa a conectividade SFTP com o Emarsys
-   * @returns {Promise<Object>} Resultado do teste
-   */
-  async testSftpConnectivity() {
-    return new Promise((resolve, reject) => {
-      console.log('🌐 Testando conectividade SFTP com Emarsys...');
-      console.log('🔍 Debug - Configurações SFTP:');
-      console.log(`   Host: ${this.sftpConfig.host}`);
-      console.log(`   Port: ${this.sftpConfig.port}`);
-      console.log(`   Username: ${this.sftpConfig.username}`);
-      console.log(`   Password length: ${this.sftpConfig.password ? this.sftpConfig.password.length : 0} caracteres`);
-      console.log(`   Password starts with: ${this.sftpConfig.password ? this.sftpConfig.password.substring(0, 3) + '...' : 'N/A'}`);
-
-      const conn = new Client();
-
-      conn.on('ready', () => {
-        console.log('✅ Conexão SFTP estabelecida com sucesso');
-        
-        // Lista o diretório raiz para verificar permissões
-        conn.sftp((err, sftp) => {
-          if (err) {
-            console.error('❌ Erro ao criar sessão SFTP:', err.message);
-            conn.end();
-            reject({
-              success: false,
-              error: err.message,
-              message: 'Falha na conectividade SFTP com Emarsys'
-            });
-            return;
-          }
-
-          // Primeiro lista o diretório raiz
-          sftp.readdir('/', (rootErr, rootList) => {
-            if (rootErr) {
-              console.warn('⚠️ Não foi possível listar diretório raiz:', rootErr.message);
-            } else {
-              console.log('📂 Conteúdo do diretório raiz:');
-              rootList.forEach(item => {
-                console.log(`   - ${item.filename} (${item.attrs.size} bytes)`);
-              });
-            }
-            
-            // Depois tenta listar o diretório catalog
-            sftp.readdir('/catalog', (catalogErr, catalogList) => {
-              if (catalogErr) {
-                console.warn('⚠️ Não foi possível listar diretório catalog:', catalogErr.message);
-                console.log('📂 Tentando upload para catalog mesmo assim...');
-              } else {
-                console.log('📂 Conteúdo do diretório catalog:');
-                catalogList.forEach(item => {
-                  console.log(`   - ${item.filename} (${item.attrs.size} bytes)`);
-                });
-              }
-              
-              conn.end();
-              resolve({
-                success: true,
-                message: 'Conectividade SFTP com Emarsys está funcionando',
-                host: this.sftpConfig.host,
-                port: this.sftpConfig.port,
-                username: this.sftpConfig.username,
-                canListRoot: !rootErr,
-                canListCatalog: !catalogErr,
-                rootItems: rootList?.length || 0,
-                catalogItems: catalogList?.length || 0
-              });
-            });
-          });
-        });
-      });
-
-      conn.on('error', (err) => {
-        console.error('❌ Erro de conexão SFTP:', err.message);
-        console.error('🔍 Detalhes do erro:', {
-          level: err.level,
-          description: err.description,
-          message: err.message
-        });
-        
-        // Se for erro de autenticação, fornece dica
-        if (err.message.includes('authentication')) {
-          console.error('💡 Dica: Verifique se a senha no .env está correta e igual à do FileZilla');
-          console.error('   Senha atual tem', this.sftpConfig.password?.length || 0, 'caracteres');
-        }
-        
-        reject({
-          success: false,
-          error: err.message,
-          errorDetails: {
-            level: err.level,
-            description: err.description
-          },
-          message: 'Falha na conectividade SFTP com Emarsys'
-        });
-      });
-
-      console.log('🔌 Tentando conectar...');
-      conn.connect(this.sftpConfig);
-    });
-  }
-
-
-  /**
-   * Upload do arquivo para Emarsys via SFTP
-   * @param {string} localFilePath - Caminho do arquivo local
-   * @returns {Promise<Object>} Resultado do upload
-   */
-  async uploadToEmarsys(localFilePath) {
-    console.log('📤 Iniciando upload para Emarsys via SFTP...');
-    console.log(`   🌐 Host: ${this.sftpConfig.host}:${this.sftpConfig.port}`);
-    console.log(`   👤 Usuário: ${this.sftpConfig.username}`);
-    console.log(`   📂 Destino: ${this.sftpRemotePath}`);
-    
-    const maxRetries = 3;
-    const baseDelayMs = 3000; // Aumentado para 3 segundos entre tentativas
-    let attempt = 0;
-
-    const tryOnce = () => new Promise((resolve, reject) => {
-      const conn = new Client();
-      let timedOut = false;
-      let connectionEstablished = false;
-      
-      const overallTimeout = setTimeout(() => {
-        timedOut = true;
-        console.error('❌ Timeout geral do upload atingido (3 minutos)');
-        try { conn.end(); } catch (_) {}
-        reject(new Error('SFTP upload timeout'));
-      }, 180000); // 3 minutos por tentativa (aumentado)
-
-      const cleanup = () => clearTimeout(overallTimeout);
-
-      conn.on('ready', () => {
-        connectionEstablished = true;
-        console.log('✅ Conexão SFTP estabelecida com sucesso');
-        console.log('   🔌 Iniciando sessão SFTP...');
-        
-        conn.sftp((err, sftp) => {
-          if (err) {
-            cleanup();
-            console.error('❌ Erro ao criar sessão SFTP:', err.message);
-            conn.end();
-            reject(err);
-            return;
-          }
-
-          console.log('📤 Fazendo upload do arquivo...');
-          
-          // Obter tamanho do arquivo local para validação
-          const fileStats = require('fs').statSync(localFilePath);
-          const expectedSize = fileStats.size;
-          console.log(`📊 Tamanho do arquivo local: ${expectedSize} bytes (${(expectedSize / 1024).toFixed(2)} KB)`);
-          
-          const readStream = fs.createReadStream(localFilePath);
-          const writeStream = sftp.createWriteStream(this.sftpRemotePath, { 
-            autoClose: false, // Controlar fechamento manualmente
-            flags: 'w',
-            mode: 0o644
-          });
-
-          let bytesSent = 0;
-          let uploadFinished = false;
-          
-          readStream.on('data', chunk => { 
-            bytesSent += chunk.length;
-            if (bytesSent % 102400 === 0 || bytesSent === expectedSize) {
-              console.log(`   📤 Progresso: ${bytesSent}/${expectedSize} bytes (${((bytesSent/expectedSize)*100).toFixed(1)}%)`);
-            }
-          });
-
-          // Usar 'finish' ao invés de 'close' para garantir que todos os dados foram escritos
-          writeStream.on('finish', async () => {
-            if (!timedOut && !uploadFinished) {
-              uploadFinished = true;
-              
-              console.log(`📊 Bytes enviados: ${bytesSent}/${expectedSize}`);
-              
-              // Validar tamanho
-              if (bytesSent !== expectedSize) {
-                cleanup();
-                console.error(`❌ Tamanho divergente! Esperado: ${expectedSize}, Enviado: ${bytesSent}`);
-                conn.end();
-                reject(new Error(`Upload incompleto: ${bytesSent}/${expectedSize} bytes`));
-                return;
-              }
-              
-              // Aguardar um momento para garantir que o buffer foi completamente enviado
-              await new Promise(r => setTimeout(r, 1000));
-              
-              // Fechar o writeStream explicitamente
-              writeStream.close(() => {
-                cleanup();
-                console.log(`✅ Upload concluído e validado com sucesso (${bytesSent} bytes)`);
-                conn.end();
-                resolve({ success: true, remotePath: this.sftpRemotePath, localPath: localFilePath, bytesSent });
-              });
-            }
-          });
-          
-          writeStream.on('close', () => {
-            // Apenas log, o resolve já foi feito no finish
-            if (!timedOut && uploadFinished) {
-              console.log('🔒 WriteStream fechado');
-            }
-          });
-
-          writeStream.on('error', (err) => {
-            if (!uploadFinished) {
-              cleanup();
-              console.error('❌ Erro durante upload (writeStream):', err.message);
-              conn.end();
-              reject(err);
-            }
-          });
-
-          readStream.on('error', (err) => {
-            if (!uploadFinished) {
-              cleanup();
-              console.error('❌ Erro durante upload (readStream):', err.message);
-              conn.end();
-              reject(err);
-            }
-          });
-          
-          readStream.on('end', () => {
-            console.log('📖 ReadStream finalizado');
-          });
-
-          readStream.pipe(writeStream);
-        });
-      });
-
-      conn.on('error', (err) => {
-        cleanup();
-        const errorMsg = err.message || err.toString();
-        
-        // Log detalhado do erro
-        if (errorMsg.includes('ECONNRESET')) {
-          console.error('❌ Erro de conexão SFTP: Conexão foi resetada pelo servidor');
-        } else if (errorMsg.includes('Timed out')) {
-          console.error('❌ Erro de conexão SFTP: Timeout ao conectar (handshake)');
-        } else if (errorMsg.includes('ENOTFOUND')) {
-          console.error('❌ Erro de conexão SFTP: Host não encontrado');
-        } else if (errorMsg.includes('ECONNREFUSED')) {
-          console.error('❌ Erro de conexão SFTP: Conexão recusada');
-        } else if (errorMsg.includes('Authentication')) {
-          console.error('❌ Erro de conexão SFTP: Falha na autenticação');
-        } else {
-          console.error(`❌ Erro de conexão SFTP: ${errorMsg}`);
-        }
-        
-        reject(err);
-      });
-      
-      // Log antes de conectar
-      console.log('🔌 Conectando ao servidor SFTP...');
-      try {
-        conn.connect(this.sftpConfig);
-      } catch (connectError) {
-        cleanup();
-        console.error('❌ Erro ao tentar conectar:', connectError.message);
-        reject(connectError);
-      }
-    });
-
-    while (attempt < maxRetries) {
-      try {
-        return await tryOnce();
-      } catch (err) {
-        attempt += 1;
-        const isLast = attempt >= maxRetries;
-        const delay = baseDelayMs * Math.pow(2, attempt - 1);
-        console.error(`⚠️ Upload failed (attempt ${attempt}/${maxRetries}): ${err.message}${isLast ? '' : ` - retrying in ${delay}ms`}`);
-        if (isLast) {
-          return { success: false, error: err.message };
-        }
-        await new Promise(r => setTimeout(r, delay));
-      }
-    }
-  }
-
-  
-
-  /**
-   * Sincroniza produtos da VTEX
-   * @returns {Promise<Object>} Resultado da sincronização
-   */
-  async syncProducts() {
-    try {
-      if (this._isSyncRunning) {
-        console.warn(`⚠️ [${this.store}] Uma sincronização já está em execução. Ignorando nova chamada.`);
-        return { success: false, error: 'Sync already running', store: this.store };
-      }
-      this._isSyncRunning = true;
-      console.log(`🔄 [${this.store}] Iniciando sincronização de produtos`);
-
-      // Testa conectividade antes de iniciar
-      const connectivityTest = await this.testConnectivity();
-      if (!connectivityTest.success) {
-        console.error(`❌ [${this.store}] Falha no teste de conectividade. Abortando sincronização.`);
-        return {
-          success: false,
-          store: this.store,
-          error: connectivityTest.message,
-          connectivityTest,
-          totalProducts: 0,
-          successCount: 0,
-          errorCount: 0,
-          totalProcessed: 0,
-          errors: []
-        };
-      }
-
-      await this.ensureDataDirectory();
-
-      // Busca todos os produtos da API da VTEX
-      console.log(`🔍 [${this.store}] Buscando todos os produtos da API da VTEX...`);
-
-      try {
-        const allProducts = await this.getAllProductsFromApi();
-
-        if (allProducts.length === 0) {
-          console.log(`⚠️ [${this.store}] Nenhum produto encontrado na API da VTEX`);
-          return {
-            success: false,
-            store: this.store,
-            error: 'Nenhum produto encontrado na API da VTEX',
-            totalProducts: 0,
-            successCount: 0,
-            errorCount: 0,
-            totalProcessed: 0,
-            errors: []
-          };
-        }
-
-        console.log(`📋 [${this.store}] Encontrados ${allProducts.length} produtos na API da VTEX`);
-
-        // Salva produtos usando método otimizado
-        let saveSuccess = false;
-        try {
-          await this.saveProductsToFileOptimized(allProducts);
-          saveSuccess = true;
-          console.log(`✅ [${this.store}] Produtos salvos com sucesso!`);
-        } catch (saveError) {
-          console.error(`❌ [${this.store}] Erro ao salvar produtos:`, saveError.message);
-          // Fallback para método tradicional
-          try {
-            await this.saveProductsToFile(allProducts);
-            saveSuccess = true;
-            console.log(`✅ [${this.store}] Produtos salvos com método fallback!`);
-          } catch (fallbackError) {
-            console.error(`❌ [${this.store}] Erro no método fallback:`, fallbackError.message);
-          }
-        }
-
-        // Salva informações da sincronização
-        await this.saveLastSyncInfo({
-          timestamp: getBrazilianTimestamp(),
-          totalProducts: allProducts.length,
-          successCount: allProducts.length,
-          errorCount: 0,
-          source: 'API VTEX',
-          store: this.store,
-          errors: [],
-          saveSuccess: saveSuccess
-        });
-
-        console.log(`\n🎉 [${this.store}] Sincronização de catalog concluída!`);
-        console.log(`   ✅ Produtos encontrados: ${allProducts.length}`);
-        console.log(`   📊 Total processado: ${allProducts.length}`);
-
-        // Gerar CSV após salvar produtos
-        let csvResult = null;
-        try {
-          console.log(`📄 [${this.store}] Gerando CSV de produtos...`);
-          csvResult = await this.generateEmarsysProductCsv(allProducts);
-          console.log(`✅ [${this.store}] CSV gerado: ${csvResult.filename}`);
-        } catch (csvError) {
-          console.error(`❌ [${this.store}] Erro ao gerar CSV:`, csvError.message);
-        }
-
-        // Tentar upload SOMENTE do arquivo .gz
-        let uploadResult = null;
-        let gzUploadResult = null;
-        if (csvResult && process.env.ENABLE_EMARSYS_UPLOAD === 'true') {
-          if (!csvResult.gzFilepath) {
-            console.error(`❌ [${this.store}] Arquivo .gz não foi gerado. Abortando upload.`);
-          } else {
-            try {
-              // Aguarda o .gz estar fisicamente pronto no disco
-              await this._waitUntilFileReady(csvResult.gzFilepath, { timeoutMs: 120000, intervalMs: 300, minSize: 10 });
-              console.log(`📤 [${this.store}] Enviando arquivo .gz para SFTP...`);
-              gzUploadResult = await this.uploadToEmarsys(csvResult.gzFilepath);
-
-              // Validar resultado do upload
-              if (gzUploadResult && gzUploadResult.success) {
-                console.log(`✅ [${this.store}] Upload .gz concluído com sucesso`);
-                console.log(`   📊 Bytes enviados: ${gzUploadResult.bytesSent}`);
-                console.log(`   📂 Caminho remoto: ${gzUploadResult.remotePath}`);
-              } else {
-                const errorMsg = gzUploadResult?.error || 'Erro desconhecido';
-                console.error(`❌ [${this.store}] Upload .gz falhou: ${errorMsg}`);
-              }
-            } catch (gzUploadError) {
-              console.error(`❌ [${this.store}] Erro no upload .gz:`, gzUploadError.message);
-              gzUploadResult = { success: false, error: gzUploadError.message };
-            }
-          }
-        } else {
-          console.log(`📤 [${this.store}] Upload SFTP desabilitado (ENABLE_EMARSYS_UPLOAD != true)`);
-        }
-
-        return {
-          success: saveSuccess,
-          store: this.store,
-          totalProducts: allProducts.length,
-          successCount: allProducts.length,
-          errorCount: 0,
-          totalProcessed: allProducts.length,
-          errors: [],
-          csvGenerated: csvResult?.filename || null,
-          gzGenerated: csvResult?.gzFilename || null,
-          uploadSuccess: uploadResult?.success || false,
-          gzUploadSuccess: gzUploadResult?.success || false,
-          message: `[${this.store}] Sincronização concluída com ${allProducts.length} produtos da API da VTEX`
-        };
-
-      } catch (error) {
-        console.error(`❌ [${this.store}] Erro ao buscar produtos da API:`, error.message);
-
-        return {
-          success: false,
-          store: this.store,
-          error: `Erro ao buscar produtos da API: ${error.message}`,
-          totalProducts: 0,
-          successCount: 0,
-          errorCount: 0,
-          totalProcessed: 0,
-          errors: [],
-          message: 'Erro na sincronização'
-        };
-      }
-
-    } catch (error) {
-      console.error(`❌ [${this.store}] Erro na sincronização de produtos:`, error.message);
-      return {
-        success: false,
-        store: this.store,
-        error: error.message,
-        totalProducts: 0,
-        successCount: 0,
-        errorCount: 0,
-        totalProcessed: 0,
-        errors: []
-      };
-    } finally {
-      this._isSyncRunning = false;
-    }
-  }
-
-  /**
-   * Envia arquivo de catálogo para Emarsys via WebDAV
-   * @param {string} filePath - Caminho do arquivo CSV de catálogo
-   * @param {string} remotePath - Caminho remoto (opcional)
-   * @returns {Promise<Object>} Resultado do envio
-   */
-  async uploadCatalogFile(filePath, remotePath = null) {
-    try {
-      const path = require('path');
-      const absolutePath = path.resolve(filePath);
-      
-      console.log('📤 Enviando arquivo de catálogo para Emarsys via WebDAV...');
-      console.log(`📁 Caminho completo do arquivo: ${absolutePath}`);
-      if (remotePath) {
-        console.log(`📂 Caminho remoto: ${remotePath}`);
-      }
-      
-      const EmarsysWebdavService = require('./emarsysWebdavService');
-      const emarsysWebdav = new EmarsysWebdavService();
-      
-      const result = await emarsysWebdav.uploadCatalogFile(filePath, remotePath);
-      
-      if (result.success) {
-        console.log('✅ Upload de catálogo concluído com sucesso');
-        console.log('🎯 RESPOSTA EMARSYS WEBDAV:');
-        console.log('   📊 Status: Sucesso');
-        console.log('   📁 Arquivo local: ' + absolutePath);
-        console.log('   📂 Arquivo remoto: ' + result.remotePath);
-        console.log('   📏 Tamanho: ' + result.fileSize + ' MB');
-        console.log('   📝 Mensagem: ' + result.message);
+    for (const sku of results) {
+      if (sku && sku.Id) {
+        rows.push(mapSkuDetailsToRow(sku));
       } else {
-        console.error('❌ Erro no upload de catálogo:');
-        console.error('   📁 Arquivo: ' + absolutePath);
-        console.error('   🚨 Erro: ' + result.error);
+        errors++;
       }
-      
-      return result;
-    } catch (error) {
-      console.error('❌ Erro ao enviar catálogo:', error);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: getBrazilianTimestamp()
-      };
+    }
+
+    const processed = Math.min(i + CONFIG.INACTIVE_BATCH_SIZE, total);
+    if (processed % 5000 < CONFIG.INACTIVE_BATCH_SIZE || processed === total) {
+      const suffix = processed === total && errors > 0 ? ` (${errors} erros ignorados)` : '';
+      console.log(`[vtex] Inativos: ${processed.toLocaleString('pt-BR')}/${total.toLocaleString('pt-BR')} processados${suffix}`);
+    }
+
+    if (i + CONFIG.INACTIVE_BATCH_SIZE < inactiveSkuIds.length) {
+      await sleep(CONFIG.DELAY_BETWEEN_INACTIVE_BATCHES);
     }
   }
 
-  /**
-   * Testa conexão com VTEX
-   * @returns {Promise<Object>} Status da conexão
-   */
-  async testConnection() {
-    try {
-      // Tenta buscar uma página de produtos
-      await this.getAllProducts();
-      return {
-        success: true,
-        message: 'Conexão VTEX estabelecida com sucesso'
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
+  return rows;
 }
 
-// Exportar a classe para permitir instanciação por store (hope, resort, ...)
-module.exports = VtexProductService;
-module.exports.VtexProductService = VtexProductService;
-module.exports.getStoreConfig = getStoreConfig;
+async function fetchAllProductRows() {
+  // PASSO 1: coletar todos os skuIds (ativos + inativos + invisíveis)
+  const allSkuIds = await fetchAllSkuIds();
+
+  // PASSO 2: buscar SKUs visíveis via products/search
+  const activeRows = await fetchActiveProductRows(allSkuIds);
+
+  // PASSO 3: buscar inativos/invisíveis via stockkeepingunitbyid
+  const returnedSkuIds = new Set(activeRows.map((r) => String(r.item)));
+  const inactiveSkuIds = allSkuIds.filter((id) => !returnedSkuIds.has(String(id)));
+
+  const inactiveRows = await fetchInactiveProductRows(inactiveSkuIds);
+
+  // Deduplicar: ativos têm prioridade (price, msrp, c_stock preenchidos)
+  const map = new Map();
+  for (const row of activeRows)   map.set(String(row.item), row);
+  for (const row of inactiveRows) { if (!map.has(String(row.item))) map.set(String(row.item), row); }
+  const allRows = Array.from(map.values());
+
+  const duplicates = activeRows.length + inactiveRows.length - allRows.length;
+  if (duplicates > 0) console.log(`[vtex] ${duplicates} duplicatas removidas (mantida versão ativa)`);
+
+  console.log(`[vtex] Concluído: ${activeRows.length.toLocaleString('pt-BR')} ativos + ${inactiveRows.length.toLocaleString('pt-BR')} inativos = ${allRows.length.toLocaleString('pt-BR')} SKUs total`);
+
+  return allRows;
+}
+
+module.exports = { fetchAllSkuIds, fetchActiveProductRows, fetchInactiveProductRows, fetchAllProductRows };

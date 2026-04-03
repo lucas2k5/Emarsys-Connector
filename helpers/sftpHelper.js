@@ -18,11 +18,11 @@ const path = require('path');
  * @returns {Promise<void>}
  */
 async function uploadToSftp(localFilePath, fileName) {
-  const host = process.env.SFTP_HOST;
-  const port = parseInt(process.env.SFTP_PORT || '22', 10);
-  const username = process.env.SFTP_USER;
-  const password = process.env.SFTP_PASSWORD;
-  const remoteDir = process.env.SFTP_REMOTE_DIR || '/uploads';
+  const host = process.env.SFTP_PRODUCTS_HOST || process.env.SFTP_HOST;
+  const port = parseInt(process.env.SFTP_PRODUCTS_PORT || process.env.SFTP_PORT || '22', 10);
+  const username = process.env.SFTP_PRODUCTS_USERNAME || process.env.SFTP_USER || process.env.SFTP_USERNAME;
+  const password = process.env.SFTP_PRODUCTS_PASSWORD || process.env.SFTP_PASSWORD;
+  const remoteDir = process.env.SFTP_PRODUCTS_REMOTE_PATH || process.env.SFTP_REMOTE_DIR || '/';
 
   if (!host) {
     throw new Error('uploadToSftp: variável SFTP_HOST não definida');
@@ -41,8 +41,16 @@ async function uploadToSftp(localFilePath, fileName) {
   const sftp = new SftpClient();
 
   try {
-    await sftp.connect({ host, port, username, password });
-    await sftp.put(localFilePath, remotePath);
+    await sftp.connect({
+      host,
+      port,
+      username,
+      password,
+      readyTimeout: 30000,
+      keepaliveInterval: 5000,
+      keepaliveCountMax: 10,
+    });
+    await sftp.fastPut(localFilePath, remotePath, { chunkSize: 65536, concurrency: 4 });
     console.log(`✅ [sftpHelper] Upload concluído: ${remotePath}`);
   } finally {
     await sftp.end();

@@ -9,6 +9,7 @@ data/
 dist/
 
 .vscode/
+tmp/
 
 # Logs do sistema de monitoramento
 logs/

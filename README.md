@@ -12,7 +12,7 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 |---|---|---|
 | Runtime | Node.js 22 (LTS) | Servidor |
 | Framework | Express.js | API REST |
-| Banco de Dados | SQLite (better-sqlite3, WAL) | Persistência de pedidos e contatos |
+| Banco de Dados | SQLite (better-sqlite3, WAL) | Persistência de contatos |
 | HTTP Client | Axios | VTEX API, webhooks, Emarsys API |
 | SFTP | ssh2-sftp-client | Upload de catálogo de produtos |
 | Auth | OAuth2 (client_credentials) | Autenticação Emarsys |
@@ -25,171 +25,186 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 ### Fluxos de Dados
 
 ```
-PRODUTOS:   App → GET VTEX Catalog API → CSV (.gz) → Upload SFTP (a cada 8h)
-PEDIDOS:    App → GET VTEX OMS API → SQLite → API Emarsys OAuth2 (a cada 30min)
-CONTATOS:   VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
+PRODUTOS:  VTEX Catalog API → products.csv (ativos + inativos) → Upload SFTP (diário às 02h)
+PEDIDOS:   VTEX OMS API → CSV binary → API Emarsys Scarab/HAPI OAuth2 (a cada 10min)
+CONTATOS:  VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 ```
-
-- **Produtos**: A aplicação busca ativamente (pull) os dados na VTEX via API e envia via SFTP
-- **Pedidos**: A aplicação busca os pedidos na VTEX e envia via API Emarsys (OAuth2)
-- **Contatos**: A VTEX envia (push) os dados via webhook de entrada. Contatos são persistidos no SQLite com `client_type` (hope/resort), com filas de reprocessamento separadas por ambiente
 
 ## Arquitetura
 
 ```
-hope.emarsys-connector/
+Emarsys-Connector/
 ├── server.js                   # Servidor Express principal
-├── routes/                     # Endpoints REST API
-│   ├── emarsysContacts.js     # Contatos VTEX → Webhook externo
-│   ├── vtexProducts.js        # Sync de produtos VTEX → SFTP
-│   ├── emarsysSales.js        # Sales data
-│   ├── integration.js         # Integração unificada de pedidos
-│   ├── emsClients.js          # Sync de clientes via Master Data
-│   ├── emsOrders.js           # Sync de pedidos via Master Data
-│   ├── cronJobs.js            # Gerenciamento de cron jobs
-│   ├── alerts.js              # Sistema de alertas
-│   └── metrics.js             # Métricas, monitoramento e status de contatos
-├── services/                   # Lógica de negócio
-│   ├── contactWebhookService.js    # Envio de contatos via webhook + persistência SQLite
-│   ├── contactRetryService.js      # Reprocessamento de contatos com backoff exponencial
-│   ├── emarsysOAuth2Service.js     # Autenticação OAuth2 (client_credentials)
-│   ├── emarsysOrdersApiService.js  # Envio de pedidos via API Emarsys (OAuth2)
-│   ├── ordersSftpService.js        # Upload de pedidos via SFTP (legado)
-│   ├── vtexProductService.js       # Produtos VTEX → CSV → SFTP
-│   ├── emarsysCsvService.js        # Geração de CSV para Emarsys
-│   ├── vtexOrdersService.js        # Busca e processamento de pedidos
-│   ├── ordersSyncService.js        # Orquestração do sync de pedidos
-│   ├── emarsysHapiService.js       # Upload pedidos via HAPI (legado)
-│   ├── contactService.js           # Extração de contatos da VTEX
-│   └── integrationService.js       # Serviço de integração unificado
-├── database/                   # SQLite (WAL mode) para tracking de pedidos e contatos
-│   ├── sqlite.js
-│   └── migrations/
-│       ├── 001_create_orders_table.sql
-│       ├── 002_create_contacts_table.sql
-│       └── 003_add_client_type_to_contacts.sql
-├── utils/                      # Utilitários (auth, logger, cron, métricas)
-│   └── cronService.js         # Cron jobs (produtos, pedidos, retry contatos)
-├── helpers/                    # Helpers de sync de pedidos
-├── config/                     # Configurações de memória e monitoramento
-├── scripts/                    # Scripts de manutenção
-├── exports/                    # Arquivos CSV gerados
-├── data/                       # Cache local (products.json, SQLite DB)
-└── logs/                       # Logs da aplicação
+├── scripts/
+│   ├── syncProducts.js        # Sync diário de produtos (cron 02h)
+│   └── syncOrders.js          # Sync periódico de pedidos (cron 10min)
+├── services/
+│   ├── vtexProductService.js      # VTEX Catalog → rows CSV (ativos + inativos)
+│   ├── vtexOrderService.js        # VTEX OMS → rows CSV de pedidos
+│   ├── emarsysOrdersApiService.js # Envio CSV binary via OAuth2 para Scarab/HAPI
+│   ├── emarsysOAuth2Service.js    # Token OAuth2 com cache e renovação automática
+│   ├── contactWebhookService.js   # Webhook de contatos + persistência SQLite
+│   ├── contactRetryService.js     # Retry de contatos com backoff exponencial
+│   └── ...                        # outros serviços legados
+├── helpers/
+│   ├── csvHelper.js           # Geração do products.csv (BOM UTF-8, escape)
+│   └── sftpHelper.js          # Upload SFTP com fastPut + keepalive
+├── routes/                    # Endpoints REST (produtos, pedidos, contatos, métricas)
+├── database/                  # SQLite WAL (contatos)
+├── utils/                     # Logger, cron service, métricas, auth
+├── data/                      # lastOrderSync.json, SQLite DB
+├── tmp/                       # products.csv gerado localmente
+└── logs/                      # Logs rotativos diários
 ```
+
+---
 
 ## Fluxo de Produtos
 
 ### Processo completo
 
+Roda diariamente às 02h via `scripts/syncProducts.js` ou manualmente com `npm run sync:products`.
+
 ```
-Cron (8h) ou POST /api/vtex/products/sync
-  │
-  ├─ Testa conectividade com VTEX
-  ├─ Busca todos os produtos + SKUs (rate limit: 3.900 req/s)
-  ├─ Salva cache local (data/products.json)
-  ├─ Gera CSV com 13 colunas (1 linha por SKU)
-  ├─ Comprime em .gz
-  └─ Upload via SFTP para servidor de produtos
+PASSO 1 — GetProductAndSkuIds
+  Coleta todos os skuIds (ativos + inativos + invisíveis)
+  ~171 chamadas paginadas de 50 em 50
+  Resultado: ~27.000 skuIds únicos
+
+PASSO 2 — products/search (lotes de 50)
+  Busca detalhes dos SKUs visíveis na loja
+  Retorna: price, msrp, c_stock, title, link, image, category, available
+  ~542 chamadas → ~3.300 SKUs ativos
+
+PASSO 3 — stockkeepingunitbyid (lotes de 25 paralelos)
+  SKUs inativos/invisíveis que não retornaram no PASSO 2
+  price/msrp/c_stock ficam vazios (produto inativo)
+  ~960 lotes → ~24.000 SKUs inativos
+
+PASSO 4 — Deduplicar + gerar products.csv
+  Ativos têm prioridade em duplicatas
+  BOM UTF-8 obrigatório, separador vírgula
+
+PASSO 5 — Upload SFTP
+  fastPut com keepalive para arquivos grandes (~16MB)
 ```
 
-### Colunas do CSV de Produtos
+> **Por que incluir inativos:** pedidos históricos de 2 anos cruzam com o catálogo — se o produto não existir no Emarsys, o histórico de compras do cliente fica incompleto e recomendações quebram.
 
-| Coluna | Descrição | Origem VTEX |
+### Colunas do products.csv
+
+Ordem exata obrigatória — não alterar:
+
+| Coluna | Ativos | Inativos |
 |---|---|---|
-| `item` | Referência do SKU | `referenceId` |
-| `title` | Nome do produto | `productName` |
-| `link` | URL do produto | `product.link` |
-| `image` | URL da imagem | primeira imagem do SKU |
-| `category` | Categoria (folha) | última categoria |
-| `available` | Disponibilidade | `IsAvailable` do seller |
-| `description` | Descrição | `product.description` |
-| `price` | Preço de venda | `Price` do seller |
-| `msrp` | Preço de lista | `ListPrice` do seller |
-| `group_id` | Agrupador de SKUs | `productId` |
-| `c_stock` | Estoque disponível | `AvailableQuantity` |
-| `c_sku_id` | ID do SKU na VTEX | `itemId` |
-| `c_product_id` | ID do produto na VTEX | `productId` |
+| `item` | itemId numérico | itemId numérico |
+| `title` | productName | ProductName |
+| `link` | URL completa VTEX | STORE_BASE_URL + DetailUrl |
+| `image` | imageUrl | ImageUrl |
+| `category` | Ex: `Calcinhas > Biquíni` | Ex: `Calcinhas > Biquíni` |
+| `available` | `"true"` ou `"false"` | `"false"` (IsActive) |
+| `description` | Texto limpo sem \n | Texto limpo sem \n |
+| `price` | Preço de venda | vazio |
+| `msrp` | Preço de lista | vazio |
+| `group_id` | productId | ProductId |
+| `c_stock` | AvailableQuantity | `0` |
+| `c_sku_id` | itemId | Id |
+| `c_product_id` | productId | ProductId |
+
+### Performance
+
+| Etapa | Chamadas | Tempo |
+|---|---|---|
+| GetProductAndSkuIds | ~171 | ~1-2 min |
+| products/search | ~542 | ~3-5 min |
+| stockkeepingunitbyid | ~960 lotes de 25 | ~12-15 min |
+| CSV + SFTP | — | ~1 min |
+| **Total** | **~1.673** | **~17-23 min** |
 
 ### SFTP de Produtos
 
-Suporte multi-ambiente implementado. O parâmetro `store` (`hope` | `resort`) seleciona automaticamente as credenciais VTEX e SFTP corretas.
-
-**Hope** (configurado):
 ```env
 SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
 SFTP_PRODUCTS_PORT=22
 SFTP_PRODUCTS_USERNAME=bu_hope
 SFTP_PRODUCTS_PASSWORD=***
-SFTP_PRODUCTS_REMOTE_PATH=/catalog/
+SFTP_PRODUCTS_REMOTE_PATH=/
+STORE_BASE_URL=https://www.hopelingerie.com.br
 ```
 
-**Hope Resort** (configurado):
-```env
-SFTP_PRODUCTS_HOST_RESORT=exchange.si.emarsys.net
-SFTP_PRODUCTS_PORT_RESORT=22
-SFTP_PRODUCTS_USERNAME_RESORT=hope_resort
-SFTP_PRODUCTS_PASSWORD_RESORT=***
-SFTP_PRODUCTS_REMOTE_PATH_RESORT=/catalog/
-```
-
-> Credenciais VTEX de ambos os ambientes pendentes. Quando disponíveis, preencher `VTEX_BASE_URL_HOPE`, `VTEX_APP_KEY_HOPE`, `VTEX_APP_TOKEN_HOPE` e `VTEX_BASE_URL_RESORT`, `VTEX_APP_KEY_RESORT`, `VTEX_APP_TOKEN_RESORT` no `.env`.
+---
 
 ## Fluxo de Pedidos
 
 ### Processo completo
 
+Roda a cada 10 minutos via `scripts/syncOrders.js` ou manualmente com `npm run sync:orders`.
+
 ```
-Cron (30min) ou GET /api/integration/orders-extract-all
-  │
-  ├─ Busca pedidos na VTEX OMS API
-  ├─ Salva no SQLite (flag isSync para controle)
-  ├─ Gera CSV com 12 campos (separador: vírgula, decimal: ponto)
-  └─ POST CSV como binary para Sales Data API (OAuth2)
+A cada 10 minutos:
+
+PASSO 1 — Ler data/lastOrderSync.json
+  Se não existe: busca últimos 10 minutos (primeira execução)
+
+PASSO 2 — GET /api/oms/pvt/orders
+  Filtra por f_creationDate=[lastSync TO now]
+  Pagina até esgotar (100 por página)
+
+PASSO 3 — GET /api/oms/pvt/orders/{orderId}
+  1 por vez, 300ms entre chamadas
+  Retry 3x em erro, aguarda 5s em 429
+
+PASSO 4 — Mapear para linhas CSV
+  CPF → SHA256 (nunca usar email — vem mascarado pela VTEX)
+  1 linha por item do pedido
+
+PASSO 5 — Enviar CSV binary para Scarab/HAPI
+  POST via EmarsysOrdersApiService (OAuth2)
+  Em caso de erro: lastSync NÃO atualizado → reprocessa na próxima execução
 ```
 
-### CSV de Pedidos
+> **Atenção:** o Emarsys trata `order` como chave única — reenviar o mesmo pedido gera duplicata. O sync não usa overlap nem margem de tempo para evitar isso.
 
-O arquivo CSV é enviado como binary para a API Scarab Research (HAPI). Campos na ordem:
+### Colunas do CSV de Pedidos
 
-| Campo | Descrição | Origem |
+Ordem exata obrigatória — não alterar:
+
+| Campo | Descrição | Origem VTEX |
 |---|---|---|
-| `item` | SKU do produto (mesmo do catálogo) | VTEX |
-| `price` | Preço unitário (decimal com `.`) | VTEX |
-| `order` | ID do pedido | VTEX |
-| `timestamp` | Data/hora do pedido | VTEX |
-| `customer` | Identificador do cliente (CPF hash) | VTEX |
-| `quantity` | Quantidade | VTEX |
-| `s_sales_channel` | Canal de vendas | VTEX |
-| `s_store_id` | ID da loja | VTEX |
-| `s_canal` | Canal de origem | VTEX |
-| `s_loja` | Loja | VTEX |
-| `s_tipo_pagamento` | Tipo de pagamento | VTEX |
-| `s_cupom` | Cupom/desconto | VTEX |
+| `item` | SKU (mesmo do products.csv) | `items[n].id` |
+| `price` | Preço unitário (`149.90`) | `items[n].price ÷ 100` |
+| `order` | ID do pedido | `orderId` |
+| `timestamp` | Unix timestamp da criação | `creationDate` |
+| `customer` | CPF hasheado SHA256 | `clientProfileData.document` |
+| `quantity` | Quantidade | `items[n].quantity` |
+| `s_sales_channel` | Canal de vendas | `salesChannel` |
+| `s_store_id` | Hostname da loja | `hostname` |
+| `s_canal` | Origem do pedido | `origin` |
+| `s_loja` | Hostname da loja | `hostname` |
+| `s_tipo_pagamento` | Forma de pagamento | `paymentData.transactions[0].payments[0].paymentSystemName` |
+| `s_cupom` | Código do cupom ou valor de desconto | `marketingData.coupon` ou `totals[Discounts].value` |
 
-### Autenticação OAuth2 (multi-ambiente)
+### Autenticação OAuth2
 
-O envio de pedidos utiliza OAuth2 com fluxo `client_credentials`. O token é obtido automaticamente e mantido em cache com renovação antes da expiração. Cada ambiente (hope/resort) tem suas próprias credenciais e endpoint.
-
-**Hope:**
 ```env
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_HOPE}/sales-data/api
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
 EMARSYS_ORDERS_API_TIMEOUT=60000
 ```
 
-**Hope Resort:**
-```env
-EMARSYS_OAUTH2_CLIENT_ID_RESORT=
-EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
-EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
-EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
+### Performance
+
+```
+A cada 10 minutos em produção:
+  ~5-20 pedidos × 300ms = ~2-6s total ✅
+
+Pico (campanha):
+  ~200 pedidos × 300ms = ~60s — dentro dos 10min ✅
 ```
 
-> O token é obtido via `POST {TOKEN_ENDPOINT}` com `grant_type=client_credentials` e `ClientID:ClientSecret` em Basic Auth. O `emarsysOAuth2Service` instancia um contexto por store com cache e renovação independentes.
+---
 
 ## Fluxo de Contatos
 
@@ -198,65 +213,26 @@ EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
 ```
 VTEX Master Data (cliente criado/atualizado)
   │
-  └─ POST <ngrok-entrada>/api/emarsys/contacts/webhook    ← Webhook de ENTRADA
+  └─ POST <ngrok>/api/emarsys/contacts/webhook    ← Webhook de ENTRADA
        │
        ├─ Valida email obrigatório
        ├─ Idempotência (ignora duplicatas em janela de 15s)
        ├─ Persiste no SQLite (status: pending, client_type: hope|resort)
        │
-       └─ POST <CONTACTS_WEBHOOK_URL>/sync                 ← Webhook de SAÍDA
+       └─ POST <CONTACTS_WEBHOOK_URL>/sync         ← Webhook de SAÍDA
             │
-            ├─ Sucesso → status: sent no SQLite
-            └─ Falha → status: failed no SQLite
+            ├─ Sucesso → status: sent
+            └─ Falha → status: failed
                  │
-                 └─ Cron (a cada 5min) reprocessa por fila separada
-                      ├─ Fila "hope"   → usa CONTACTS_WEBHOOK_URL_HOPE (ou fallback)
-                      ├─ Fila "resort" → usa CONTACTS_WEBHOOK_URL_RESORT (ou fallback)
-                      ├─ Backoff exponencial: attempts * 2 min
-                      ├─ Máx 5 tentativas por contato
-                      ├─ Sucesso → sent
-                      └─ Excedeu limite → dead (alerta crítico)
-```
-
-**Webhook de ENTRADA** — endpoint exposto via ngrok para a VTEX chamar:
-```
-POST https://<seu-ngrok>.ngrok-free.app/api/emarsys/contacts/webhook
-```
-
-**Webhook de SAÍDA** — destino externo configurado no `.env` (suporta URLs por ambiente):
-```
-CONTACTS_WEBHOOK_URL=https://...        # URL padrão (fallback)
-CONTACTS_WEBHOOK_URL_HOPE=https://...   # URL específica Hope (opcional)
-CONTACTS_WEBHOOK_URL_RESORT=https://... # URL específica Resort (opcional)
-```
-
-### Monitoramento de Contatos
-
-```
-# Totais + breakdown por client_type
-GET /api/metrics/contacts/retry-status
-
-# Filtrado por ambiente
-GET /api/metrics/contacts/retry-status?client_type=hope
-GET /api/metrics/contacts/retry-status?client_type=resort
-
-Resposta (sem filtro):
-{
-  "pending": 3,
-  "sent": 1420,
-  "failed": 2,
-  "dead": 1,
-  "total": 1426,
-  "by_client_type": [
-    { "client_type": "hope", "pending": 2, "sent": 1000, "failed": 1, "dead": 0, "total": 1003 },
-    { "client_type": "resort", "pending": 1, "sent": 420, "failed": 1, "dead": 1, "total": 423 }
-  ]
-}
+                 └─ Cron (5min) reprocessa por fila separada
+                      ├─ Fila "hope"   → CONTACTS_WEBHOOK_URL_HOPE
+                      ├─ Fila "resort" → CONTACTS_WEBHOOK_URL_RESORT
+                      ├─ Backoff exponencial: attempts × 2 min
+                      ├─ Máx 5 tentativas
+                      └─ Excedeu → dead (alerta crítico)
 ```
 
 ### Payload do Webhook
-
-A VTEX envia o payload já no formato padronizado. O `client_type` distingue entre ambientes (hope/resort).
 
 ```json
 {
@@ -278,50 +254,18 @@ A VTEX envia o payload já no formato padronizado. O `client_type` distingue ent
 }
 ```
 
-| Campo | Tipo | Descrição |
-|---|---|---|
-| `customer_id` | string | Identificador único do cliente (base64) |
-| `client_type` | string | Ambiente: `"hope"` ou `"resort"` |
-| `email` | string | Email do cliente (obrigatório) |
-| `cpf` | string | CPF somente dígitos |
-| `first_name` | string | Primeiro nome |
-| `last_name` | string | Sobrenome |
-| `phone` | string | Telefone fixo com +55 |
-| `mobile` | string | Celular com +55 |
-| `gender` | string | `"M"` ou `"F"` |
-| `address` | string | Endereço completo |
-| `city` | string | Cidade |
-| `state` | string | UF (2 letras) |
-| `country` | number | Código do país (31 = Brasil) |
-| `postal_code` | string | CEP |
-| `opt_in` | boolean | Aceite de comunicação |
-
-### Configuração do Webhook
+### Configuração
 
 ```env
-# Webhook de saída — URL padrão (fallback para todos os client_types)
 CONTACTS_WEBHOOK_URL=https://exemplo.ngrok-free.dev/sync
-
-# URLs específicas por ambiente (opcionais — se não definidas, usa CONTACTS_WEBHOOK_URL)
 CONTACTS_WEBHOOK_URL_HOPE=https://hope-webhook.exemplo.com/sync
 CONTACTS_WEBHOOK_URL_RESORT=https://resort-webhook.exemplo.com/sync
-
-# Configurações gerais
 CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 CONTACTS_WEBHOOK_AUTH_HEADER=
 CONTACTS_WEBHOOK_TIMEOUT=30000
-CONTACTS_RETRY_CRON=*/5 * * * *
 ```
 
-### Webhook Simulator (desenvolvimento)
-
-Em ambiente de desenvolvimento (`NODE_ENV !== 'production'`), um simulador de webhook está disponível para testar o fluxo sem depender do serviço externo:
-
-| Método | Endpoint | Descrição |
-|---|---|---|
-| POST | `/api/webhook-simulator/contacts` | Recebe contatos (simula destino externo) |
-| GET | `/api/webhook-simulator/contacts` | Lista contatos recebidos |
-| DELETE | `/api/webhook-simulator/contacts` | Limpa logs do simulador |
+---
 
 ## Instalação
 
@@ -329,7 +273,7 @@ Em ambiente de desenvolvimento (`NODE_ENV !== 'production'`), um simulador de we
 
 - Node.js >= 22.x (LTS)
 - NPM
-- PM2 (para produção)
+- PM2 (produção)
 
 ### Setup
 
@@ -353,67 +297,19 @@ npm run dev
 npm run prod
 ```
 
-## Configuração
+---
 
-### Variáveis de Ambiente
+## Scripts
 
-```env
-# Server
-PORT=3000
-NODE_ENV=development
-BASE_URL=
+| Script | Descrição |
+|---|---|
+| `npm run sync:products` | Sync manual de produtos (VTEX → CSV → SFTP) |
+| `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 10min) |
+| `npm run clear-logs` | Limpa arquivos de log |
+| `npm run cleanup:exports` | Remove exports antigos |
+| `npm run logs` | Tail do log combinado do dia |
 
-# VTEX
-VTEX_APP_KEY=seu_app_key
-VTEX_APP_TOKEN=seu_app_token
-VTEX_BASE_URL=https://hope.myvtex.com
-
-# Debug Mode
-DEBUG=false
-
-# Database
-SQLITE_DB_PATH=./data/orders.db
-
-# Upload habilitado
-ENABLE_EMARSYS_UPLOAD=true
-
-# SFTP Produtos
-SFTP_PRODUCTS_HOST=
-SFTP_PRODUCTS_PORT=22
-SFTP_PRODUCTS_USERNAME=
-SFTP_PRODUCTS_PASSWORD=
-SFTP_PRODUCTS_REMOTE_PATH=/catalog/
-
-# OAuth2 Pedidos - Hope
-EMARSYS_OAUTH2_CLIENT_ID=
-EMARSYS_OAUTH2_CLIENT_SECRET=
-EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=
-
-# OAuth2 Pedidos - Hope Resort
-EMARSYS_OAUTH2_CLIENT_ID_RESORT=
-EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
-EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
-EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
-
-# Webhook Contatos
-CONTACTS_WEBHOOK_URL=
-CONTACTS_WEBHOOK_CLIENT_TYPE=hope
-CONTACTS_WEBHOOK_AUTH_HEADER=
-CONTACTS_WEBHOOK_TIMEOUT=30000
-
-# Cron Jobs
-PRODUCTS_SYNC_CRON=0 */8 * * *
-ORDERS_SYNC_CRON=*/30 * * * *
-CONTACTS_RETRY_CRON=*/5 * * * *
-CRON_TIMEZONE=America/Sao_Paulo
-
-# Monitoramento
-LOG_LEVEL=info
-```
-
-Veja `.env.example` para a lista completa de variáveis.
+---
 
 ## APIs Principais
 
@@ -422,18 +318,14 @@ Veja `.env.example` para a lista completa de variáveis.
 | Método | Endpoint | Descrição |
 |---|---|---|
 | POST/GET | `/api/vtex/products/sync` | Sincroniza produtos (background) |
-| POST | `/api/vtex/products/generate-csv` | Gera CSV dos produtos |
-| POST | `/api/vtex/products/generate-emarsys-csv` | Gera CSV + upload SFTP |
 | GET | `/api/vtex/products/test-sftp` | Testa conectividade SFTP |
 | GET | `/api/vtex/products/stats` | Estatísticas dos produtos |
-| GET | `/api/vtex/products/search?q=termo` | Busca produtos |
 
 ### Pedidos
 
 | Método | Endpoint | Descrição |
 |---|---|---|
 | GET | `/api/integration/orders-extract-all` | Extrai e processa pedidos |
-| POST | `/api/integration/sales-feed` | Feed de vendas completo |
 | GET | `/api/emarsys/sales/sync-status` | Status da sincronização |
 | POST | `/api/emarsys/sales/send-unsynced` | Envia pedidos pendentes |
 
@@ -442,8 +334,7 @@ Veja `.env.example` para a lista completa de variáveis.
 | Método | Endpoint | Descrição |
 |---|---|---|
 | POST | `/api/emarsys/contacts/webhook` | Webhook de entrada (VTEX → nós → saída) |
-| POST | `/api/emarsys/contacts/create-single` | Cria contato manual (Postman/teste) |
-| POST | `/api/emarsys/contacts/create` | Cria contato (formato legado) |
+| POST | `/api/emarsys/contacts/create-single` | Cria contato manual |
 | POST | `/api/emarsys/contacts/extract-recent` | Extrai contatos recentes da VTEX |
 
 ### Monitoramento
@@ -455,55 +346,68 @@ Veja `.env.example` para a lista completa de variáveis.
 | GET | `/api/metrics/prometheus` | Métricas Prometheus |
 | GET | `/api/metrics/contacts/retry-status` | Status do retry de contatos |
 | GET | `/api/alerts/active` | Alertas ativos |
-| GET | `/api/background/jobs` | Jobs em execução |
 | GET | `/api/cron-management/status` | Status dos cron jobs |
 
-## Modo DEBUG
+---
 
-Configure `DEBUG=true` no `.env` para testar sem enviar dados reais:
+## Configuração
 
-```bash
-# Ativar debug
-DEBUG=true
+### Variáveis de Ambiente Principais
 
-# Testar sincronização (simula envio)
-curl 'http://localhost:3000/api/integration/orders-extract-all?brazilianDate=2025-09-23&maxOrders=3'
+```env
+# Server
+PORT=3000
+NODE_ENV=development
 
-# Verificar se pedidos foram marcados
-curl http://localhost:3000/api/ems-orders/pending-sync
+# VTEX - Hope
+VTEX_BASE_URL_HOPE=https://hopelingerie.vtexcommercestable.com.br
+VTEX_APP_KEY_HOPE=
+VTEX_APP_TOKEN_HOPE=
+STORE_BASE_URL=https://www.hopelingerie.com.br
 
-# Desativar para produção
-DEBUG=false
+# SFTP Produtos
+SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
+SFTP_PRODUCTS_PORT=22
+SFTP_PRODUCTS_USERNAME=
+SFTP_PRODUCTS_PASSWORD=
+SFTP_PRODUCTS_REMOTE_PATH=/
+
+# OAuth2 Pedidos
+EMARSYS_OAUTH2_CLIENT_ID=
+EMARSYS_OAUTH2_CLIENT_SECRET=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL=
+
+# Webhook Contatos
+CONTACTS_WEBHOOK_URL=
+CONTACTS_WEBHOOK_URL_HOPE=
+CONTACTS_WEBHOOK_URL_RESORT=
+
+# Database
+SQLITE_DB_PATH=./data/orders.db
 ```
 
-- **DEBUG=true**: Gera CSV + simula envio + marca `isSync=true`
-- **DEBUG=false**: Gera CSV + envia real + marca `isSync=true`
+Veja `.env.example` para a lista completa.
+
+---
 
 ## Logs
 
-### Por módulo
-
-- `ems-pcy-cro-orders-{date}.log` — Pedidos
-- `ems-pcy-cro-products-{date}.log` — Produtos
-- `ems-pcy-cro-clients-{date}.log` — Clientes/Contatos
-
-### Gerais
-
-- `ems-pcy-system-{date}.log` — Sistema
-- `ems-pcy-errors-{date}.log` — Erros
-- `ems-pcy-http-{date}.log` — Requisições HTTP
-- `ems-pcy-retry-{date}.log` — Reprocessamento
+| Arquivo | Conteúdo |
+|---|---|
+| `ems-pcy-cro-products-{date}.log` | Sync de produtos |
+| `ems-pcy-cro-orders-{date}.log` | Sync de pedidos |
+| `ems-pcy-cro-clients-{date}.log` | Contatos |
+| `ems-pcy-errors-{date}.log` | Erros |
+| `ems-pcy-combined-{date}.log` | Todos os logs |
 
 ```bash
-# Logs em tempo real
-npm run logs
-
-# Logs de erro
-tail -f logs/ems-pcy-errors-$(date +%d-%m-%Y).log
-
-# Limpar logs
-npm run clear-logs
+npm run logs                                              # tail ao vivo
+tail -f logs/ems-pcy-errors-$(date +%d-%m-%Y).log       # só erros
+npm run clear-logs                                        # limpar tudo
 ```
+
+---
 
 ## Deploy
 
@@ -525,26 +429,18 @@ docker run -p 3000:3000 --env-file .env emarsys-connector
 
 Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/docker-setup.md) para guias detalhados.
 
+---
+
 ## Pendências
 
-- [x] ~~Definir URL da API de pedidos~~ — configurado (Scarab Research HAPI)
-- [x] ~~Definir payload/CSV de pedidos~~ — 12 campos definidos
-- [x] ~~Webhook de entrada para VTEX~~ — `/api/emarsys/contacts/webhook` + ngrok
-- [x] ~~Payload padronizado de contatos~~ — gender M/F, country numérico, client_type hope/resort
-- [x] ~~Webhook de saída configurado~~ — `CONTACTS_WEBHOOK_URL` com retry automático
-- [x] ~~Filas de retry separadas por client_type~~ — hope e resort com URLs independentes
-- [x] ~~Integrar `emarsysOrdersApiService` no fluxo do cron de pedidos (substituir SFTP)~~ — integrado via `autoSend: true` em `ordersSyncService.syncOrders`
-- [x] ~~Configurar credenciais SFTP de produtos **Hope Resort**~~ — configurado (`SFTP_PRODUCTS_*_RESORT`)
-- [x] ~~Suporte multi-ambiente no sync de produtos~~ — `store: hope | resort` com `getStoreConfig()`, cron dispara ambos automaticamente
-- [x] ~~Suporte multi-ambiente no sync de pedidos (hope/resort)~~ — `store: hope | resort` em `ordersSyncService`, `emarsysOrdersApiService` e cron
-- [x] ~~Configurar credenciais VTEX Hope~~ — `hopelingerie.vtexcommercestable.com.br` (775 produtos ✅)
-- [x] ~~Configurar credenciais VTEX Hope Resort~~ — `lojahr.vtexcommercestable.com.br` (574 produtos ✅)
-- [x] ~~Configurar OAuth2 Emarsys Hope Resort~~ — client_id/secret configurados e testados ✅
-- [x] ~~Configurar credenciais SFTP **Hope** produtos~~ — `bu_hope` em `exchange.si.emarsys.net` ✅
-- [x] ~~Padronizar nome do CSV de produtos~~ — fixo como `products.csv` ✅
-- [ ] Testar sync completo de produtos Hope e Resort end-to-end (VTEX → CSV → SFTP)
-- [ ] Testar sync completo de pedidos Hope e Resort end-to-end (VTEX → SQLite → CSV → Emarsys API)
-- [ ] Adicionar campo `s_tipo_pagamento` no schema de pedidos (quando disponível da VTEX)
+- [x] ~~Sync completo de produtos VTEX → CSV → SFTP~~ — ativos + inativos + invisíveis, 27.100 SKUs ✅
+- [x] ~~Sync periódico de pedidos~~ — cron 10min, VTEX OMS → CSV binary → Scarab/HAPI ✅
+- [x] ~~Webhook de contatos hope/resort~~ — filas separadas por client_type ✅
+- [x] ~~Credenciais SFTP produtos Hope~~ — `bu_hope` em `exchange.si.emarsys.net` ✅
+- [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado e testado ✅
+- [ ] Carga histórica de pedidos (2 anos) — via CSV manual no SFTP Emarsys
+- [ ] Configurar credenciais VTEX Hope Resort para produtos
+- [ ] Testar sync de pedidos Hope end-to-end em produção
 - [ ] Implementar suite de testes automatizados
 
 ---
