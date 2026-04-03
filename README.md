@@ -25,9 +25,11 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 ### Fluxos de Dados
 
 ```
-PRODUTOS:  VTEX Catalog API → products.csv (ativos + inativos) → Upload SFTP (diário às 02h)
-PEDIDOS:   VTEX OMS API → CSV binary → API Emarsys Scarab/HAPI OAuth2 (a cada 10min)
-CONTATOS:  VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
+PRODUTOS (Hope):   VTEX hopelingerie → products.csv (ativos + inativos) → SFTP bu_hope        (diário 02h)
+PRODUTOS (Resort): VTEX lojahr       → products_resort.csv              → SFTP hope_resort    (diário 03h)
+PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1818BD83A28703BE OAuth2  (a cada 10min)
+PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 OAuth2  (a cada 10min)
+CONTATOS:          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 ```
 
 ## Arquitetura
@@ -36,24 +38,24 @@ CONTATOS:  VTEX → POST webhook entrada → SQLite → Webhook saída (tempo re
 Emarsys-Connector/
 ├── server.js                   # Servidor Express principal
 ├── scripts/
-│   ├── syncProducts.js        # Sync diário de produtos (cron 02h)
-│   └── syncOrders.js          # Sync periódico de pedidos (cron 10min)
+│   ├── syncProducts.js        # Sync diário Hope (02h) + Resort (03h)
+│   └── syncOrders.js          # Sync 10min Hope + Resort (crons independentes)
 ├── services/
-│   ├── vtexProductService.js      # VTEX Catalog → rows CSV (ativos + inativos)
-│   ├── vtexOrderService.js        # VTEX OMS → rows CSV de pedidos
+│   ├── vtexProductService.js      # fetchAllProductRows + fetchAllProductRowsResort
+│   ├── vtexOrderService.js        # fetchNewOrderRows + fetchNewOrderRowsResort
 │   ├── emarsysOrdersApiService.js # Envio CSV binary via OAuth2 para Scarab/HAPI
 │   ├── emarsysOAuth2Service.js    # Token OAuth2 com cache e renovação automática
 │   ├── contactWebhookService.js   # Webhook de contatos + persistência SQLite
 │   ├── contactRetryService.js     # Retry de contatos com backoff exponencial
 │   └── ...                        # outros serviços legados
 ├── helpers/
-│   ├── csvHelper.js           # Geração do products.csv (BOM UTF-8, escape)
-│   └── sftpHelper.js          # Upload SFTP com fastPut + keepalive
+│   ├── csvHelper.js           # generateCsv(rows, fileName) — products.csv e products_resort.csv
+│   └── sftpHelper.js          # uploadToSftp (Hope) + uploadToSftpResort
 ├── routes/                    # Endpoints REST (produtos, pedidos, contatos, métricas)
 ├── database/                  # SQLite WAL (contatos)
 ├── utils/                     # Logger, cron service, métricas, auth
-├── data/                      # lastOrderSync.json, SQLite DB
-├── tmp/                       # products.csv gerado localmente
+├── data/                      # lastOrderSync.json + lastOrderSyncResort.json, SQLite DB
+├── tmp/                       # CSVs gerados localmente
 └── logs/                      # Logs rotativos diários
 ```
 
@@ -63,7 +65,17 @@ Emarsys-Connector/
 
 ### Processo completo
 
-Roda diariamente às 02h via `scripts/syncProducts.js` ou manualmente com `npm run sync:products`.
+Roda via `scripts/syncProducts.js` ou manualmente com `npm run sync:products`.
+
+Ambas as lojas usam a **mesma lógica interna** — apenas com credenciais e destinos diferentes:
+
+| | Hope Lingerie | Hope Resort |
+|---|---|---|
+| **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
+| **Arquivo** | `products.csv` | `products_resort.csv` |
+| **SFTP user** | `bu_hope` | `hope_resort` |
+| **SFTP path** | `/` | `/catalog/` |
+| **Cron** | diário 02h | diário 03h |
 
 ```
 PASSO 1 — GetProductAndSkuIds
@@ -81,7 +93,7 @@ PASSO 3 — stockkeepingunitbyid (lotes de 25 paralelos)
   price/msrp/c_stock ficam vazios (produto inativo)
   ~960 lotes → ~24.000 SKUs inativos
 
-PASSO 4 — Deduplicar + gerar products.csv
+PASSO 4 — Deduplicar + gerar CSV
   Ativos têm prioridade em duplicatas
   BOM UTF-8 obrigatório, separador vírgula
 
@@ -124,12 +136,21 @@ Ordem exata obrigatória — não alterar:
 ### SFTP de Produtos
 
 ```env
+# Hope
 SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
 SFTP_PRODUCTS_PORT=22
 SFTP_PRODUCTS_USERNAME=bu_hope
 SFTP_PRODUCTS_PASSWORD=***
 SFTP_PRODUCTS_REMOTE_PATH=/
 STORE_BASE_URL=https://www.hopelingerie.com.br
+
+# Hope Resort
+RESORT_SFTP_HOST=exchange.si.emarsys.net
+RESORT_SFTP_PORT=22
+RESORT_SFTP_USER=hope_resort
+RESORT_SFTP_PASSWORD=***
+RESORT_SFTP_REMOTE_DIR=/catalog/
+RESORT_STORE_BASE_URL=https://www.lojahr.com.br
 ```
 
 ---
@@ -140,11 +161,21 @@ STORE_BASE_URL=https://www.hopelingerie.com.br
 
 Roda a cada 10 minutos via `scripts/syncOrders.js` ou manualmente com `npm run sync:orders`.
 
-```
-A cada 10 minutos:
+As duas lojas rodam em **crons independentes** com controle de concorrência separado (`isRunning` / `isRunningResort`) e arquivos de controle distintos:
 
-PASSO 1 — Ler data/lastOrderSync.json
+| | Hope Lingerie | Hope Resort |
+|---|---|---|
+| **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
+| **Emarsys merchant** | `1818BD83A28703BE` | `15232C841F7635A9` |
+| **Controle de estado** | `data/lastOrderSync.json` | `data/lastOrderSyncResort.json` |
+| **Cron** | a cada 10min | a cada 10min |
+
+```
+A cada 10 minutos (por loja):
+
+PASSO 1 — Ler lastOrderSync[Resort].json
   Se não existe: busca últimos 10 minutos (primeira execução)
+  now capturado ANTES de qualquer chamada de API
 
 PASSO 2 — GET /api/oms/pvt/orders
   Filtra por f_creationDate=[lastSync TO now]
@@ -159,7 +190,7 @@ PASSO 4 — Mapear para linhas CSV
   1 linha por item do pedido
 
 PASSO 5 — Enviar CSV binary para Scarab/HAPI
-  POST via EmarsysOrdersApiService (OAuth2)
+  POST via EmarsysOrdersApiService (OAuth2 por loja)
   Em caso de erro: lastSync NÃO atualizado → reprocessa na próxima execução
 ```
 
@@ -187,11 +218,19 @@ Ordem exata obrigatória — não alterar:
 ### Autenticação OAuth2
 
 ```env
+# Hope
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID}/sales-data/api
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_HOPE}/sales-data/api
 EMARSYS_ORDERS_API_TIMEOUT=60000
+
+# Hope Resort (credenciais separadas)
+EMARSYS_OAUTH2_CLIENT_ID_RESORT=
+EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_RESORT}/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
 ```
 
 ### Performance
@@ -359,24 +398,43 @@ npm run prod
 PORT=3000
 NODE_ENV=development
 
-# VTEX - Hope
+# VTEX - Hope Lingerie
 VTEX_BASE_URL_HOPE=https://hopelingerie.vtexcommercestable.com.br
 VTEX_APP_KEY_HOPE=
 VTEX_APP_TOKEN_HOPE=
 STORE_BASE_URL=https://www.hopelingerie.com.br
 
-# SFTP Produtos
+# VTEX - Hope Resort
+RESORT_VTEX_BASE_URL=https://lojahr.vtexcommercestable.com.br
+RESORT_VTEX_APP_KEY=
+RESORT_VTEX_APP_TOKEN=
+RESORT_STORE_BASE_URL=https://www.lojahr.com.br
+
+# SFTP Produtos - Hope
 SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
 SFTP_PRODUCTS_PORT=22
 SFTP_PRODUCTS_USERNAME=
 SFTP_PRODUCTS_PASSWORD=
 SFTP_PRODUCTS_REMOTE_PATH=/
 
-# OAuth2 Pedidos
+# SFTP Produtos - Hope Resort
+RESORT_SFTP_HOST=exchange.si.emarsys.net
+RESORT_SFTP_PORT=22
+RESORT_SFTP_USER=
+RESORT_SFTP_PASSWORD=
+RESORT_SFTP_REMOTE_DIR=/catalog/
+
+# OAuth2 Pedidos - Hope
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
 EMARSYS_ORDERS_API_URL=
+
+# OAuth2 Pedidos - Hope Resort
+EMARSYS_OAUTH2_CLIENT_ID_RESORT=
+EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
+EMARSYS_ORDERS_API_URL_RESORT=
 
 # Webhook Contatos
 CONTACTS_WEBHOOK_URL=
@@ -437,10 +495,12 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Sync periódico de pedidos~~ — cron 10min, VTEX OMS → CSV binary → Scarab/HAPI ✅
 - [x] ~~Webhook de contatos hope/resort~~ — filas separadas por client_type ✅
 - [x] ~~Credenciais SFTP produtos Hope~~ — `bu_hope` em `exchange.si.emarsys.net` ✅
-- [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado e testado ✅
+- [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado com merchant ID separado ✅
+- [x] ~~Sync de produtos Hope Resort~~ — `hope_resort` em `/catalog/`, cron 03h ✅
+- [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 10min ✅
 - [ ] Carga histórica de pedidos (2 anos) — via CSV manual no SFTP Emarsys
-- [ ] Configurar credenciais VTEX Hope Resort para produtos
-- [ ] Testar sync de pedidos Hope end-to-end em produção
+- [ ] Testar sync produtos Resort end-to-end em produção
+- [ ] Testar sync pedidos Resort end-to-end em produção
 - [ ] Implementar suite de testes automatizados
 
 ---
