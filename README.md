@@ -41,6 +41,21 @@ pm2 → worker (worker.js)   — Cron jobs exclusivamente: produtos, pedidos, re
 
 Os dois processos são independentes. Se o worker travar num sync longo, a API continua respondendo normalmente. Se a API reiniciar, os crons continuam no worker sem interrupção.
 
+| Processo | Reiniciar sem afetar | Crons ativos |
+|---|---|---|
+| `api` | worker continua | nenhum |
+| `worker` | api continua | produtos, pedidos, retry contatos |
+
+**Cron jobs no worker:**
+
+| Job | Schedule | Ação |
+|---|---|---|
+| `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | GET `/api/vtex/products/sync` → Hope + Resort |
+| `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`) | POST `/api/background/cron-orders` → Hope + Resort |
+| `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
+
+> Os crons de produtos e pedidos disparam via HTTP para a própria API. O processo worker precisa que a API esteja no ar para esses dois flows funcionarem. O retry de contatos é independente (chama o serviço diretamente).
+
 ## Arquitetura
 
 ```
