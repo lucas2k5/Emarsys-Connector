@@ -40,12 +40,10 @@ const cronJobsRoutes = require('./routes/cronJobs');
 const cronManagementRoutes = require('./routes/cronManagement');
 const crashProtectionRoutes = require('./routes/crashProtection');
 const { getBrazilianTimestamp } = require('./utils/dateUtils');
-const CronService = require('./utils/cronService');
 
 const app = express();
 const PORT = process.env.PORT;
 const HOST = process.env.HOST;
-const cronService = new CronService();
 
 // Early deny de paths suspeitos
 app.use((req, res, next) => {
@@ -328,25 +326,19 @@ if (require.main === module) {
     console.log(`Alerts API: http://localhost:${PORT}/api/alerts`);
     console.log(`Contact Errors API: http://localhost:${PORT}/api/contact-errors`);
     
-    logger.info('🚀 Iniciando cron jobs nativos para sincronização automática...');
-    app.set('cronService', cronService);
-    
-    cronService.startAll();
+    logger.info('🚀 Servidor iniciado. Cron jobs rodando no processo worker separado.');
   });
 }
 
 process.on('SIGTERM', () => {
-  logger.info('🛑 Recebido SIGTERM, parando cron jobs...');
-  console.log('🛑 Recebido SIGTERM, parando cron jobs...');
-  cronService.stopAll();
-  websocketService.close();
+  logger.info('🛑 Recebido SIGTERM, encerrando servidor...');
+  console.log('🛑 Recebido SIGTERM, encerrando servidor...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  logger.info('🛑 Recebido SIGINT, parando cron jobs...');
-  console.log('🛑 Recebido SIGINT, parando cron jobs...');
-  cronService.stopAll();
+  logger.info('🛑 Recebido SIGINT, encerrando servidor...');
+  console.log('🛑 Recebido SIGINT, encerrando servidor...');
   process.exit(0);
 });
 
