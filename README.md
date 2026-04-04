@@ -32,11 +32,21 @@ PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C8
 CONTATOS:          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 ```
 
+### Processos em produção
+
+```
+pm2 → api    (server.js)   — Express HTTP, rotas, webhooks, monitoramento
+pm2 → worker (worker.js)   — Cron jobs exclusivamente: produtos, pedidos, retry de contatos
+```
+
+Os dois processos são independentes. Se o worker travar num sync longo, a API continua respondendo normalmente. Se a API reiniciar, os crons continuam no worker sem interrupção.
+
 ## Arquitetura
 
 ```
 Emarsys-Connector/
-├── server.js                   # Servidor Express principal
+├── server.js                   # Servidor Express — rotas, middlewares, webhooks (sem crons)
+├── worker.js                   # Processo worker — cron jobs exclusivamente (sem HTTP)
 ├── scripts/
 │   ├── syncProducts.js        # Sync diário Hope (02h) + Resort (03h)
 │   └── syncOrders.js          # Sync 10min Hope + Resort (crons independentes)
@@ -333,7 +343,10 @@ npm run dev
 ### Produção
 
 ```bash
-npm run prod
+npm run prod           # inicia api + worker via PM2
+pm2 list               # api e worker ambos online
+npm run prod:logs      # logs da API
+npm run prod:logs:worker  # logs do worker (crons)
 ```
 
 ---
@@ -342,6 +355,8 @@ npm run prod
 
 | Script | Descrição |
 |---|---|
+| `npm run worker` | Inicia o worker de cron jobs (produção manual) |
+| `npm run worker:dev` | Inicia o worker com nodemon (desenvolvimento) |
 | `npm run sync:products` | Sync manual de produtos (VTEX → CSV → SFTP) |
 | `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 10min) |
 | `npm run clear-logs` | Limpa arquivos de log |
