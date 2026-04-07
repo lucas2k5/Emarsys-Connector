@@ -50,11 +50,11 @@ Os dois processos são independentes. Se o worker travar num sync longo, a API c
 
 | Job | Schedule | Ação |
 |---|---|---|
-| `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | GET `/api/vtex/products/sync` → Hope + Resort |
+| `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | Direto: `fetchAllProductRows` → CSV → SFTP (sem passar pela API) |
 | `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`) | POST `/api/background/cron-orders` → Hope + Resort |
 | `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
 
-> Os crons de produtos e pedidos disparam via HTTP para a própria API. O processo worker precisa que a API esteja no ar para esses dois flows funcionarem. O retry de contatos é independente (chama o serviço diretamente).
+> O cron de pedidos dispara via HTTP para a própria API (retorna jobId imediatamente, execução em background). Produtos e retry de contatos chamam os serviços diretamente, sem depender da API estar no ar.
 
 ## Arquitetura
 
@@ -105,18 +105,18 @@ Ambas as lojas usam a **mesma lógica interna** — apenas com credenciais e des
 ```
 PASSO 1 — GetProductAndSkuIds
   Coleta todos os skuIds (ativos + inativos + invisíveis)
-  ~171 chamadas paginadas de 50 em 50
-  Resultado: ~27.000 skuIds únicos
+  ~188 chamadas paginadas de 50 em 50
+  Resultado: ~27.287 skuIds únicos
 
 PASSO 2 — products/search (lotes de 50)
   Busca detalhes dos SKUs visíveis na loja
   Retorna: price, msrp, c_stock, title, link, image, category, available
-  ~542 chamadas → ~3.300 SKUs ativos
+  ~546 chamadas → ~3.378 SKUs ativos
 
 PASSO 3 — stockkeepingunitbyid (lotes de 25 paralelos)
   SKUs inativos/invisíveis que não retornaram no PASSO 2
   price/msrp/c_stock ficam vazios (produto inativo)
-  ~960 lotes → ~24.000 SKUs inativos
+  ~970 lotes → ~24.225 SKUs inativos
 
 PASSO 4 — Deduplicar + gerar CSV
   Ativos têm prioridade em duplicatas
@@ -152,11 +152,11 @@ Ordem exata obrigatória — não alterar:
 
 | Etapa | Chamadas | Tempo |
 |---|---|---|
-| GetProductAndSkuIds | ~171 | ~1-2 min |
-| products/search | ~542 | ~3-5 min |
-| stockkeepingunitbyid | ~960 lotes de 25 | ~12-15 min |
+| GetProductAndSkuIds | ~188 | ~1-2 min |
+| products/search | ~546 | ~3-5 min |
+| stockkeepingunitbyid | ~970 lotes de 25 | ~12-15 min |
 | CSV + SFTP | — | ~1 min |
-| **Total** | **~1.673** | **~17-23 min** |
+| **Total** | **~1.704** | **~17-23 min** |
 
 ### SFTP de Produtos
 
@@ -277,7 +277,7 @@ Pico (campanha):
 ```
 VTEX Master Data (cliente criado/atualizado)
   │
-  └─ POST <ngrok>/api/emarsys/contacts/webhook    ← Webhook de ENTRADA
+  └─ POST https://api.hopeoficial.com.br/api/emarsys/contacts/webhook    ← Webhook de ENTRADA
        │
        ├─ Valida email obrigatório
        ├─ Idempotência (ignora duplicatas em janela de 15s)
@@ -427,6 +427,7 @@ npm run prod:logs:worker  # logs do worker (crons)
 # Server
 PORT=3000
 NODE_ENV=development
+BASE_URL=https://api.hopeoficial.com.br
 
 # VTEX - Hope Lingerie
 VTEX_BASE_URL_HOPE=https://hopelingerie.vtexcommercestable.com.br
