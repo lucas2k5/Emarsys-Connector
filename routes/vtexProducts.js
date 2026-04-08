@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const VtexProductService = require('../services/vtexProductService');
-
-// Instância padrão (hope) para endpoints que não recebem parâmetro store
-const vtexProductService = new VtexProductService('hope');
+const vtexProductService = require('../services/vtexProductService');
+const { generateCsv } = require('../helpers/csvHelper');
+const { uploadToSftp, uploadToSftpResort } = require('../helpers/sftpHelper');
 
 
 /**
@@ -300,8 +299,14 @@ router.post('/sync', async (req, res) => {
           progress: 5
         });
 
-        const service = new VtexProductService(store);
-        const result = await service.syncProducts({ maxProducts, forceRefresh, batchSize });
+        const fetchFn = store === 'resort'
+          ? vtexProductService.fetchAllProductRowsResort
+          : vtexProductService.fetchAllProductRows;
+        const fileName = store === 'resort' ? 'products_resort.csv' : 'products.csv';
+        const rows = await fetchFn();
+        const { filePath } = generateCsv(rows, fileName);
+        store === 'resort' ? await uploadToSftpResort(filePath, fileName) : await uploadToSftp(filePath, fileName);
+        const result = { success: true, store, count: rows.length };
 
         // Atualizar status do job
         jobStatus.set(jobId, {
@@ -456,12 +461,16 @@ router.get('/sync', async (req, res) => {
           setTimeout(() => reject(new Error('Timeout: Sincronização de produtos excedeu 30 minutos')), 30 * 60 * 1000);
         });
 
-        const service = new VtexProductService(store);
-        const syncPromise = service.syncProducts({
-          maxProducts: parseInt(maxProducts) || 0,
-          forceRefresh: forceRefresh === 'true',
-          batchSize: parseInt(batchSize) || 50
-        });
+        const fetchFn = store === 'resort'
+          ? vtexProductService.fetchAllProductRowsResort
+          : vtexProductService.fetchAllProductRows;
+        const fileName = store === 'resort' ? 'products_resort.csv' : 'products.csv';
+        const syncPromise = (async () => {
+          const rows = await fetchFn();
+          const { filePath } = generateCsv(rows, fileName);
+          store === 'resort' ? await uploadToSftpResort(filePath, fileName) : await uploadToSftp(filePath, fileName);
+          return { success: true, store, count: rows.length };
+        })();
 
         const result = await Promise.race([syncPromise, timeoutPromise]);
 
