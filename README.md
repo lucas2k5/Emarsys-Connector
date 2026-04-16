@@ -2,6 +2,8 @@
 
 Sistema de integração entre VTEX e Emarsys para sincronização de produtos, pedidos e contatos.
 
+![Arquitetura](./docs/arquitetura.png)
+
 ## Visão Geral
 
 O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como ponte entre a plataforma de e-commerce VTEX e a plataforma de marketing Emarsys.
