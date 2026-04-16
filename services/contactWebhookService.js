@@ -263,7 +263,8 @@ class ContactWebhookService {
         state: contactData.state || null,
         country: this.normalizeCountry(contactData.country),
         postal_code: contactData.postal_code || null,
-        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true
+        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true,
+        is_lead: contactData.is_lead === true ? true : null
       };
     }
 
