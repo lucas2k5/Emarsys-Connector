@@ -302,10 +302,10 @@ VTEX Master Data (cliente criado/atualizado)
 
 ```json
 {
-  "customer_id": "NDI1NzAzOTk4MTc=",
+  "customer_id": "a3f8c2e1d94b76f0e5a1c3d2b8f4e9a7c6d1b2e3f5a0c4d7e8b9f2a1c3e6d4",
   "client_type": "hope",
   "email": "cliente@email.com",
-  "cpf": "42570399817",
+  "cpf": "38439322113",
   "first_name": "Gabriel",
   "last_name": "Lima",
   "phone": "+551133334444",
@@ -317,7 +317,7 @@ VTEX Master Data (cliente criado/atualizado)
   "country": 31,
   "postal_code": "01310-100",
   "opt_in": true,
-  "is_lead": null
+  "is_lead": true
 }
 ```
 
