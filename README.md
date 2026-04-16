@@ -316,9 +316,12 @@ VTEX Master Data (cliente criado/atualizado)
   "state": "SP",
   "country": 31,
   "postal_code": "01310-100",
-  "opt_in": true
+  "opt_in": true,
+  "is_lead": null
 }
 ```
+
+> Campos opcionais enviam `null` quando não preenchidos. `is_lead: true` indica lead; `false` ou ausente é enviado como `null`.
 
 ### Configuração
 
