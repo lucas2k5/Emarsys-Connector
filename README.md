@@ -241,6 +241,7 @@ Ordem exata obrigatória — não alterar:
 | `s_loja` | Hostname da loja | `hostname` |
 | `s_tipo_pagamento` | Forma de pagamento | `paymentData.transactions[0].payments[0].paymentSystemName` |
 | `s_cupom` | Código do cupom ou valor de desconto | `marketingData.coupon` ou `totals[Discounts].value` |
+| `valor_desconto` | Valor absoluto do desconto (`149.90`) — vazio se sem desconto | `totals[Discounts].value ÷ 100` |
 
 ### Autenticação OAuth2
 

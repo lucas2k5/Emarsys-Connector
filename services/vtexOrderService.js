@@ -26,7 +26,7 @@ const CONFIG = {
 const CSV_HEADERS = [
   'item', 'price', 'order', 'timestamp', 'customer', 'quantity',
   's_sales_channel', 's_store_id', 's_canal', 's_loja',
-  's_tipo_pagamento', 's_cupom',
+  's_tipo_pagamento', 's_cupom', 'valor_desconto',
 ];
 
 function makeHeaders(key, token) {
@@ -134,6 +134,7 @@ function mapOrderToRows(order, tag) {
   const cupom = discountTotal < 0
     ? (order.marketingData?.coupon || String(Math.abs(discountTotal / 100)))
     : '';
+  const valorDesconto = discountTotal < 0 ? (Math.abs(discountTotal) / 100).toFixed(2) : '';
 
   const rows = [];
   for (const item of order.items || []) {
@@ -150,6 +151,7 @@ function mapOrderToRows(order, tag) {
       s_loja:           loja,
       s_tipo_pagamento: pagamento,
       s_cupom:          cupom,
+      valor_desconto:   valorDesconto,
     });
   }
 
