@@ -298,7 +298,8 @@ class ContactWebhookService {
       state,
       country,
       postal_code: postalCode,
-      opt_in: optIn
+      opt_in: optIn,
+      is_lead: contactData.is_lead === true ? true : null
     };
 
     return payload;
