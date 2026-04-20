@@ -216,8 +216,8 @@ class ContactWebhookService {
    * @returns {string}
    */
   cleanDocument(doc) {
-    if (!doc || typeof doc !== 'string') return '';
-    return doc.replace(/[^\d]/g, '');
+    if (!doc && doc !== 0) return '';
+    return String(doc).replace(/[^\d]/g, '');
   }
 
   /**
@@ -249,10 +249,10 @@ class ContactWebhookService {
     // usa direto sem transformações — a VTEX envia já formatado.
     if (contactData.customer_id && contactData.client_type) {
       return {
-        customer_id: contactData.customer_id,
+        customer_id: String(contactData.customer_id),
         client_type: contactData.client_type,
         email: (contactData.email || '').trim().toLowerCase(),
-        cpf: contactData.cpf || null,
+        cpf: contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') || null : null,
         first_name: contactData.first_name || null,
         last_name: contactData.last_name || null,
         phone: contactData.phone || null,
@@ -372,7 +372,8 @@ class ContactWebhookService {
       maskedPayload.email = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
     }
     if (maskedPayload.cpf) {
-      maskedPayload.cpf = maskedPayload.cpf.slice(0, 3) + '***' + maskedPayload.cpf.slice(-2);
+      const cpfStr = String(maskedPayload.cpf);
+      maskedPayload.cpf = cpfStr.slice(0, 3) + '***' + cpfStr.slice(-2);
     }
     if (maskedPayload.phone) maskedPayload.phone = maskedPayload.phone.replace(/\d(?=\d{2})/g, '*');
     if (maskedPayload.mobile) maskedPayload.mobile = maskedPayload.mobile.replace(/\d(?=\d{2})/g, '*');
