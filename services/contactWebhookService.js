@@ -270,21 +270,31 @@ class ContactWebhookService {
 
     // Fallback: formato legado — transforma campos antigos para o padrão
     const email = (contactData.email || contactData['3'] || '').trim().toLowerCase();
-    const cpf = this.cleanDocument(contactData.cpf || contactData.document || contactData['43'] || '');
-    const firstName = (contactData.first_name || contactData.firstName || contactData['1'] || '').trim();
-    const lastName = (contactData.last_name || contactData.lastName || contactData['2'] || '').trim();
-    const phone = this.normalizePhone(contactData.phone || contactData['15'] || '');
-    const mobile = this.normalizePhone(contactData.mobile || contactData['37'] || '');
-    const gender = this.normalizeGenderShort(contactData.gender || contactData['5'] || '');
+    const cpfRaw = this.cleanDocument(contactData.cpf || contactData.document || contactData['43'] || '');
+    const cpf = cpfRaw || null;
+    const firstNameRaw = (contactData.first_name || contactData.firstName || contactData['1'] || '').trim();
+    const firstName = firstNameRaw || null;
+    const lastNameRaw = (contactData.last_name || contactData.lastName || contactData['2'] || '').trim();
+    const lastName = lastNameRaw || null;
+    const phoneRaw = this.normalizePhone(contactData.phone || contactData['15'] || '');
+    const phone = phoneRaw || null;
+    const mobileRaw = this.normalizePhone(contactData.mobile || contactData['37'] || '');
+    const mobile = mobileRaw || null;
+    const genderRaw = this.normalizeGenderShort(contactData.gender || contactData['5'] || '');
+    const gender = genderRaw || null;
     const optIn = this.normalizeOptIn(contactData.opt_in ?? contactData.optin ?? contactData['31']);
-    const address = (contactData.address || '').trim();
-    const city = (contactData.city || contactData['11'] || '').trim();
-    const state = (contactData.state || contactData['12'] || '').trim();
+    const addressRaw = (contactData.address || '').trim();
+    const address = addressRaw || null;
+    const cityRaw = (contactData.city || contactData['11'] || '').trim();
+    const city = cityRaw || null;
+    const stateRaw = (contactData.state || contactData['12'] || '').trim();
+    const state = stateRaw || null;
     const country = this.normalizeCountry(contactData.country || contactData['14']);
-    const postalCode = (contactData.postal_code || contactData.zip_code || contactData['13'] || '').trim();
+    const postalCodeRaw = (contactData.postal_code || contactData.zip_code || contactData['13'] || '').trim();
+    const postalCode = postalCodeRaw || null;
 
     const payload = {
-      customer_id: this.generateCustomerId(cpf, email),
+      customer_id: this.generateCustomerId(cpfRaw, email),
       client_type: contactData.client_type || this.clientType,
       email,
       cpf,
