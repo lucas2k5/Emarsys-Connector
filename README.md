@@ -317,12 +317,11 @@ VTEX Master Data (cliente criado/atualizado)
   "state": "SP",
   "country": 24,
   "postal_code": "01310-100",
-  "opt_in": true,
-  "is_lead": true
+  "opt_in": true
 }
 ```
 
-> Campos opcionais enviam `null` quando não preenchidos. `is_lead: true` indica lead; `false` ou ausente é enviado como `null`. `country` deve sempre ser `24` (código Emarsys para Brasil) — o conector atende exclusivamente clientes brasileiros.
+> Campos opcionais enviam `null` quando não preenchidos. `country` deve sempre ser `24` (código Emarsys para Brasil) — o conector atende exclusivamente clientes brasileiros.
 
 ### Configuração
 

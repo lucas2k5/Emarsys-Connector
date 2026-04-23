@@ -263,8 +263,7 @@ class ContactWebhookService {
         state: contactData.state || null,
         country: this.normalizeCountry(contactData.country),
         postal_code: contactData.postal_code || null,
-        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true,
-        is_lead: contactData.is_lead === true ? true : null
+        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true
       };
     }
 
@@ -308,8 +307,7 @@ class ContactWebhookService {
       state,
       country,
       postal_code: postalCode,
-      opt_in: optIn,
-      is_lead: contactData.is_lead === true ? true : null
+      opt_in: optIn
     };
 
     return payload;
