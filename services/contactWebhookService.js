@@ -293,7 +293,7 @@ class ContactWebhookService {
     const postalCode = postalCodeRaw || null;
 
     const payload = {
-      customer_id: this.generateCustomerId(cpfRaw, email),
+      customer_id: contactData.customer_id != null ? String(contactData.customer_id) : (cpfRaw || null),
       client_type: contactData.client_type || this.clientType,
       email,
       cpf,
