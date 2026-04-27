@@ -63,7 +63,7 @@ async function uploadToSftpResort(localFilePath, fileName) {
   const port     = parseInt(process.env.RESORT_SFTP_PORT || process.env.SFTP_PRODUCTS_PORT || process.env.SFTP_PORT || '22', 10);
   const username = process.env.RESORT_SFTP_USER     || process.env.SFTP_PRODUCTS_USERNAME || process.env.SFTP_USER || process.env.SFTP_USERNAME;
   const password = process.env.RESORT_SFTP_PASSWORD || process.env.SFTP_PRODUCTS_PASSWORD || process.env.SFTP_PASSWORD;
-  const remoteDir = process.env.RESORT_SFTP_REMOTE_DIR || process.env.SFTP_PRODUCTS_REMOTE_PATH || process.env.SFTP_REMOTE_DIR || '/';
+  const remoteDir = process.env.SFTP_PRODUCTS_REMOTE_PATH_RESORT || process.env.RESORT_SFTP_REMOTE_DIR || process.env.SFTP_PRODUCTS_REMOTE_PATH || process.env.SFTP_REMOTE_DIR || '/';
 
   if (!host)     throw new Error('uploadToSftpResort: SFTP host não definido');
   if (!username) throw new Error('uploadToSftpResort: SFTP user não definido');
