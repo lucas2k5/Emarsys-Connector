@@ -20,7 +20,7 @@ function escapeField(value) {
   return str;
 }
 
-function generateCsv(rows, fileName = 'products.csv') {
+function generateCsv(rows, fileName = 'product.csv') {
   if (!fs.existsSync(TMP_DIR)) {
     fs.mkdirSync(TMP_DIR, { recursive: true });
   }
