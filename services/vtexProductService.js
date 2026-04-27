@@ -90,7 +90,11 @@ function formatCategoryFromObject(categories) {
 
 function cleanText(text) {
   if (!text) return '';
-  return text.replace(/[\r\n]+/g, ' ').trim();
+  return text
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[•·▪▸►▶–—]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function chunkArray(arr, size) {
