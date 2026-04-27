@@ -28,7 +28,7 @@ async function run() {
   const t2 = Date.now();
   try {
     const rows = await fetchAllProductRowsResort();
-    const { filePath, fileName } = generateCsv(rows, 'product_resort.csv');
+    const { filePath, fileName } = generateCsv(rows, 'product.csv');
     await uploadToSftpResort(filePath, fileName);
     console.log(`[2/2] ✓ Hope Resort — ${rows.length.toLocaleString('pt-BR')} SKUs em ${((Date.now() - t2) / 1000).toFixed(1)}s\n`);
   } catch (err) {

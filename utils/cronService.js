@@ -127,7 +127,7 @@ class CronService {
           logHelpers.logProducts('info', '🚀 [resort] Iniciando sync direto VTEX → CSV → SFTP');
           const startedAt = Date.now();
           const rows = await fetchAllProductRowsResort();
-          const { filePath, fileName } = generateCsv(rows, 'product_resort.csv');
+          const { filePath, fileName } = generateCsv(rows, 'product.csv');
           await uploadToSftpResort(filePath, fileName);
           const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
           logHelpers.logProducts('info', `✅ [resort] Concluído em ${duration}s — ${rows.length} SKUs exportados`);

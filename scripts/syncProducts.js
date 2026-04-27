@@ -38,7 +38,7 @@ async function runSyncResort() {
 
   try {
     const rows = await fetchAllProductRowsResort();
-    const { filePath, fileName } = generateCsv(rows, 'product_resort.csv');
+    const { filePath, fileName } = generateCsv(rows, 'product.csv');
     await uploadToSftpResort(filePath, fileName);
 
     const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
