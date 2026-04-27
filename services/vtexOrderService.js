@@ -131,9 +131,7 @@ function mapOrderToRows(order, tag) {
     ?.paymentSystemName || '';
 
   const discountTotal = order.totals?.find((t) => t.id === 'Discounts')?.value || 0;
-  const cupom = discountTotal < 0
-    ? (order.marketingData?.coupon || String(Math.abs(discountTotal / 100)))
-    : '';
+  const cupom = order.marketingData?.coupon || '';
   const valorDesconto = discountTotal < 0 ? (Math.abs(discountTotal) / 100).toFixed(2) : '';
 
   const rows = [];
