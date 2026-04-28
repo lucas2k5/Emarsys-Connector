@@ -91,6 +91,7 @@ function formatCategoryFromObject(categories) {
 function cleanText(text) {
   if (!text) return '';
   return text
+    .replace(/\x00/g, '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/[•·▪▸►▶–—]/g, '')
     .replace(/\s{2,}/g, ' ')
