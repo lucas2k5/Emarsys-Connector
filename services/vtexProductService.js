@@ -97,6 +97,11 @@ function cleanText(text) {
     .trim();
 }
 
+function encodeImageUrl(url) {
+  if (!url) return '';
+  return url.replace(/ /g, '%20');
+}
+
 function chunkArray(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) {
@@ -158,7 +163,7 @@ function mapSearchProductToRows(product) {
         item:         String(sku.itemId),
         title:        product.productName || '',
         link:         product.link || '',
-        image:        sku.images?.[0]?.imageUrl || '',
+        image:        encodeImageUrl(sku.images?.[0]?.imageUrl || ''),
         category:     formatCategoryPath(product.categories?.[0]),
         available:    String(offer.IsAvailable ?? false),
         description:  cleanText(product.description),
@@ -210,7 +215,7 @@ function mapSkuDetailsToRow(sku, storeBaseUrl) {
     item:         String(sku.Id),
     title:        sku.ProductName || '',
     link:         storeBaseUrl + (sku.DetailUrl || ''),
-    image:        sku.Images?.[0]?.ImageUrl || '',
+    image:        encodeImageUrl(sku.Images?.[0]?.ImageUrl || ''),
     category:     formatCategoryFromObject(sku.ProductCategories),
     available:    String(sku.IsActive ?? false),
     description:  cleanText(sku.ProductDescription),
