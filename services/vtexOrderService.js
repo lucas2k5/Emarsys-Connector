@@ -26,7 +26,7 @@ const CONFIG = {
 const CSV_HEADERS = [
   'item', 'price', 'order', 'timestamp', 'customer', 'quantity',
   's_sales_channel', 's_store_id', 's_canal', 's_loja',
-  's_tipo_pagamento', 's_cupom', 'valor_desconto',
+  's_tipo_pagamento', 's_cupom', 'f_valor_desconto',
 ];
 
 function makeHeaders(key, token) {
@@ -149,7 +149,7 @@ function mapOrderToRows(order, tag) {
       s_loja:           loja,
       s_tipo_pagamento: pagamento,
       s_cupom:          cupom,
-      valor_desconto:   valorDesconto,
+      f_valor_desconto: valorDesconto,
     });
   }
 

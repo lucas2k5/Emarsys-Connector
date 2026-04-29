@@ -32,7 +32,7 @@ const HEADERS = {
 const CSV_COLS = [
   'item', 'price', 'order', 'timestamp', 'customer', 'quantity',
   's_sales_channel', 's_store_id', 's_canal', 's_loja',
-  's_tipo_pagamento', 's_cupom', 'valor_desconto',
+  's_tipo_pagamento', 's_cupom', 'f_valor_desconto',
 ];
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -110,7 +110,7 @@ function maskCpf(cpf) {
         s_loja:           detail.hostname || '',
         s_tipo_pagamento: pagamento,
         s_cupom:          cupom,
-        valor_desconto:   valorDesconto,
+        f_valor_desconto: valorDesconto,
       });
     }
 
