@@ -118,7 +118,7 @@ function mapOrderToRows(order, tag) {
 
   const customer  = crypto.createHash('sha256').update(cpf).digest('hex');
   const orderId   = order.orderId;
-  const timestamp = Math.floor(new Date(order.creationDate).getTime() / 1000);
+  const timestamp = new Date(order.creationDate).toISOString().replace('.000Z', 'Z').replace(/\.\d{3}Z$/, 'Z');
 
   const salesChannel = String(order.salesChannel || '');
   const storeId      = order.hostname || '';
