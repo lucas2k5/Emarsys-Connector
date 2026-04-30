@@ -52,7 +52,12 @@ class EmarsysOrdersApiService {
       ? (process.env.EMARSYS_ORDERS_API_URL_RESORT || '')
       : (process.env.EMARSYS_ORDERS_API_URL || '');
 
-    // Instancia OAuth2 com credenciais do store correto
+    // Token estático tem prioridade sobre OAuth2
+    this.staticToken = store === 'resort'
+      ? (process.env.EMARSYS_SALES_TOKEN_RESORT || process.env.EMARSYS_SALES_TOKEN || '')
+      : (process.env.EMARSYS_SALES_TOKEN || '');
+
+    // OAuth2 — usado apenas se não houver token estático
     this.oauth2 = store === 'resort'
       ? new EmarsysOAuth2Service({
           store: 'resort',
@@ -67,10 +72,11 @@ class EmarsysOrdersApiService {
       : (parseInt(process.env.EMARSYS_ORDERS_API_TIMEOUT) || 60000);
     this.maxRetries = 3;
 
+    const authMode = this.staticToken ? 'token estático' : 'OAuth2';
     if (!this.apiUrl) {
       console.warn(`⚠️ [EmarsysOrdersAPI][${store}] URL da API não configurada. Endpoint de pedidos pendente.`);
     } else {
-      console.log(`✅ [EmarsysOrdersAPI][${store}] Configurado para: ${this.apiUrl} (auth: OAuth2)`);
+      console.log(`✅ [EmarsysOrdersAPI][${store}] Configurado para: ${this.apiUrl} (auth: ${authMode})`);
     }
   }
 
@@ -79,7 +85,7 @@ class EmarsysOrdersApiService {
    * @returns {boolean}
    */
   isConfigured() {
-    return !!(this.apiUrl && this.oauth2.isConfigured());
+    return !!(this.apiUrl && (this.staticToken || this.oauth2.isConfigured()));
   }
 
   /**
@@ -226,7 +232,8 @@ class EmarsysOrdersApiService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        const token = await this.oauth2.getAccessToken();
+        // Token estático tem prioridade; OAuth2 como fallback
+        const token = this.staticToken || await this.oauth2.getAccessToken();
 
         logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
           size: `${(csvBuffer.length / 1024).toFixed(2)} KB`,
@@ -263,8 +270,8 @@ class EmarsysOrdersApiService {
         const status = error.response?.status;
         const data = error.response?.data;
 
-        // Se 401, invalidar token OAuth2 e tentar novamente
-        if (status === 401 && attempt < this.maxRetries) {
+        // Se 401 e usando OAuth2, invalidar token e tentar novamente
+        if (status === 401 && !this.staticToken && attempt < this.maxRetries) {
           logger.warn(`[EmarsysOrdersAPI][${this.store}] Token OAuth2 expirado, renovando...`);
           this.oauth2.invalidateToken();
           continue;

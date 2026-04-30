@@ -29,8 +29,8 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 ```
 PRODUTOS (Hope):   VTEX hopelingerie → products.csv (ativos + inativos) → SFTP bu_hope        (diário 02h)
 PRODUTOS (Resort): VTEX lojahr       → products_resort.csv              → SFTP hope_resort    (diário 03h)
-PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1818BD83A28703BE OAuth2  (a cada 10min)
-PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 OAuth2  (a cada 10min)
+PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1789FBAF0A6EF683 bearer token  (a cada 10min)
+PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 bearer token  (a cada 10min)
 CONTATOS:          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 ```
 
@@ -101,7 +101,7 @@ Ambas as lojas usam a **mesma lógica interna** — apenas com credenciais e des
 | **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
 | **Arquivo** | `products.csv` | `products_resort.csv` |
 | **SFTP user** | `bu_hope` | `hope_resort` |
-| **SFTP path** | `/` | `/catalog/` |
+| **SFTP path** | `/` | `/` |
 | **Cron** | diário 02h | diário 03h |
 
 ```
@@ -176,7 +176,7 @@ RESORT_SFTP_HOST=exchange.si.emarsys.net
 RESORT_SFTP_PORT=22
 RESORT_SFTP_USER=hope_resort
 RESORT_SFTP_PASSWORD=***
-RESORT_SFTP_REMOTE_DIR=/catalog/
+RESORT_SFTP_REMOTE_DIR=/
 RESORT_STORE_BASE_URL=https://www.lojahr.com.br
 ```
 
@@ -193,7 +193,7 @@ As duas lojas rodam em **crons independentes** com controle de concorrência sep
 | | Hope Lingerie | Hope Resort |
 |---|---|---|
 | **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
-| **Emarsys merchant** | `1818BD83A28703BE` | `15232C841F7635A9` |
+| **Emarsys merchant** | `1789FBAF0A6EF683` | `15232C841F7635A9` |
 | **Controle de estado** | `data/lastOrderSync.json` | `data/lastOrderSyncResort.json` |
 | **Cron** | a cada 10min | a cada 10min |
 
@@ -232,33 +232,36 @@ Ordem exata obrigatória — não alterar:
 | `item` | SKU (mesmo do products.csv) | `items[n].id` |
 | `price` | Preço unitário (`149.90`) | `items[n].price ÷ 100` |
 | `order` | ID do pedido | `orderId` |
-| `timestamp` | Unix timestamp da criação | `creationDate` |
-| `customer` | CPF hasheado SHA256 | `clientProfileData.document` |
+| `timestamp` | Data/hora ISO 8601 UTC (`2024-04-01T13:22:00Z`) | `creationDate` |
+| `customer` | CPF hasheado SHA-256 (64 hex chars) | `clientProfileData.document` |
 | `quantity` | Quantidade | `items[n].quantity` |
 | `s_sales_channel` | Canal de vendas | `salesChannel` |
 | `s_store_id` | Hostname da loja | `hostname` |
 | `s_canal` | Origem do pedido | `origin` |
 | `s_loja` | Hostname da loja | `hostname` |
 | `s_tipo_pagamento` | Forma de pagamento | `paymentData.transactions[0].payments[0].paymentSystemName` |
-| `s_cupom` | Código do cupom ou valor de desconto | `marketingData.coupon` ou `totals[Discounts].value` |
-| `f_valor_desconto` | Valor absoluto do desconto (`149.90`) — vazio se sem desconto. Prefixo `f_` indica float para o Emarsys | `totals[Discounts].value ÷ 100` |
+| `s_cupom` | Código do cupom (somente o código, ex: `PROMO10`) | `marketingData.coupon` |
+| `f_valor_desconto` | Valor absoluto do desconto em decimal (`75.00`) — vazio se sem desconto. Prefixo `f_` = float no Emarsys | `abs(totals[Discounts].value) ÷ 100` |
 
-### Autenticação OAuth2
+### Autenticação
+
+A API Scarab HAPI usa **token estático bearer** (prioridade). OAuth2 é mantido como fallback.
 
 ```env
 # Hope
+EMARSYS_SALES_TOKEN=<bearer_token_hope>
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/1789FBAF0A6EF683/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT=60000
+
+# Hope Resort
+EMARSYS_SALES_TOKEN_RESORT=<bearer_token_resort>
+EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/15232C841F7635A9/sales-data/api
+EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
+
+# OAuth2 (fallback — usado se EMARSYS_SALES_TOKEN não estiver configurado)
 EMARSYS_OAUTH2_CLIENT_ID=
 EMARSYS_OAUTH2_CLIENT_SECRET=
 EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_HOPE}/sales-data/api
-EMARSYS_ORDERS_API_TIMEOUT=60000
-
-# Hope Resort (credenciais separadas)
-EMARSYS_OAUTH2_CLIENT_ID_RESORT=
-EMARSYS_OAUTH2_CLIENT_SECRET_RESORT=
-EMARSYS_OAUTH2_TOKEN_ENDPOINT_RESORT=https://auth.emarsys.net/oauth2/token
-EMARSYS_ORDERS_API_URL_RESORT=https://admin.scarabresearch.com/hapi/merchant/{MERCHANT_ID_RESORT}/sales-data/api
-EMARSYS_ORDERS_API_TIMEOUT_RESORT=60000
 ```
 
 ### Performance
@@ -535,7 +538,10 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Sync de produtos Hope Resort~~ — `hope_resort` em `/catalog/`, cron 03h ✅
 - [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 10min ✅
 - [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
-- [ ] Carga histórica de pedidos (2 anos) — via CSV manual no SFTP Emarsys
+- [x] ~~Carga histórica Hope Lingerie Abr/2024–Abr/2025~~ — 170.040 pedidos / 551.493 linhas ✅
+- [x] ~~Token bearer estático Scarab HAPI~~ — Hope (`1789FBAF0A6EF683`) e Resort (`15232C841F7635A9`) ✅
+- [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
+- [ ] Carga histórica Hope Resort (2 anos)
 - [ ] Validar sync produtos Resort em produção (primeira execução)
 - [ ] Validar sync pedidos Resort em produção (primeira execução)
 - [ ] Implementar suite de testes automatizados
