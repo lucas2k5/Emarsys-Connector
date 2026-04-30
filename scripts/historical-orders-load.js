@@ -220,7 +220,7 @@ async function fetchDetailAndMap(listItem) {
   const canal        = listItem.origin   || detail.origin   || '';
 
   return (detail.items || []).map(item => ({
-    item:             item.id,
+    item:             item.refId || String(item.id),
     price:            (item.price / 100).toFixed(2),
     order:            detail.orderId,
     timestamp,

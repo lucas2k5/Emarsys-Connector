@@ -98,7 +98,7 @@ function maskCpf(cpf) {
 
     for (const item of (detail.items || [])) {
       rows.push({
-        item:             item.id,
+        item:             item.refId || String(item.id),
         price:            (item.price / 100).toFixed(2),
         order:            detail.orderId,
         timestamp:        timestamp,

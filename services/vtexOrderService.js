@@ -137,7 +137,7 @@ function mapOrderToRows(order, tag) {
   const rows = [];
   for (const item of order.items || []) {
     rows.push({
-      item:             item.id,
+      item:             item.refId || String(item.id),
       price:            (item.price / 100).toFixed(2),
       order:            orderId,
       timestamp:        timestamp,

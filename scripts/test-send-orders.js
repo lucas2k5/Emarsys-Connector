@@ -88,7 +88,7 @@ function escapeField(value) {
 
       for (const item of (order.items || [])) {
         rows.push({
-          item:             item.id,
+          item:             item.refId || String(item.id),
           price:            (item.price / 100).toFixed(2),
           order:            order.orderId,
           timestamp,

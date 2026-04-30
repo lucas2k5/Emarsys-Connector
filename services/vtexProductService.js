@@ -160,8 +160,9 @@ function mapSearchProductToRows(product) {
     .map((sku) => {
       const offer = sku.sellers?.[0]?.commertialOffer;
       if (!offer) return null;
+      const refId = sku.referenceId?.[0]?.Value || String(sku.itemId);
       return {
-        item:         String(sku.itemId),
+        item:         refId,
         title:        product.productName || '',
         link:         product.link || '',
         image:        encodeImageUrl(sku.images?.[0]?.imageUrl || ''),
@@ -212,8 +213,9 @@ async function fetchActiveProductRows(allSkuIds, baseUrl, headers, tag) {
 
 // PASSO 3 — stockkeepingunitbyid para inativos/invisíveis
 function mapSkuDetailsToRow(sku, storeBaseUrl) {
+  const refId = sku.AlternateIds?.RefId || (sku.ProductRefId + sku.SkuName) || String(sku.Id);
   return {
-    item:         String(sku.Id),
+    item:         refId,
     title:        sku.ProductName || '',
     link:         storeBaseUrl + (sku.DetailUrl || ''),
     image:        encodeImageUrl(sku.Images?.[0]?.ImageUrl || ''),
