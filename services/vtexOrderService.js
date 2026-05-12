@@ -120,9 +120,11 @@ function mapOrderToRows(order, tag) {
   const orderId   = order.orderId;
   const timestamp = new Date(order.creationDate).toISOString().replace('.000Z', 'Z').replace(/\.\d{3}Z$/, 'Z');
 
-  const salesChannel = String(order.salesChannel || '');
+  const SALES_CHANNEL_MAP = { '1': 'Conta Principal', '4': 'TikTok', '5': 'APP', '8': 'Mercado Livre' };
+  const rawChannel   = String(order.salesChannel || '');
+  const salesChannel = SALES_CHANNEL_MAP[rawChannel] || rawChannel;
   const storeId      = order.hostname || '';
-  const canal        = order.origin   || '';
+  const canal        = 'Online';
   const loja         = order.hostname || '';
 
   const pagamento = order.paymentData
@@ -143,7 +145,7 @@ function mapOrderToRows(order, tag) {
       timestamp:        timestamp,
       customer:         customer,
       quantity:         item.quantity,
-      s_sales_channel:  salesChannel,
+      s_sales_channel: salesChannel,
       s_store_id:       storeId,
       s_canal:          canal,
       s_loja:           loja,
@@ -166,8 +168,20 @@ function generateOrdersCsv(rows) {
     return str;
   }
 
+  // Agrega linhas com mesmo order+item (soma quantity) para evitar duplicatas no Emarsys
+  const map = new Map();
+  for (const row of rows) {
+    const key = `${row.order}__${row.item}`;
+    if (map.has(key)) {
+      map.get(key).quantity += Number(row.quantity);
+    } else {
+      map.set(key, { ...row, quantity: Number(row.quantity) });
+    }
+  }
+  const deduped = Array.from(map.values());
+
   const header = CSV_HEADERS.join(',');
-  const lines  = rows.map((row) =>
+  const lines  = deduped.map((row) =>
     CSV_HEADERS.map((col) => escapeField(row[col])).join(',')
   );
   return [header, ...lines].join('\n') + '\n';

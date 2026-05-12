@@ -148,6 +148,7 @@ async function fetchListForSlice(since, until) {
         page,
         per_page:       ORDERS_PER_PAGE,
         f_creationDate: `creationDate:[${since} TO ${until}]`,
+        f_status:       'invoiced',
       },
     });
 
@@ -215,9 +216,11 @@ async function fetchDetailAndMap(listItem) {
   const valorDesconto = discountTotal < 0 ? (Math.abs(discountTotal) / 100).toFixed(2) : '';
 
   // salesChannel, hostname, origin também já vêm da lista
-  const salesChannel = String(listItem.salesChannel || detail.salesChannel || '');
+  const SALES_CHANNEL_MAP = { '1': 'Conta Principal', '4': 'TikTok', '5': 'APP', '8': 'Mercado Livre' };
+  const rawChannel = String(listItem.salesChannel || detail.salesChannel || '');
+  const salesChannel = SALES_CHANNEL_MAP[rawChannel] || rawChannel;
   const hostname     = listItem.hostname || detail.hostname || '';
-  const canal        = listItem.origin   || detail.origin   || '';
+  const canal        = 'Online';
 
   return (detail.items || []).map(item => ({
     item:             item.refId || String(item.id),
@@ -226,7 +229,7 @@ async function fetchDetailAndMap(listItem) {
     timestamp,
     customer,
     quantity:         item.quantity,
-    s_sales_channel:  salesChannel,
+    s_sales_channel: salesChannel,
     s_store_id:       hostname,
     s_canal:          canal,
     s_loja:           hostname,
@@ -236,9 +239,24 @@ async function fetchDetailAndMap(listItem) {
   }));
 }
 
+/** Agrega linhas com mesmo order+item (soma quantity) para evitar duplicatas no Emarsys */
+function deduplicateRows(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = `${row.order}__${row.item}`;
+    if (map.has(key)) {
+      map.get(key).quantity += Number(row.quantity);
+    } else {
+      map.set(key, { ...row, quantity: Number(row.quantity) });
+    }
+  }
+  return Array.from(map.values());
+}
+
 function buildCsv(rows) {
+  const deduped = deduplicateRows(rows);
   return CSV_HEADERS.join(',') + '\n'
-    + rows.map(r => CSV_HEADERS.map(c => escapeField(r[c])).join(',')).join('\n') + '\n';
+    + deduped.map(r => CSV_HEADERS.map(c => escapeField(r[c])).join(',')).join('\n') + '\n';
 }
 
 // ─── Emarsys ─────────────────────────────────────────────────────────────────

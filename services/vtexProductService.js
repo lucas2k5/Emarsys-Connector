@@ -20,10 +20,10 @@ const CATEGORIAS_INVALIDAS = ['INATIVO', 'OUT'];
 const CONFIG = {
   PAGE_SIZE:                       50,
   SEARCH_BATCH_SIZE:               50,
-  INACTIVE_BATCH_SIZE:             25,
+  INACTIVE_BATCH_SIZE:             50,
   DELAY_BETWEEN_PAGES:            200,
   DELAY_BETWEEN_SEARCH_BATCHES:   200,
-  DELAY_BETWEEN_INACTIVE_BATCHES: 150,
+  DELAY_BETWEEN_INACTIVE_BATCHES: 100,
   MAX_RETRIES:                      3,
   RETRY_DELAY:                   2000,
   RATE_LIMIT_DELAY:              5000,

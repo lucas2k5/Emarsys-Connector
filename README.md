@@ -229,15 +229,15 @@ Ordem exata obrigatória — não alterar:
 
 | Campo | Descrição | Origem VTEX |
 |---|---|---|
-| `item` | SKU (mesmo do products.csv) | `items[n].id` |
+| `item` | SKU (mesmo do products.csv) — formato `ProductRefId + SkuName` com padding VTEX (ex: `00038800AVL000P`) | `items[n].refId` |
 | `price` | Preço unitário (`149.90`) | `items[n].price ÷ 100` |
 | `order` | ID do pedido | `orderId` |
 | `timestamp` | Data/hora ISO 8601 UTC (`2024-04-01T13:22:00Z`) | `creationDate` |
 | `customer` | CPF hasheado SHA-256 (64 hex chars) | `clientProfileData.document` |
-| `quantity` | Quantidade | `items[n].quantity` |
-| `s_sales_channel` | Canal de vendas | `salesChannel` |
+| `quantity` | Quantidade — SKUs duplicados no mesmo pedido têm quantities somadas | `items[n].quantity` |
+| `s_sales_channel` | Canal de vendas — De/Para: `1`=`Conta Principal`, `4`=`TikTok`, `5`=`APP`, `8`=`Mercado Livre` | `salesChannel` |
 | `s_store_id` | Hostname da loja | `hostname` |
-| `s_canal` | Origem do pedido | `origin` |
+| `s_canal` | Canal de origem — valor fixo `Online` | fixo |
 | `s_loja` | Hostname da loja | `hostname` |
 | `s_tipo_pagamento` | Forma de pagamento | `paymentData.transactions[0].payments[0].paymentSystemName` |
 | `s_cupom` | Código do cupom (somente o código, ex: `PROMO10`) | `marketingData.coupon` |
