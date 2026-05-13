@@ -70,13 +70,22 @@ class CronService {
     this.setupContactsRetry();
     configuredCount++;
 
-    // Delta sync de clientes VTEX Master Data → Webhook
+    // Delta sync de clientes VTEX Master Data → Webhook (Hope)
     const clientsSyncEnabled = process.env.CLIENTS_SYNC_ENABLED;
     if (clientsSyncEnabled === 'true' || clientsSyncEnabled === '1') {
       this.setupClientsSync();
       configuredCount++;
     } else {
-      console.log('⚠️ [CRON] CLIENTS_SYNC_ENABLED não definido ou false — cron de clientes desabilitado');
+      console.log('⚠️ [CRON] CLIENTS_SYNC_ENABLED não definido ou false — cron de clientes Hope desabilitado');
+    }
+
+    // Delta sync de clientes VTEX Master Data → Webhook (Resort)
+    const clientsSyncEnabledResort = process.env.CLIENTS_SYNC_ENABLED_RESORT;
+    if (clientsSyncEnabledResort === 'true' || clientsSyncEnabledResort === '1') {
+      this.setupClientsSyncResort();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] CLIENTS_SYNC_ENABLED_RESORT não definido ou false — cron de clientes Resort desabilitado');
     }
 
     if (configuredCount > 0) {
@@ -356,7 +365,38 @@ class CronService {
     }, null, true, this.cronTimezone);
 
     this.jobs.set('clients-sync', job);
-    console.log(`🕐 Cron de clientes configurado: ${clientsSyncCron} (${this.cronTimezone})`);
+    console.log(`🕐 Cron de clientes Hope configurado: ${clientsSyncCron} (${this.cronTimezone})`);
+  }
+
+  /**
+   * Configura o cron para delta sync de clientes Resort → Webhook
+   */
+  setupClientsSyncResort() {
+    const clientsSyncCron = process.env.CLIENTS_SYNC_CRON_RESORT || process.env.CLIENTS_SYNC_CRON || '*/30 * * * *';
+    const { runDeltaSyncResort } = require('../scripts/syncClients');
+
+    const job = new cron.CronJob(clientsSyncCron, async () => {
+      const serviceName = 'clients-sync-resort';
+
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn('🚫 [CRON] Sync de clientes Resort bloqueado por proteção contra crashes');
+        return;
+      }
+
+      try {
+        await runDeltaSyncResort();
+        crashProtection.resetCrashCount(serviceName);
+      } catch (error) {
+        logHelpers.logClients('error', '❌ [CRON] Erro no delta sync de clientes Resort', {
+          error: error.message,
+          cronExpression: clientsSyncCron
+        });
+        crashProtection.recordCrash(serviceName, error);
+      }
+    }, null, true, this.cronTimezone);
+
+    this.jobs.set('clients-sync-resort', job);
+    console.log(`🕐 Cron de clientes Resort configurado: ${clientsSyncCron} (${this.cronTimezone})`);
   }
 
   /**
