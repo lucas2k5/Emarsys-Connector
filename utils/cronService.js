@@ -70,6 +70,15 @@ class CronService {
     this.setupContactsRetry();
     configuredCount++;
 
+    // Delta sync de clientes VTEX Master Data → Webhook
+    const clientsSyncEnabled = process.env.CLIENTS_SYNC_ENABLED;
+    if (clientsSyncEnabled === 'true' || clientsSyncEnabled === '1') {
+      this.setupClientsSync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] CLIENTS_SYNC_ENABLED não definido ou false — cron de clientes desabilitado');
+    }
+
     if (configuredCount > 0) {
       console.log(`🕐 ${configuredCount} cron job(s) configurado(s) e iniciado(s)`);
     } else {
@@ -317,6 +326,37 @@ class CronService {
     const ordersSyncDisabled = ordersSyncEnabledValue === 'true' || ordersSyncEnabledValue === true || ordersSyncEnabledValue === '1';
     const status = ordersSyncDisabled ? '⏸️ DESATIVADO' : '▶️ ATIVO';
     console.log(`🕐 Cron de orders configurado: ${this.ordersSyncCron} (${this.cronTimezone}) [modo: background-job] [status: ${status}] [ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}]`);
+  }
+
+  /**
+   * Configura o cron para delta sync de clientes VTEX Master Data → Webhook
+   */
+  setupClientsSync() {
+    const clientsSyncCron = process.env.CLIENTS_SYNC_CRON || '*/30 * * * *';
+    const { runDeltaSync } = require('../scripts/syncClients');
+
+    const job = new cron.CronJob(clientsSyncCron, async () => {
+      const serviceName = 'clients-sync';
+
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn('🚫 [CRON] Sync de clientes bloqueado por proteção contra crashes');
+        return;
+      }
+
+      try {
+        await runDeltaSync();
+        crashProtection.resetCrashCount(serviceName);
+      } catch (error) {
+        logHelpers.logClients('error', '❌ [CRON] Erro no delta sync de clientes', {
+          error: error.message,
+          cronExpression: clientsSyncCron
+        });
+        crashProtection.recordCrash(serviceName, error);
+      }
+    }, null, true, this.cronTimezone);
+
+    this.jobs.set('clients-sync', job);
+    console.log(`🕐 Cron de clientes configurado: ${clientsSyncCron} (${this.cronTimezone})`);
   }
 
   /**

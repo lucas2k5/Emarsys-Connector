@@ -38,7 +38,8 @@
     "tunnel": "ngrok http --url=dangelo-unadopted-hsiu.ngrok-free.app 3000",
     "sync:products": "node scripts/syncProducts.js",
     "sync:orders": "node scripts/syncOrders.js",
-    "sync:orders:historical": "node -e \"require('./scripts/syncOrders').runHistoricalSync()\""
+    "sync:orders:historical": "node -e \"require('./scripts/syncOrders').runHistoricalSync()\"",
+    "sync:clients": "node scripts/syncClients.js"
   },
   "keywords": [
     "emarsys",
