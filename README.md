@@ -31,7 +31,8 @@ PRODUTOS (Hope):   VTEX hopelingerie → products.csv (ativos + inativos) → SF
 PRODUTOS (Resort): VTEX lojahr       → products_resort.csv              → SFTP hope_resort    (diário 03h)
 PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1789FBAF0A6EF683 bearer token  (a cada 10min)
 PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 bearer token  (a cada 10min)
-CONTATOS:          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
+CONTATOS (push):   VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
+CLIENTES (delta):  VTEX Master Data CL+AD → Webhook saída (cron 30min, somente atualizados desde o último sync)
 ```
 
 ### Processos em produção
@@ -55,6 +56,7 @@ Os dois processos são independentes. Se o worker travar num sync longo, a API c
 | `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | Direto: `fetchAllProductRows` → CSV → SFTP (sem passar pela API) |
 | `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`) | POST `/api/background/cron-orders` → Hope + Resort |
 | `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
+| `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`) | Direto: delta sync CL+AD → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
 
 > O cron de pedidos dispara via HTTP para a própria API (retorna jobId imediatamente, execução em background). Produtos e retry de contatos chamam os serviços diretamente, sem depender da API estar no ar.
 
@@ -276,6 +278,167 @@ Pico (campanha):
 
 ---
 
+## Fluxo de Delta Sync de Clientes
+
+### O que é
+
+Complementa o webhook de contatos (que funciona por push). O delta sync roda a cada 30 minutos via cron e busca **apenas os clientes atualizados desde a última execução** no VTEX Master Data — garantindo que nenhuma atualização de perfil passe despercebida mesmo que o webhook de entrada não seja acionado.
+
+### Processo completo
+
+```
+A cada 30 minutos:
+
+PASSO 1 — Ler data/lastClientSync.json
+  Se não existe: busca últimos 30 minutos (primeira execução)
+  now capturado ANTES das chamadas de API
+
+PASSO 2 — GET /api/dataentities/CL/search
+  Filtra: updatedIn between {lastSync} AND {now}
+  Paginação via REST-Range (50 por página)
+  Resultado: array de clientes atualizados no intervalo
+
+PASSO 3 — GET /api/dataentities/AD/search (1 por cliente)
+  Filtra: userId={client.id}
+  Retorna o primeiro endereço cadastrado
+  Se não encontrar: address=null (não bloqueia o envio)
+  Delay 150ms entre chamadas para respeitar rate limit
+
+PASSO 4 — Montar payload unificado CL + AD
+  customer_id: CPF sem formatação (ou email se não tiver CPF)
+  Endereço: street + number + complement concatenados
+  country: 24 (fixo — código Emarsys para Brasil)
+
+PASSO 5 — Enviar via contactWebhookService.sendContact()
+  Persiste no SQLite (status: pending → sent)
+  Retry automático em caso de falha (fila de retry a cada 5min)
+  Delay 100ms entre envios
+
+PASSO 6 — Salvar lastClientSync.json
+  Só atualiza se não houve erro geral
+  Em erro: reprocessa todo o intervalo na próxima execução
+```
+
+### Payload enviado ao webhook
+
+```json
+{
+  "customer_id": "69873852034",
+  "client_type": "hope",
+  "email": "cliente@email.com",
+  "cpf": "69873852034",
+  "first_name": "Maria",
+  "last_name": "Silva",
+  "phone": "+5511999998888",
+  "mobile": null,
+  "gender": "F",
+  "address": "Rua das Flores, 123",
+  "city": "São Paulo",
+  "state": "SP",
+  "country": 24,
+  "postal_code": "01310-100",
+  "opt_in": true
+}
+```
+
+> `customer_id` é o CPF puro (somente dígitos), ou o email se o cliente não tiver CPF cadastrado. `phone` vem do campo `homePhone` do Master Data (número principal), `mobile` vem de `phone` (celular, frequentemente `null`).
+
+### Mapeamento de campos (CL + AD)
+
+| Campo payload | Origem | Observação |
+|---|---|---|
+| `customer_id` | `CL.document` (CPF) ou `CL.email` | CPF sem formatação; fallback para email |
+| `email` | `CL.email` | Lowercase, trim |
+| `cpf` | `CL.document` | Somente dígitos |
+| `first_name` | `CL.firstName` | — |
+| `last_name` | `CL.lastName` | — |
+| `phone` | `CL.homePhone` | Número principal no Master Data |
+| `mobile` | `CL.phone` | Celular (geralmente `null`) |
+| `gender` | `CL.gender` | `male`→`M`, `female`→`F` |
+| `address` | `AD.street + AD.number + AD.complement` | Concatenados com `, ` |
+| `city` | `AD.city` | — |
+| `state` | `AD.state` | — |
+| `country` | fixo `24` | Código Emarsys para Brasil |
+| `postal_code` | `AD.postalCode` | Como vem do Master Data |
+| `opt_in` | `CL.isNewsletterOptIn` | Boolean estrito |
+
+### Controle de estado
+
+O arquivo `data/lastClientSync.json` registra a última execução bem-sucedida:
+
+```json
+{
+  "lastSync": "2026-05-13T14:30:00.000Z",
+  "lastCount": 23,
+  "updatedAt": "2026-05-13T14:30:08.400Z"
+}
+```
+
+Em caso de erro geral (ex: VTEX indisponível), o arquivo **não é atualizado** — na próxima execução o intervalo inteiro é reprocessado, garantindo zero perda de dados.
+
+### Estimativa de chamadas por execução
+
+```
+Delta típico (30 min): ~20-100 clientes
+  → 1-2 chamadas CL (paginação REST-Range)
+  → 20-100 chamadas AD (1 por cliente, 150ms entre cada)
+  → Total: ~22-102 chamadas — tempo estimado: ~5-20s ✅
+
+Delta pesado (pós-campanha): ~500 clientes
+  → 10 chamadas CL
+  → 500 chamadas AD × 150ms = ~75s
+  → Total: ~510 chamadas — dentro do intervalo de 30min ✅
+```
+
+### Configuração
+
+```env
+# Habilitar o cron de delta sync de clientes (false por padrão)
+CLIENTS_SYNC_ENABLED=true
+
+# Frequência do cron (padrão: a cada 30 minutos)
+CLIENTS_SYNC_CRON=*/30 * * * *
+
+# Credenciais VTEX Hope (usadas pelo service — mesmas do sync de produtos/pedidos)
+VTEX_BASE_URL_HOPE=https://hopelingerie.vtexcommercestable.com.br
+VTEX_APP_KEY_HOPE=
+VTEX_APP_TOKEN_HOPE=
+
+# Webhook de destino (mesmo do fluxo de contatos por push)
+CONTACTS_WEBHOOK_URL=
+CONTACTS_WEBHOOK_CLIENT_TYPE=hope
+```
+
+### Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `scripts/syncClients.js` | Orquestrador: lê/grava `lastClientSync.json`, chama o service, envia via webhook, sobe o cron quando executado diretamente |
+| `services/vtexClientService.js` | Busca CL (paginado), busca AD (por cliente), monta payload unificado |
+| `utils/cronService.js` | Integra o job `clients-sync` ao `startAll()` do worker |
+| `data/lastClientSync.json` | Estado da última execução bem-sucedida |
+
+### Logs esperados
+
+```
+[clients-sync] 2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
+[clients-sync] 23 clientes → buscando endereços...
+[clients-sync] Endereço não encontrado para 5e4dcac9-... (normal)
+[clients-sync] 23 payloads para enviar
+[clients-sync] ✓ 23 enviados, 0 erros — 8.4s
+
+[clients-sync] 2026-05-13T14:30:00.000Z → 2026-05-13T15:00:00.000Z
+[clients-sync] Nenhum cliente atualizado
+```
+
+### Execução manual
+
+```bash
+npm run sync:clients
+```
+
+---
+
 ## Fluxo de Contatos
 
 ### Arquitetura de Webhooks (entrada + saída)
@@ -382,6 +545,7 @@ npm run prod:logs:worker  # logs do worker (crons)
 | `npm run worker:dev` | Inicia o worker com nodemon (desenvolvimento) |
 | `npm run sync:products` | Sync manual de produtos (VTEX → CSV → SFTP) |
 | `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 10min) |
+| `npm run sync:clients` | Sync manual de clientes delta (executa imediatamente + cron 30min) |
 | `npm run clear-logs` | Limpa arquivos de log |
 | `npm run cleanup:exports` | Remove exports antigos |
 | `npm run logs` | Tail do log combinado do dia |
@@ -540,6 +704,7 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
 - [x] ~~Carga histórica Hope Lingerie Abr/2024–Abr/2025~~ — 170.040 pedidos / 551.493 linhas ✅
 - [x] ~~Token bearer estático Scarab HAPI~~ — Hope (`1789FBAF0A6EF683`) e Resort (`15232C841F7635A9`) ✅
+- [x] ~~Delta sync de clientes VTEX Master Data (CL+AD) → Webhook~~ — cron 30min, payload com endereço enriquecido ✅
 - [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
 - [ ] Carga histórica Hope Resort (2 anos)
 - [ ] Validar sync produtos Resort em produção (primeira execução)
