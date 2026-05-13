@@ -87,8 +87,8 @@ function mapToPayload(client, address) {
   const cpf   = contactWebhookService.cleanDocument(client.document || '');
   const email = (client.email || '').toLowerCase().trim();
 
-  const customer_id = contactWebhookService.generateCustomerId(cpf, email);
-  if (!customer_id) return null;
+  if (!cpf && !email) return null;
+  const customer_id = cpf || email;
 
   // Monta string de endereço a partir dos campos do AD
   const addressStr = address?.street
