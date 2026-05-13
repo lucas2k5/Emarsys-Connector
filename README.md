@@ -31,8 +31,9 @@ PRODUTOS (Hope):   VTEX hopelingerie → products.csv (ativos + inativos) → SF
 PRODUTOS (Resort): VTEX lojahr       → products_resort.csv              → SFTP hope_resort    (diário 03h)
 PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1789FBAF0A6EF683 bearer token  (a cada 10min)
 PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 bearer token  (a cada 10min)
-CONTATOS (push):   VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
-CLIENTES (delta):  VTEX Master Data CL+AD → Webhook saída (cron 30min, somente atualizados desde o último sync)
+CONTATOS (push):          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
+CLIENTES Hope (delta):    VTEX hopelingerie Master Data CL+AD → Webhook saída (cron 30min, 703.145 clientes na base)
+CLIENTES Resort (delta):  VTEX lojahr Master Data CL+AD → Webhook saída (cron 30min, independente do Hope)
 ```
 
 ### Processos em produção
@@ -56,7 +57,8 @@ Os dois processos são independentes. Se o worker travar num sync longo, a API c
 | `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | Direto: `fetchAllProductRows` → CSV → SFTP (sem passar pela API) |
 | `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`) | POST `/api/background/cron-orders` → Hope + Resort |
 | `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
-| `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`) | Direto: delta sync CL+AD → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
+| `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`) | Direto: delta sync CL+AD Hope → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
+| `clients-sync-resort` | `CLIENTS_SYNC_CRON_RESORT` (fallback `CLIENTS_SYNC_CRON`) | Direto: delta sync CL+AD Resort → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED_RESORT=true`) |
 
 > O cron de pedidos dispara via HTTP para a própria API (retorna jobId imediatamente, execução em background). Produtos e retry de contatos chamam os serviços diretamente, sem depender da API estar no ar.
 
@@ -284,18 +286,31 @@ Pico (campanha):
 
 Complementa o webhook de contatos (que funciona por push). O delta sync roda a cada 30 minutos via cron e busca **apenas os clientes atualizados desde a última execução** no VTEX Master Data — garantindo que nenhuma atualização de perfil passe despercebida mesmo que o webhook de entrada não seja acionado.
 
+### Lojas suportadas
+
+| | Hope Lingerie | Hope Resort |
+|---|---|---|
+| **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
+| **Total de clientes na base** | **703.145** | — |
+| **Controle de estado** | `data/lastClientSync.json` | `data/lastClientSyncResort.json` |
+| **Habilitar** | `CLIENTS_SYNC_ENABLED=true` | `CLIENTS_SYNC_ENABLED_RESORT=true` |
+| **Cron** | `CLIENTS_SYNC_CRON` | `CLIENTS_SYNC_CRON_RESORT` (fallback `CLIENTS_SYNC_CRON`) |
+
+As duas lojas rodam de forma **totalmente independente** — controle de estado separado, crons separados, arquivos de controle separados. Falha em uma não afeta a outra.
+
 ### Processo completo
 
 ```
-A cada 30 minutos:
+A cada 30 minutos (por loja):
 
-PASSO 1 — Ler data/lastClientSync.json
+PASSO 1 — Ler data/lastClientSync[Resort].json
   Se não existe: busca últimos 30 minutos (primeira execução)
   now capturado ANTES das chamadas de API
 
 PASSO 2 — GET /api/dataentities/CL/search
   Filtra: updatedIn between {lastSync} AND {now}
   Paginação via REST-Range (50 por página)
+  Total lido via header rest-content-range (ex: "resources 1-50/703145")
   Resultado: array de clientes atualizados no intervalo
 
 PASSO 3 — GET /api/dataentities/AD/search (1 por cliente)
@@ -314,7 +329,7 @@ PASSO 5 — Enviar via contactWebhookService.sendContact()
   Retry automático em caso de falha (fila de retry a cada 5min)
   Delay 100ms entre envios
 
-PASSO 6 — Salvar lastClientSync.json
+PASSO 6 — Salvar lastClientSync[Resort].json
   Só atualiza se não houve erro geral
   Em erro: reprocessa todo o intervalo na próxima execução
 ```
@@ -364,7 +379,14 @@ PASSO 6 — Salvar lastClientSync.json
 
 ### Controle de estado
 
-O arquivo `data/lastClientSync.json` registra a última execução bem-sucedida:
+Cada loja tem seu próprio arquivo de controle:
+
+```
+data/lastClientSync.json        → Hope Lingerie
+data/lastClientSyncResort.json  → Hope Resort
+```
+
+Conteúdo:
 
 ```json
 {
@@ -393,18 +415,31 @@ Delta pesado (pós-campanha): ~500 clientes
 ### Configuração
 
 ```env
-# Habilitar o cron de delta sync de clientes (false por padrão)
+# ── Hope Lingerie ──────────────────────────────────────────
+# Habilitar o cron de delta sync de clientes Hope
 CLIENTS_SYNC_ENABLED=true
 
 # Frequência do cron (padrão: a cada 30 minutos)
 CLIENTS_SYNC_CRON=*/30 * * * *
 
-# Credenciais VTEX Hope (usadas pelo service — mesmas do sync de produtos/pedidos)
+# Credenciais VTEX Hope (mesmas do sync de produtos/pedidos)
 VTEX_BASE_URL_HOPE=https://hopelingerie.vtexcommercestable.com.br
 VTEX_APP_KEY_HOPE=
 VTEX_APP_TOKEN_HOPE=
 
-# Webhook de destino (mesmo do fluxo de contatos por push)
+# ── Hope Resort ────────────────────────────────────────────
+# Habilitar o cron de delta sync de clientes Resort
+CLIENTS_SYNC_ENABLED_RESORT=true
+
+# Cron exclusivo para Resort (opcional — se vazio usa CLIENTS_SYNC_CRON)
+CLIENTS_SYNC_CRON_RESORT=
+
+# Credenciais VTEX Resort
+VTEX_BASE_URL_RESORT=https://lojahr.vtexcommercestable.com.br
+VTEX_APP_KEY_RESORT=
+VTEX_APP_TOKEN_RESORT=
+
+# ── Webhook de destino (compartilhado — client_type distingue as lojas) ───
 CONTACTS_WEBHOOK_URL=
 CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 ```
@@ -413,22 +448,26 @@ CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 
 | Arquivo | Papel |
 |---|---|
-| `scripts/syncClients.js` | Orquestrador: lê/grava `lastClientSync.json`, chama o service, envia via webhook, sobe o cron quando executado diretamente |
-| `services/vtexClientService.js` | Busca CL (paginado), busca AD (por cliente), monta payload unificado |
-| `utils/cronService.js` | Integra o job `clients-sync` ao `startAll()` do worker |
-| `data/lastClientSync.json` | Estado da última execução bem-sucedida |
+| `scripts/syncClients.js` | Orquestrador: `runDeltaSync` (Hope) e `runDeltaSyncResort` (Resort) — lê/grava arquivos de controle, envia via webhook, sobe os crons quando executado diretamente |
+| `services/vtexClientService.js` | Factory `createFetcher` compartilhada entre lojas — busca CL paginado, busca AD por cliente, monta payload unificado. Exporta `fetchDeltaClients` e `fetchDeltaClientsResort` |
+| `utils/cronService.js` | Jobs `clients-sync` (Hope) e `clients-sync-resort` (Resort) integrados ao `startAll()` do worker |
+| `data/lastClientSync.json` | Estado Hope — última execução bem-sucedida |
+| `data/lastClientSyncResort.json` | Estado Resort — última execução bem-sucedida |
 
 ### Logs esperados
 
 ```
-[clients-sync] 2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
-[clients-sync] 23 clientes → buscando endereços...
-[clients-sync] Endereço não encontrado para 5e4dcac9-... (normal)
-[clients-sync] 23 payloads para enviar
-[clients-sync] ✓ 23 enviados, 0 erros — 8.4s
+[clients-sync:hope]   2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
+[clients-sync:hope]   23 clientes → buscando endereços...
+[clients-sync:hope]   Endereço não encontrado para 5e4dcac9-... (normal)
+[clients-sync:hope]   23 payloads para enviar
+[clients-sync:hope]   ✓ 23 enviados, 0 erros — 8.4s
 
-[clients-sync] 2026-05-13T14:30:00.000Z → 2026-05-13T15:00:00.000Z
-[clients-sync] Nenhum cliente atualizado
+[clients-sync:resort] 2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
+[clients-sync:resort] Nenhum cliente atualizado
+
+[clients-sync:hope]   2026-05-13T14:30:00.000Z → 2026-05-13T15:00:00.000Z
+[clients-sync:hope]   Nenhum cliente atualizado
 ```
 
 ### Execução manual
@@ -704,7 +743,7 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
 - [x] ~~Carga histórica Hope Lingerie Abr/2024–Abr/2025~~ — 170.040 pedidos / 551.493 linhas ✅
 - [x] ~~Token bearer estático Scarab HAPI~~ — Hope (`1789FBAF0A6EF683`) e Resort (`15232C841F7635A9`) ✅
-- [x] ~~Delta sync de clientes VTEX Master Data (CL+AD) → Webhook~~ — cron 30min, payload com endereço enriquecido ✅
+- [x] ~~Delta sync de clientes VTEX Master Data (CL+AD) → Webhook~~ — Hope (703.145 clientes) + Resort, cron 30min independente por loja ✅
 - [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
 - [ ] Carga histórica Hope Resort (2 anos)
 - [ ] Validar sync produtos Resort em produção (primeira execução)
