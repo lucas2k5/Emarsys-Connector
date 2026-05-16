@@ -16,14 +16,14 @@ class CronService {
     
     // Configurações de cron jobs via variáveis de ambiente
     // Trim para remover espaços em branco e validar se não está vazio
-    const productsSyncCronRaw = process.env.PRODUCTS_SYNC_CRON;
-    const ordersSyncCronRaw = process.env.ORDERS_SYNC_CRON;
-    
-    this.productsSyncCron = productsSyncCronRaw && productsSyncCronRaw.trim() 
-      ? productsSyncCronRaw.trim() 
+    const productsSyncCronRaw = (process.env.PRODUCTS_SYNC_CRON || '').replace(/['"]/g, '');
+    const ordersSyncCronRaw = (process.env.ORDERS_SYNC_CRON || '').replace(/['"]/g, '');
+
+    this.productsSyncCron = productsSyncCronRaw && productsSyncCronRaw.trim()
+      ? productsSyncCronRaw.trim()
       : null;
-    this.ordersSyncCron = ordersSyncCronRaw && ordersSyncCronRaw.trim() 
-      ? ordersSyncCronRaw.trim() 
+    this.ordersSyncCron = ordersSyncCronRaw && ordersSyncCronRaw.trim()
+      ? ordersSyncCronRaw.trim()
       : null;
     
     this.cronTimezone = process.env.CRON_TIMEZONE || 'America/Sao_Paulo';
@@ -341,7 +341,7 @@ class CronService {
    * Configura o cron para delta sync de clientes VTEX Master Data → Webhook
    */
   setupClientsSync() {
-    const clientsSyncCron = process.env.CLIENTS_SYNC_CRON || '*/30 * * * *';
+    const clientsSyncCron = (process.env.CLIENTS_SYNC_CRON || '*/30 * * * *').replace(/['"]/g, '').trim();
     const { runDeltaSync } = require('../scripts/syncClients');
 
     const job = new cron.CronJob(clientsSyncCron, async () => {
@@ -372,7 +372,7 @@ class CronService {
    * Configura o cron para delta sync de clientes Resort → Webhook
    */
   setupClientsSyncResort() {
-    const clientsSyncCron = process.env.CLIENTS_SYNC_CRON_RESORT || process.env.CLIENTS_SYNC_CRON || '*/30 * * * *';
+    const clientsSyncCron = ((process.env.CLIENTS_SYNC_CRON_RESORT || process.env.CLIENTS_SYNC_CRON || '*/30 * * * *')).replace(/['"]/g, '').trim();
     const { runDeltaSyncResort } = require('../scripts/syncClients');
 
     const job = new cron.CronJob(clientsSyncCron, async () => {
