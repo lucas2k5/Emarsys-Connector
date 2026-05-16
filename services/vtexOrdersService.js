@@ -2226,8 +2226,8 @@ class VtexOrdersService {
            console.warn(`⚠️ Timestamp inválido: ${value}`);
            return '';
          }
-         // Formato: YYYY-MM-DDTHH:MM:SSZ (sem milissegundos)
-         return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+         // Formato: YYYY-MM-DD
+         return date.toISOString().slice(0, 10);
        } catch (error) {
          console.warn(`⚠️ Erro ao processar timestamp ${value}:`, error.message);
          return '';

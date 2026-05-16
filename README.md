@@ -55,10 +55,12 @@ Os dois processos são independentes. Se o worker travar num sync longo, a API c
 | Job | Schedule | Ação |
 |---|---|---|
 | `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | Direto: `fetchAllProductRows` → CSV → SFTP (sem passar pela API) |
-| `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`) | POST `/api/background/cron-orders` → Hope + Resort |
-| `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
-| `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`) | Direto: delta sync CL+AD Hope → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
+| `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`, em :00 e :30) | Direto: delta sync CL+AD Hope → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
 | `clients-sync-resort` | `CLIENTS_SYNC_CRON_RESORT` (fallback `CLIENTS_SYNC_CRON`) | Direto: delta sync CL+AD Resort → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED_RESORT=true`) |
+| `orders-sync` | `ORDERS_SYNC_CRON` (padrão `5,35 * * * *`, em :05 e :35) | POST `/api/background/cron-orders` → Hope + Resort |
+| `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
+
+> **Ordem de execução importa:** `clients-sync` roda em :00/:30 e `orders-sync` em :05/:35, garantindo 5 minutos de margem para que o contato já exista no Emarsys antes de o pedido ser enviado ao Scarab HAPI. Sem isso, pedidos de clientes novos não seriam atribuídos a nenhum contato.
 
 > O cron de pedidos dispara via HTTP para a própria API (retorna jobId imediatamente, execução em background). Produtos e retry de contatos chamam os serviços diretamente, sem depender da API estar no ar.
 
@@ -419,7 +421,7 @@ Delta pesado (pós-campanha): ~500 clientes
 # Habilitar o cron de delta sync de clientes Hope
 CLIENTS_SYNC_ENABLED=true
 
-# Frequência do cron (padrão: a cada 30 minutos)
+# Frequência do cron — roda em :00 e :30 (ANTES do orders-sync em :05 e :35)
 CLIENTS_SYNC_CRON=*/30 * * * *
 
 # Credenciais VTEX Hope (mesmas do sync de produtos/pedidos)

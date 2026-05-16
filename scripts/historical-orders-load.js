@@ -204,7 +204,7 @@ async function fetchDetailAndMap(listItem) {
   if (!cpf) return [];
 
   const customer      = crypto.createHash('sha256').update(cpf).digest('hex');
-  const timestamp     = new Date(detail.creationDate).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const timestamp     = new Date(detail.creationDate).toISOString().slice(0, 10);
 
   // paymentNames já vem formatado na lista ("Mastercard") — usa detalhe só como fallback
   const pagamento = listItem.paymentNames
