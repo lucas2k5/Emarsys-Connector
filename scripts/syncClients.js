@@ -45,15 +45,24 @@ function saveLastSyncDate(file, date, count) {
   }), 'utf-8');
 }
 
+// Overlap para compensar lag de indexação do VTEX Master Data.
+// Registros recém-criados podem levar até 60min para aparecer no índice de busca.
+// O overlap reprocessa o período anterior com margem, e o webhook do lado do Emarsys
+// é idempotente (upsert por customer_id), então reenvios são seguros.
+const INDEXING_LAG_OVERLAP_MS = 60 * 60 * 1000; // 60 minutos
+
 async function runSync(tag, controlFile, fetchFn) {
   const startedAt = new Date();
   const now       = startedAt.toISOString();
   const lastSync  = getLastSyncDate(controlFile);
 
-  console.log(`[${tag}] Delta: ${lastSync} → ${now}`);
+  // Aplica overlap: subtrai 60min do lastSync para compensar lag de indexação
+  const lastSyncWithOverlap = new Date(new Date(lastSync).getTime() - INDEXING_LAG_OVERLAP_MS).toISOString();
+
+  console.log(`[${tag}] Delta: ${lastSyncWithOverlap} → ${now} (overlap: 60min sobre ${lastSync})`);
 
   try {
-    const payloads = await fetchFn(lastSync);
+    const payloads = await fetchFn(lastSyncWithOverlap);
 
     if (payloads.length === 0) {
       console.log(`[${tag}] Nenhum cliente atualizado`);
