@@ -285,11 +285,11 @@ PRODUCTS_SYNC_CRON=0 */8 * * *        # A cada 8h
 ORDERS_SYNC_CRON=*/30 * * * *         # A cada 30min
 CONTACTS_RETRY_CRON=*/5 * * * *       # A cada 5min
 CRON_TIMEZONE=America/Sao_Paulo
-ORDERS_SYNC_ENABLED=false             # ATENÇÃO: false = cron ativo, true = cron pausado
+ORDERS_SYNC_ENABLED=true              # true = cron ativo, false ou não definido = pausado
 ENABLE_EMARSYS_UPLOAD=true
 ```
 
-> **ATENÇÃO:** `ORDERS_SYNC_ENABLED=false` **ativa** o cron de pedidos. Nomenclatura invertida — não altere sem verificar `cronService.js`.
+> `ORDERS_SYNC_ENABLED=true` ativa o cron de pedidos. `false` ou não definido = pausado.
 
 ### Performance
 
