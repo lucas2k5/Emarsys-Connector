@@ -117,10 +117,10 @@ function createFetcher(baseUrl, appKey, appToken, clientType) {
     const url    = `${baseUrl}/api/dataentities/CL/search`;
     const now    = new Date().toISOString();
     const params = {
-      _where:  `(updatedIn between ${sinceDate} AND ${now})`,
+      _where:  `(updatedIn between ${sinceDate} AND ${now}) OR (createdIn between ${sinceDate} AND ${now})`,
       _fields: CL_FIELDS,
       _schema: 'cl',
-      _sort:   'updatedIn ASC',
+      _sort:   'createdIn ASC',
     };
 
     const clients = [];
