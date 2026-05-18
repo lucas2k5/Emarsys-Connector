@@ -73,7 +73,16 @@ function analyzeCronExpression(cronExpression, now) {
   if (minute === '0' && hour === '0' && day === '*' && month === '*' && dayOfWeek !== '*') {
     return calculateWeeklyInterval(now, parseInt(dayOfWeek));
   }
-  
+
+  // Caso 6: Minutos específicos separados por vírgula (ex: 5,35 * * * *)
+  // Calcula o intervalo como diferença entre os valores e usa como lookback
+  if (minute.includes(',') && hour === '*' && day === '*' && month === '*' && dayOfWeek === '*') {
+    const minutes = minute.split(',').map(Number).sort((a, b) => a - b);
+    const intervalMinutes = minutes[1] - minutes[0];
+    console.log(`📅 [Cron Period] Padrão de minutos específicos detectado: ${minute} → intervalo de ${intervalMinutes} min`);
+    return calculateMinutesInterval(now, intervalMinutes);
+  }
+
   // Caso padrão: usar período de 1 dia anterior
   console.log('⚠️ Expressão de cron não reconhecida, usando período padrão (dia anterior)');
   return calculateDefaultPeriod(now);
@@ -357,7 +366,14 @@ function calculateNextExecutionFromCron(cronExpression, now) {
   if (minute === '0' && hour === '0' && day === '*' && month === '*' && dayOfWeek !== '*') {
     return calculateNextWeeklyInterval(now, parseInt(dayOfWeek));
   }
-  
+
+  // Caso 6: Minutos específicos separados por vírgula (ex: 5,35 * * * *)
+  if (minute.includes(',') && hour === '*' && day === '*' && month === '*' && dayOfWeek === '*') {
+    const minutes = minute.split(',').map(Number).sort((a, b) => a - b);
+    const intervalMinutes = minutes[1] - minutes[0];
+    return calculateNextMinutesInterval(now, intervalMinutes);
+  }
+
   // Caso padrão: não consegue calcular
   console.log('⚠️ Expressão de cron não reconhecida para cálculo de próxima execução');
   return null;
