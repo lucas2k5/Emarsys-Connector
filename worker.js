@@ -3,11 +3,19 @@
 require('dotenv').config();
 
 const { logger } = require('./utils/logger');
+const { getDatabase } = require('./database/sqlite');
 const CronService = require('./utils/cronService');
 
 console.log('[worker] Iniciando worker de cron jobs...');
 console.log('[worker] Timezone:', process.env.CRON_TIMEZONE || 'America/Sao_Paulo');
 console.log('[worker] NODE_ENV:', process.env.NODE_ENV || 'development');
+
+const db = getDatabase();
+db.init().then(() => {
+  console.log('[worker] SQLite inicializado.');
+}).catch((err) => {
+  console.error('[worker] Falha ao inicializar SQLite:', err.message);
+});
 
 const cronService = new CronService();
 cronService.startAll();
