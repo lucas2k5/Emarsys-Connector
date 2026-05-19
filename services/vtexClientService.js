@@ -159,22 +159,34 @@ function createFetcher(baseUrl, appKey, appToken, clientType) {
     const clients = await fetchUpdatedClients(sinceDate);
     if (clients.length === 0) return [];
 
-    console.log(`${tag} ${clients.length} clientes → buscando endereços...`);
+    console.log(`${tag} ${clients.length} clientes → buscando endereços (5 paralelos)...`);
+
+    // Busca endereços em paralelo com concorrência limitada a 5
+    const CONCURRENCY = 5;
+    const results = [];
+
+    for (let i = 0; i < clients.length; i += CONCURRENCY) {
+      const batch = clients.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(async (client) => {
+          const address = await fetchClientAddress(client.id);
+          return { client, address };
+        })
+      );
+      results.push(...batchResults);
+      if (i + CONCURRENCY < clients.length) await sleep(200);
+    }
 
     const payloads = [];
     let skipped = 0;
 
-    for (const client of clients) {
-      const address = await fetchClientAddress(client.id);
-      await sleep(150);
-
+    for (const { client, address } of results) {
       const payload = mapToPayload(client, address);
       if (!payload) {
         skipped++;
         console.warn(`${tag} Sem CPF/email: ${client.id} — ignorando`);
         continue;
       }
-
       payloads.push(payload);
     }
 
