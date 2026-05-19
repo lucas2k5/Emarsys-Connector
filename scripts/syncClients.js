@@ -126,5 +126,8 @@ if (require.main === module) {
   }
 
   runDeltaSync();
-  runDeltaSyncResort();
+
+  if (process.env.CLIENTS_SYNC_ENABLED_RESORT === 'true' || process.env.CLIENTS_SYNC_ENABLED_RESORT === '1') {
+    runDeltaSyncResort();
+  }
 }
