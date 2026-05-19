@@ -57,7 +57,7 @@ Os dois processos são independentes. Se o worker travar num sync longo, a API c
 | `products-sync` | `PRODUCTS_SYNC_CRON` (padrão `0 */8 * * *`) | Direto: `fetchAllProductRows` → CSV → SFTP (sem passar pela API) |
 | `clients-sync` | `CLIENTS_SYNC_CRON` (padrão `*/30 * * * *`, em :00 e :30) | Direto: delta sync CL+AD Hope → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED=true`) |
 | `clients-sync-resort` | `CLIENTS_SYNC_CRON_RESORT` (fallback `CLIENTS_SYNC_CRON`) | Direto: delta sync CL+AD Resort → `contactWebhookService.sendContact()` (requer `CLIENTS_SYNC_ENABLED_RESORT=true`) |
-| `orders-sync` | `ORDERS_SYNC_CRON` (padrão `5,35 * * * *`, em :05 e :35) | POST `/api/background/cron-orders` → Hope + Resort |
+| `orders-sync` | `ORDERS_SYNC_CRON` (padrão `*/30 * * * *`, em :05 e :35) | POST `/api/background/cron-orders` → Hope + Resort (requer `ORDERS_SYNC_ENABLED=true`) |
 | `contacts-retry` | `CONTACTS_RETRY_CRON` (padrão `*/5 * * * *`) | Direto: `contactRetryService.processFailedContacts()` |
 
 > **Ordem de execução importa:** `clients-sync` roda em :00/:30 e `orders-sync` em :05/:35, garantindo 5 minutos de margem para que o contato já exista no Emarsys antes de o pedido ser enviado ao Scarab HAPI. Sem isso, pedidos de clientes novos não seriam atribuídos a nenhum contato.
@@ -310,16 +310,18 @@ PASSO 1 — Ler data/lastClientSync[Resort].json
   now capturado ANTES das chamadas de API
 
 PASSO 2 — GET /api/dataentities/CL/search
-  Filtra: updatedIn between {lastSync} AND {now}
+  Filtra: (updatedIn between {lastSync-60min} AND {now}) OR (createdIn between {lastSync-60min} AND {now})
+  Overlap de 60 minutos no início para compensar lag de indexação do VTEX Master Data
+  Clientes novos têm updatedIn=null e só são capturados pelo filtro de createdIn
   Paginação via REST-Range (50 por página)
   Total lido via header rest-content-range (ex: "resources 1-50/703145")
-  Resultado: array de clientes atualizados no intervalo
+  Resultado: array de clientes atualizados/criados no intervalo
 
-PASSO 3 — GET /api/dataentities/AD/search (1 por cliente)
+PASSO 3 — GET /api/dataentities/AD/search (5 em paralelo)
   Filtra: userId={client.id}
   Retorna o primeiro endereço cadastrado
   Se não encontrar: address=null (não bloqueia o envio)
-  Delay 150ms entre chamadas para respeitar rate limit
+  Lookup paralelo com concorrência 5 — ~5× mais rápido que sequencial
 
 PASSO 4 — Montar payload unificado CL + AD
   customer_id: CPF sem formatação (ou email se não tiver CPF)
@@ -405,13 +407,13 @@ Em caso de erro geral (ex: VTEX indisponível), o arquivo **não é atualizado**
 ```
 Delta típico (30 min): ~20-100 clientes
   → 1-2 chamadas CL (paginação REST-Range)
-  → 20-100 chamadas AD (1 por cliente, 150ms entre cada)
-  → Total: ~22-102 chamadas — tempo estimado: ~5-20s ✅
+  → 4-20 lotes AD (5 paralelos por lote, 200ms entre lotes)
+  → Total: ~6-22 chamadas — tempo estimado: ~1-5s ✅
 
 Delta pesado (pós-campanha): ~500 clientes
   → 10 chamadas CL
-  → 500 chamadas AD × 150ms = ~75s
-  → Total: ~510 chamadas — dentro do intervalo de 30min ✅
+  → 100 lotes AD × 200ms = ~20s
+  → Total: ~110 chamadas — dentro do intervalo de 30min ✅
 ```
 
 ### Configuração
@@ -450,20 +452,23 @@ CONTACTS_WEBHOOK_CLIENT_TYPE=hope
 
 | Arquivo | Papel |
 |---|---|
-| `scripts/syncClients.js` | Orquestrador: `runDeltaSync` (Hope) e `runDeltaSyncResort` (Resort) — lê/grava arquivos de controle, envia via webhook, sobe os crons quando executado diretamente |
-| `services/vtexClientService.js` | Factory `createFetcher` compartilhada entre lojas — busca CL paginado, busca AD por cliente, monta payload unificado. Exporta `fetchDeltaClients` e `fetchDeltaClientsResort` |
+| `scripts/syncClients.js` | Orquestrador: `runDeltaSync` (Hope) e `runDeltaSyncResort` (Resort) — lê/grava arquivos de controle, aplica overlap 60min, envia via webhook |
+| `services/vtexClientService.js` | Factory `createFetcher` compartilhada — busca CL paginado com filtro `updatedIn OR createdIn`, busca AD em 5 paralelos, monta payload unificado |
 | `utils/cronService.js` | Jobs `clients-sync` (Hope) e `clients-sync-resort` (Resort) integrados ao `startAll()` do worker |
 | `data/lastClientSync.json` | Estado Hope — última execução bem-sucedida |
 | `data/lastClientSyncResort.json` | Estado Resort — última execução bem-sucedida |
+| `scripts/simulate-clients-sync.js` | Simula delta sync sem enviar ao webhook — `--since 2h`, `--since 30m` ou início do dia |
+| `scripts/backfill-clients.js` | Backfill manual: busca clientes de um período e envia ao webhook. Uso: `node scripts/backfill-clients.js --from YYYY-MM-DD --to YYYY-MM-DD` |
+| `scripts/export-backfill-clients-csv.js` | Exporta clientes do período backfill (15-19/05/2026) para CSV em `tmp/` sem envio ao webhook |
 
 ### Logs esperados
 
 ```
-[clients-sync:hope]   2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
-[clients-sync:hope]   23 clientes → buscando endereços...
+[clients-sync:hope]   2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z  (overlap -60min aplicado)
+[clients-sync:hope]   23 clientes → buscando endereços (5 paralelos)...
 [clients-sync:hope]   Endereço não encontrado para 5e4dcac9-... (normal)
 [clients-sync:hope]   23 payloads para enviar
-[clients-sync:hope]   ✓ 23 enviados, 0 erros — 8.4s
+[clients-sync:hope]   ✓ 23 enviados, 0 erros — 2.1s
 
 [clients-sync:resort] 2026-05-13T14:00:00.000Z → 2026-05-13T14:30:00.000Z
 [clients-sync:resort] Nenhum cliente atualizado
