@@ -193,7 +193,8 @@ class OrdersSyncService {
         try {
           const orderFeed = await this.searchOrdersByPeriod(startDate, toDate, page, {
             per_page: PER_PAGE,
-            orderBy: 'creationDate,asc'
+            orderBy: 'creationDate,asc',
+            f_status: 'invoiced'
           });
           
           if (orderFeed && orderFeed.list && orderFeed.list.length > 0) {
