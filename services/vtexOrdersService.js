@@ -1228,21 +1228,6 @@ class VtexOrdersService {
           continue;
         }
         
-        // Valida se o orderId segue o padrão: 13 dígitos + "-" + 2 dígitos (ex: "-01", "-02", "-03")
-        // Pedidos que começam com números e terminam com sufixo numérico não são de marketplace
-        const orderIdPattern = /^\d{13}-\d{2}$/;
-        if (!orderIdPattern.test(orderId)) {
-          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
-          skippedMarketplace++;
-          skippedOrders.push({
-            orderId,
-            reason: 'marketplace_order_pattern',
-            pattern: orderId,
-            originalOrder: order
-          });
-          continue;
-        }
-
         // Validações de campos obrigatórios - com fallbacks
         const email = order.email || order.customer_email || order.clientEmail;
         const item = order.item || order.sku || order.productId || `ITEM_${orderId}`;
@@ -2288,24 +2273,7 @@ class VtexOrdersService {
       if (result && result.success) {
         console.log('✅ Envio bem-sucedido, marcando pedidos como sincronizados...');
         
-        // Usa apenas os pedidos que foram efetivamente enviados para Emarsys
         try {
-          
-          const marketplaceValidator = require('../utils/marketplaceValidator');
-          const filteredForSync = orders.filter(o => {
-            const oid = o.order;
-            return !marketplaceValidator.isMarketplaceOrder(oid);
-          });
-
-          
-         
-
-          const skippedMarketplace = orders.length - filteredForSync.length;
-          if (skippedMarketplace > 0) {
-            console.log(`↪️ ${skippedMarketplace} pedidos de marketplace pulados antes do sync`);
-          }
-          
-          
         } catch (syncError) {
           console.error('❌ Erro ao marcar pedidos como sincronizados:', syncError.message);
         }

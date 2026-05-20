@@ -855,20 +855,6 @@ class OrdersSyncService {
           continue;
         }
         
-        // Valida se o orderId segue o padrão exato: 13 dígitos + "-01"
-        const orderIdPattern = /^\d{13}-01$/;
-        if (!orderIdPattern.test(orderId)) {
-          console.log(`⏭️ Pulando pedido do marketplace: ${orderId}`);
-          skippedMarketplace++;
-          skippedOrders.push({
-            orderId,
-            reason: 'marketplace_order_pattern',
-            pattern: orderId,
-            originalOrder: order
-          });
-          continue;
-        }
-
         // Validações de campos obrigatórios - com fallbacks
         let email = order.email || order.customer_email || order.clientEmail;
         
