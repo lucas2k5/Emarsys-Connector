@@ -864,26 +864,25 @@ router.get('/orders-extract-all', async (req, res) => {
         }
 
         try {
-          const marketplaceValidator = require('../utils/marketplaceValidator');
           console.log(`🔍 Buscando detalhes do pedido ${orderId} (${i + 1}/${ordersList.length})`);
-
-          if (marketplaceValidator.isMarketplaceOrder(orderId)) {
-            console.log(`🔄 Pulando pedido de marketplace: ${orderId}`);
-            hookResults.skipped++;
-          }
 
           const orderDetail = await vtexOrdersService.getOrderById(orderId);
           if (orderDetail) {
+            const orderStatus = orderDetail?.status;
+
+            if (orderStatus !== 'invoiced') {
+              console.log(`⏭️ Pulando pedido ${orderId} — status: ${orderStatus} (não faturado)`);
+              hookResults.skipped++;
+            } else {
             detailedOrders.push(orderDetail);
             console.log(`✅ Detalhes obtidos para ${orderId} (${detailedOrders.length}/${ordersList.length})`);
 
               // Extrai dados do pedido para verificação mais precisa
             const item = orderDetail?.items?.[0]?.refId || orderDetail?.items?.[0]?.id;
-            const orderStatus = orderDetail?.status;
-              
+
               // Buscar registro na EMS com filtros específicos (order, item, order_status)
             const emsRecord = await fetchEmsOrderByFilters(orderId, item, orderStatus);
-              
+
             if (emsRecord && emsRecord.isSync === false) {
                   console.log(`✅ Pedido ${orderId} já existe no SQLite com isSync=false - pulando processamento`);
                   hookResults.alreadySynced++;
@@ -948,7 +947,7 @@ router.get('/orders-extract-all', async (req, res) => {
                   });
                 }
             }
-            
+            } // fim else invoiced
 
           }
 
