@@ -1283,6 +1283,7 @@ class VtexOrdersService {
           order: orderId,
           item: item,
           email: email,
+          customer: order.customer || null,
           quantity: finalQuantity,
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
@@ -2631,16 +2632,51 @@ class VtexOrdersService {
       }
       
       let formattedOrders = [];
-      
+
       try {
-        const axios = require('axios');
-        
-        // Extrai os orderIds para filtrar apenas os pedidos do período
+        // Formata objetos OMS diretamente — evita re-fetch via /_v/orders/filter (requer sessão, quebrado)
+        const isOmsFormat = orders[0]?.items && Array.isArray(orders[0].items);
+
+        if (isOmsFormat) {
+          console.log(`🔄 Formatando ${orders.length} pedidos OMS diretamente...`);
+          for (const orderDetail of orders) {
+            const orderId = orderDetail.orderId;
+            if (!orderDetail.items || !Array.isArray(orderDetail.items)) continue;
+            const cpf = (orderDetail.clientProfileData?.document || '').replace(/\D+/g, '');
+            const customer = cpf ? crypto.createHash('sha256').update(cpf).digest('hex') : null;
+            for (const item of orderDetail.items) {
+              const itemDiscount = (item.priceTags || [])
+                .filter(tag => tag.value < 0)
+                .reduce((sum, tag) => sum + Math.abs(tag.value), 0);
+              formattedOrders.push({
+                order: orderId,
+                item: item.refId || item.id,
+                email: orderDetail.clientProfileData?.email || null,
+                customer,
+                quantity: item.quantity || 1,
+                price: item.price || item.sellingPrice || 0,
+                timestamp: orderDetail.creationDate || new Date().toISOString(),
+                isSync: false,
+                order_status: orderDetail.status || null,
+                s_channel_source: orderDetail.salesChannel || 'web',
+                s_store_id: orderDetail.hostname || 'hope',
+                s_sales_channel: orderDetail.salesChannel || 'ecommerce',
+                s_discount: itemDiscount
+              });
+            }
+          }
+          console.log(`✅ ${formattedOrders.length} itens formatados de ${orders.length} pedidos OMS`);
+        } else {
+        // Legado: orders já no formato flat {order, item, email, ...}
+        formattedOrders = orders;
+        console.log(`📦 Usando ${formattedOrders.length} pedidos já no formato flat`);
+        }
+
+        if (false) {
+        // Bloco legado /_v/orders/filter — mantido para referência, nunca executado
         const orderIds = orders.map(order => order.orderId || order.id).filter(Boolean);
         console.log(`🔍 Buscando ${orderIds.length} pedidos formatados...`);
-        
-        // Busca pedidos em lotes usando o endpoint /_v/orders/filter
-        const BATCH_SIZE = 50; // Busca em lotes de 50 para não sobrecarregar
+        const BATCH_SIZE = 50;
         const formattedUrl = `${process.env.VTEX_BASE_URL}/_v/orders/filter`;
         
         console.log(`[PROD-DEBUG] URL base: ${formattedUrl}`);
@@ -2819,7 +2855,8 @@ class VtexOrdersService {
           
           console.log(`🔍 Filtro por período: ${beforeFilter} -> ${formattedOrders.length} itens`);
         }
-        
+        } // fim if (false) bloco legado
+
       } catch (formattedError) {
         console.error('[PROD-DEBUG] ❌ Erro CRÍTICO ao buscar dados formatados:', {
           message: formattedError.message,

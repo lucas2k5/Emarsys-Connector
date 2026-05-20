@@ -141,7 +141,7 @@ class EmarsysOrdersApiService {
       this.formatPrice(orderData.price),
       this.sanitizeCsvField(orderData.order),
       this.sanitizeCsvField(orderData.timestamp),
-      this.sanitizeCsvField(orderData.email),
+      this.sanitizeCsvField(orderData.customer || orderData.email),
       this.sanitizeCsvField(orderData.quantity || 1),
       this.sanitizeCsvField(orderData.s_sales_channel || ''),
       this.sanitizeCsvField(orderData.s_store_id || ''),
