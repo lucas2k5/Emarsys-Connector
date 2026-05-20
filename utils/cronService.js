@@ -8,11 +8,9 @@ const contactRetryService = require('../services/contactRetryService');
 class CronService {
   constructor() {
     this.jobs = new Map();
-    // Em produção, usar a URL correta ao invés de localhost
-    const isProduction = process.env.NODE_ENV === 'production';
-    this.baseUrl = isProduction && process.env.BASE_URL 
-      ? process.env.BASE_URL 
-      : `http://localhost:${process.env.PORT || 3000}`;
+    // Worker e api rodam no mesmo container (node worker.js & node server.js)
+    // Sempre usar localhost para chamadas internas — BASE_URL é externo (Cloudflare)
+    this.baseUrl = `http://localhost:${process.env.PORT || 3000}`;
     
     // Configurações de cron jobs via variáveis de ambiente
     // Trim para remover espaços em branco e validar se não está vazio
