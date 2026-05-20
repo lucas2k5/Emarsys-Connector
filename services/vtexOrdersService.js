@@ -1287,10 +1287,13 @@ class VtexOrdersService {
           quantity: finalQuantity,
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
-          s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
-          s_store_id: order.s_store_id || 'hope',
-          s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: discount
+          s_sales_channel: order.s_sales_channel || '',
+          s_store_id: order.s_store_id || '',
+          s_canal: order.s_canal || '',
+          s_loja: order.s_loja || order.s_store_id || '',
+          s_tipo_pagamento: order.s_tipo_pagamento || '',
+          s_cupom: order.s_cupom || '',
+          f_valor_desconto: order.f_valor_desconto || ''
         };
 
         emarsysData.push(saleRecord);
@@ -2098,28 +2101,17 @@ class VtexOrdersService {
    * @returns {string} Conteúdo CSV formatado
    */
   generateEmarsysCsvContent(orders) {
-    // Headers baseados no schema oficial da Emarsys Smart Insight
-    // IMPORTANTE: A ordem das colunas deve seguir exatamente o schema da Emarsys
     const headers = [
-      'order',              // Posição 1 - ID do pedido
-      'item',               // Posição 2 - SKU do produto
-      'email',              // Posição 3 - Email do cliente (OBRIGATÓRIO)
-      'quantity',           // Posição 4 - Quantidade
-      'timestamp',          // Posição 5 - Data/hora do pedido
-      'price',              // Posição 6 - Preço unitário
-      's_channel_source',   // Posição 7 - Canal de origem
-      's_store_id',         // Posição 8 - ID da loja
-      's_sales_channel',    // Posição 9 - Canal de vendas
-      's_discount'          // Posição 10 - Desconto aplicado
+      'item', 'price', 'order', 'timestamp', 'customer',
+      'quantity', 's_sales_channel', 's_store_id', 's_canal',
+      's_loja', 's_tipo_pagamento', 's_cupom', 'f_valor_desconto'
     ];
 
     console.log(`📊 Gerando CSV com ${orders.length} pedidos...`);
-    
+
     const uniqueOrders = new Map();
-    
-    
     let duplicateCount = 0;
-    
+
     for (const order of orders) {
       const uniqueKey = `${order.order}_${order.item}`;
       if (uniqueOrders.has(uniqueKey)) {
@@ -2129,68 +2121,66 @@ class VtexOrdersService {
       }
       uniqueOrders.set(uniqueKey, order);
     }
-    
+
     if (duplicateCount > 0) {
       console.log(`🔍 Deduplicação CSV: ${duplicateCount} duplicatas removidas, ${uniqueOrders.size} registros únicos`);
     }
-    
+
     const deduplicatedOrders = Array.from(uniqueOrders.values());
     let csvContent = headers.join(',') + '\n';
     let processedCount = 0;
 
     for (let i = 0; i < deduplicatedOrders.length; i++) {
       const order = deduplicatedOrders[i];
-      
+
       try {
-        // Validação de campos obrigatórios conforme schema da Emarsys
-        const requiredFields = ['order', 'item', 'email', 'quantity', 'timestamp', 'price'];
+        const customer = order.customer || order.email;
+        const requiredFields = ['order', 'item', 'quantity', 'timestamp', 'price'];
         const missingFields = requiredFields.filter(field => !order[field]);
-        
-        if (missingFields.length > 0) {
-          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) está faltando campos obrigatórios: ${missingFields.join(', ')}`);
-          continue; // Pula pedidos inválidos
+
+        if (missingFields.length > 0 || !customer) {
+          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer/email' : ''}`);
+          continue;
         }
 
         const row = [
-          this.sanitizeField(order.order, 25, 'order'),                     // Posição 1 - order
-          this.sanitizeField(order.item, 25, 'item'),                       // Posição 2 - item
-          this.sanitizeField(order.email, 0, 'email'),                      // Posição 3 - email (sem limite de tamanho)
-          this.sanitizeField(order.quantity, 25, 'quantity'),               // Posição 4 - quantity
-          this.sanitizeField(order.timestamp, 25, 'timestamp'),             // Posição 5 - timestamp
-          this.sanitizeField(order.price, 25, 'price'),                     // Posição 6 - price
-          this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'), // Posição 7 - s_channel_source
-          this.sanitizeField(order.s_store_id || 'hope', 25, 's_store_id'), // Posição 8 - s_store_id
-          this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'), // Posição 9 - s_sales_channel
-          this.sanitizeField((order.s_discount ?? order.discount ?? '0'), 25, 's_discount')     // Posição 10 - s_discount
+          this.sanitizeField(order.item, 25, 'item'),
+          this.sanitizeField(order.price, 25, 'price'),
+          this.sanitizeField(order.order, 25, 'order'),
+          this.sanitizeField(order.timestamp, 25, 'timestamp'),
+          this.sanitizeField(customer, 0, 'customer'),
+          this.sanitizeField(order.quantity, 25, 'quantity'),
+          this.sanitizeField(order.s_sales_channel || '', 25, 's_sales_channel'),
+          this.sanitizeField(order.s_store_id || '', 25, 's_store_id'),
+          this.sanitizeField(order.s_canal || '', 25, 's_canal'),
+          this.sanitizeField(order.s_loja || '', 25, 's_loja'),
+          this.sanitizeField(order.s_tipo_pagamento || '', 25, 's_tipo_pagamento'),
+          this.sanitizeField(order.s_cupom || '', 25, 's_cupom'),
+          this.sanitizeField(order.f_valor_desconto || '', 25, 'f_valor_desconto')
         ];
-        
-        // Validação adicional para garantir que a linha tem exatamente 10 campos
-        if (row.length !== 10) {
-          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): linha malformada com ${row.length} campos em vez de 10`);
+
+        if (row.length !== 13) {
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): linha com ${row.length} campos em vez de 13`);
           continue;
         }
-        
-        // Verifica se algum campo obrigatório ficou vazio após sanitização
-        if (!row[0] || !row[1] || !row[2] || !row[3] || !row[4] || !row[5]) {
-          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): campos obrigatórios vazios após sanitização`);
+
+        if (!row[0] || !row[2] || !row[4]) {
+          console.error(`❌ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order}): campos obrigatórios (item/order/customer) vazios`);
           continue;
         }
-        
-        // Adiciona a linha ao CSV
+
         csvContent += row.join(',') + '\n';
         processedCount++;
-        
+
       } catch (error) {
         console.error(`❌ Erro ao processar pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}):`, error?.data || error.message);
         continue;
       }
     }
 
-    // Remove qualquer linha vazia no final
     csvContent = csvContent.trim();
-    
-    console.log(`✅ CSV gerado com sucesso: ${processedCount} de ${deduplicatedOrders.length} pedidos únicos processados`);
-    
+    console.log(`✅ CSV gerado: ${processedCount} de ${deduplicatedOrders.length} pedidos únicos`);
+
     return csvContent;
   }
 
@@ -2639,29 +2629,36 @@ class VtexOrdersService {
 
         if (isOmsFormat) {
           console.log(`🔄 Formatando ${orders.length} pedidos OMS diretamente...`);
+          const SALES_CHANNEL_MAP = { '1': 'Conta Principal', '4': 'TikTok', '5': 'APP', '8': 'Mercado Livre' };
           for (const orderDetail of orders) {
             const orderId = orderDetail.orderId;
             if (!orderDetail.items || !Array.isArray(orderDetail.items)) continue;
             const cpf = (orderDetail.clientProfileData?.document || '').replace(/\D+/g, '');
             const customer = cpf ? crypto.createHash('sha256').update(cpf).digest('hex') : null;
+            const rawChannel = String(orderDetail.salesChannel || '');
+            const salesChannel = SALES_CHANNEL_MAP[rawChannel] || rawChannel;
+            const pagamento = orderDetail.paymentData?.transactions?.[0]?.payments?.[0]?.paymentSystemName || '';
+            const discountTotal = (orderDetail.totals || []).find(t => t.id === 'Discounts')?.value || 0;
+            const cupom = orderDetail.marketingData?.coupon || '';
+            const valorDesconto = discountTotal < 0 ? (Math.abs(discountTotal) / 100).toFixed(2) : '';
             for (const item of orderDetail.items) {
-              const itemDiscount = (item.priceTags || [])
-                .filter(tag => tag.value < 0)
-                .reduce((sum, tag) => sum + Math.abs(tag.value), 0);
               formattedOrders.push({
                 order: orderId,
                 item: item.refId || item.id,
                 email: orderDetail.clientProfileData?.email || null,
                 customer,
                 quantity: item.quantity || 1,
-                price: item.price || item.sellingPrice || 0,
+                price: (item.price / 100).toFixed(2),
                 timestamp: orderDetail.creationDate || new Date().toISOString(),
                 isSync: false,
                 order_status: orderDetail.status || null,
-                s_channel_source: orderDetail.salesChannel || 'web',
-                s_store_id: orderDetail.hostname || 'hope',
-                s_sales_channel: orderDetail.salesChannel || 'ecommerce',
-                s_discount: itemDiscount
+                s_sales_channel: salesChannel,
+                s_store_id: orderDetail.hostname || '',
+                s_canal: 'Online',
+                s_loja: orderDetail.hostname || '',
+                s_tipo_pagamento: pagamento,
+                s_cupom: cupom,
+                f_valor_desconto: valorDesconto
               });
             }
           }

@@ -105,7 +105,13 @@ class SQLiteDatabase {
         s_channel_source,
         s_store_id,
         s_sales_channel,
-        s_discount
+        s_discount,
+        customer,
+        s_canal,
+        s_loja,
+        s_tipo_pagamento,
+        s_cupom,
+        f_valor_desconto
       } = orderData;
 
       if (!order || !item) {
@@ -134,6 +140,12 @@ class SQLiteDatabase {
             s_store_id = ?,
             s_sales_channel = ?,
             s_discount = ?,
+            customer = ?,
+            s_canal = ?,
+            s_loja = ?,
+            s_tipo_pagamento = ?,
+            s_cupom = ?,
+            f_valor_desconto = ?,
             updated_at = datetime('now')
           WHERE id = ?
         `);
@@ -149,6 +161,12 @@ class SQLiteDatabase {
           s_store_id || null,
           s_sales_channel || null,
           s_discount || null,
+          customer || null,
+          s_canal || null,
+          s_loja || null,
+          s_tipo_pagamento || null,
+          s_cupom || null,
+          f_valor_desconto || null,
           existing.id
         );
 
@@ -159,8 +177,9 @@ class SQLiteDatabase {
           INSERT INTO orders (
             "order", item, email, quantity, price, timestamp,
             isSync, order_status, s_channel_source, s_store_id,
-            s_sales_channel, s_discount
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            s_sales_channel, s_discount,
+            customer, s_canal, s_loja, s_tipo_pagamento, s_cupom, f_valor_desconto
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         try {
@@ -176,7 +195,13 @@ class SQLiteDatabase {
             s_channel_source || null,
             s_store_id || null,
             s_sales_channel || null,
-            s_discount || null
+            s_discount || null,
+            customer || null,
+            s_canal || null,
+            s_loja || null,
+            s_tipo_pagamento || null,
+            s_cupom || null,
+            f_valor_desconto || null
           );
 
           return { success: true, id: result.lastInsertRowid, action: 'inserted' };
@@ -203,10 +228,16 @@ class SQLiteDatabase {
                   s_store_id = ?,
                   s_sales_channel = ?,
                   s_discount = ?,
+                  customer = ?,
+                  s_canal = ?,
+                  s_loja = ?,
+                  s_tipo_pagamento = ?,
+                  s_cupom = ?,
+                  f_valor_desconto = ?,
                   updated_at = datetime('now')
                 WHERE id = ?
               `);
-              
+
               updateStmt.run(
                 email || null,
                 quantity || null,
@@ -218,6 +249,12 @@ class SQLiteDatabase {
                 s_store_id || null,
                 s_sales_channel || null,
                 s_discount || null,
+                customer || null,
+                s_canal || null,
+                s_loja || null,
+                s_tipo_pagamento || null,
+                s_cupom || null,
+                f_valor_desconto || null,
                 retryExisting.id
               );
               

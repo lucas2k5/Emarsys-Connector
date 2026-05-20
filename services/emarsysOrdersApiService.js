@@ -41,7 +41,8 @@ const CSV_HEADERS = [
   's_canal',
   's_loja',
   's_tipo_pagamento',
-  's_cupom'
+  's_cupom',
+  'f_valor_desconto'
 ];
 
 class EmarsysOrdersApiService {
@@ -145,10 +146,11 @@ class EmarsysOrdersApiService {
       this.sanitizeCsvField(orderData.quantity || 1),
       this.sanitizeCsvField(orderData.s_sales_channel || ''),
       this.sanitizeCsvField(orderData.s_store_id || ''),
-      this.sanitizeCsvField(orderData.s_channel_source || ''),
-      this.sanitizeCsvField(orderData.s_store_id || ''),
+      this.sanitizeCsvField(orderData.s_canal || ''),
+      this.sanitizeCsvField(orderData.s_loja || ''),
       this.sanitizeCsvField(orderData.s_tipo_pagamento || ''),
-      this.sanitizeCsvField(orderData.s_discount || '')
+      this.sanitizeCsvField(orderData.s_cupom || ''),
+      this.sanitizeCsvField(orderData.f_valor_desconto || '')
     ];
     return fields.join(',');
   }

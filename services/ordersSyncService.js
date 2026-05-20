@@ -482,24 +482,31 @@ class OrdersSyncService {
         const itemId = item.refId;
         return itemId && itemId !== orderId;
       }).length;
-      
+
+      // Campos Emarsys extraídos do pedido completo
+      const SALES_CHANNEL_MAP = { '1': 'Conta Principal', '4': 'TikTok', '5': 'APP', '8': 'Mercado Livre' };
+      const rawChannel = String(order.salesChannel || '');
+      const salesChannelMapped = SALES_CHANNEL_MAP[rawChannel] || rawChannel;
+      const storeHostname = order.hostname || '';
+      const pagamento = order.paymentData?.transactions?.[0]?.payments?.[0]?.paymentSystemName || '';
+      const cupom = order.marketingData?.coupon || '';
+      const cpf = (order.clientProfileData?.document || '').replace(/\D+/g, '');
+      const customer = cpf ? require('crypto').createHash('sha256').update(cpf).digest('hex') : null;
+
       // Calcular desconto total e frete a partir dos totals do pedido
       let totalDiscountValue = 0;
       let totalShippingValue = 0;
-      
+
       if (order.totals && Array.isArray(order.totals)) {
         const discountsTotal = order.totals.find(t => t.id === 'Discounts');
         const shippingTotal = order.totals.find(t => t.id === 'Shipping');
-        
-        
+
+
         if (discountsTotal && discountsTotal.value !== undefined && discountsTotal.value !== null) {
-          // Desconto vem como valor negativo em centavos, então pegamos o valor absoluto
-          // e convertemos para reais dividindo por 100
           totalDiscountValue = Math.abs(discountsTotal.value) / 100;
         }
-        
+
         if (shippingTotal && shippingTotal.value !== undefined && shippingTotal.value !== null) {
-          // Frete vem em centavos, então convertemos para reais dividindo por 100
           totalShippingValue = shippingTotal.value / 100;
         }
       }
@@ -580,10 +587,16 @@ class OrdersSyncService {
           timestamp: order.creationDate,
           isSync: false,
           order_status: order.status || order.orderStatus || null,
-          s_channel_source: order.salesChannel || order.channel || 'web',
-          s_store_id: 'hope',
-          s_sales_channel: order.salesChannel || 'ecommerce',
-          s_discount: itemDiscount // Desconto rateado (apenas desconto total, sem frete) / número de itens
+          s_channel_source: rawChannel,
+          s_store_id: storeHostname,
+          s_sales_channel: salesChannelMapped,
+          s_discount: itemDiscount,
+          customer,
+          s_canal: 'Online',
+          s_loja: storeHostname,
+          s_tipo_pagamento: pagamento,
+          s_cupom: cupom,
+          f_valor_desconto: itemDiscount
         });
       }
     } else {
@@ -1211,10 +1224,8 @@ class OrdersSyncService {
       
       if (!order.order) errors.push(`Linha ${lineNum}: order é obrigatório`);
       if (!order.item) errors.push(`Linha ${lineNum}: item é obrigatório`);
-      if (!order.email) {
-        errors.push(`Linha ${lineNum}: email é obrigatório`);
-      } else if (!order.email.includes('@')) {
-        errors.push(`Linha ${lineNum}: email deve ser um email válido`);
+      if (!order.customer && !order.email) {
+        errors.push(`Linha ${lineNum}: customer ou email é obrigatório`);
       }
       if (order.quantity === null || order.quantity === undefined || isNaN(parseFloat(order.quantity))) {
         errors.push(`Linha ${lineNum}: quantity deve ser um número válido`);
@@ -1238,10 +1249,10 @@ class OrdersSyncService {
       const maxLengths = {
         item: 25,
         order: 25,
-        s_channel_source: 25,
         s_store_id: 25,
         s_sales_channel: 25,
-        s_discount: 25
+        s_canal: 25,
+        s_loja: 25
       };
 
       Object.entries(maxLengths).forEach(([field, maxLength]) => {
@@ -1262,16 +1273,15 @@ class OrdersSyncService {
    */
   generateEmarsysCsvContent(orders) {
     const headers = [
-      'order', 'item', 'email', 'quantity', 'timestamp',
-      'price', 's_channel_source', 's_store_id', 's_sales_channel', 's_discount'
+      'item', 'price', 'order', 'timestamp', 'customer',
+      'quantity', 's_sales_channel', 's_store_id', 's_canal',
+      's_loja', 's_tipo_pagamento', 's_cupom', 'f_valor_desconto'
     ];
 
-    // Remove duplicatas usando order, item e order_status (chave única do banco)
+    // Remove duplicatas usando order + item
     const uniqueOrders = new Map();
     for (const order of orders) {
-      // Usa order, item e order_status como chave única (mesma constraint do banco)
-      const orderStatus = order.order_status || order.status;
-      const uniqueKey = `${order.order}_${order.item}_${orderStatus}`;
+      const uniqueKey = `${order.order}_${order.item}`;
       if (!uniqueOrders.has(uniqueKey)) {
         uniqueOrders.set(uniqueKey, order);
       } else {
@@ -1283,27 +1293,31 @@ class OrdersSyncService {
     let csvContent = headers.join(',') + '\n';
 
     for (const order of deduplicatedOrders) {
-      const requiredFields = ['order', 'item', 'email', 'quantity', 'timestamp', 'price'];
+      const requiredFields = ['order', 'item', 'quantity', 'timestamp', 'price'];
       const missingFields = requiredFields.filter(field => !order[field]);
-      
-      if (missingFields.length > 0) {
+      const customer = order.customer || order.email;
+      if (missingFields.length > 0 || !customer) {
+        console.warn(`⚠️ Pedido ${order.order} ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer/email' : ''}`);
         continue;
       }
 
       const row = [
-        this.sanitizeField(order.order, 25, 'order'),
         this.sanitizeField(order.item, 25, 'item'),
-        this.sanitizeField(order.email, 0, 'email'),
-        this.sanitizeField(order.quantity, 25, 'quantity'),
-        this.sanitizeField(order.timestamp, 25, 'timestamp'),
         this.sanitizeField(order.price, 25, 'price'),
-        this.sanitizeField(order.s_channel_source || 'web', 25, 's_channel_source'),
-        this.sanitizeField(order.s_store_id || 'hope', 25, 's_store_id'),
-        this.sanitizeField(order.s_sales_channel || 'ecommerce', 25, 's_sales_channel'),
-        this.sanitizeField(order.s_discount ?? '0', 25, 's_discount')
+        this.sanitizeField(order.order, 25, 'order'),
+        this.sanitizeField(order.timestamp, 25, 'timestamp'),
+        this.sanitizeField(customer, 0, 'customer'),
+        this.sanitizeField(order.quantity, 25, 'quantity'),
+        this.sanitizeField(order.s_sales_channel || '', 25, 's_sales_channel'),
+        this.sanitizeField(order.s_store_id || '', 25, 's_store_id'),
+        this.sanitizeField(order.s_canal || '', 25, 's_canal'),
+        this.sanitizeField(order.s_loja || '', 25, 's_loja'),
+        this.sanitizeField(order.s_tipo_pagamento || '', 25, 's_tipo_pagamento'),
+        this.sanitizeField(order.s_cupom || '', 25, 's_cupom'),
+        this.sanitizeField(order.f_valor_desconto || '', 25, 'f_valor_desconto')
       ];
-      
-      if (row.length === 10 && row[0] && row[1] && row[2] && row[3] && row[4] && row[5]) {
+
+      if (row.length === 13 && row[0] && row[2] && row[4]) {
         csvContent += row.join(',') + '\n';
       }
     }
