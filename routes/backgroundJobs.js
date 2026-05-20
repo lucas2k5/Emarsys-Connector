@@ -99,53 +99,19 @@ async function handleCronOrders(req, res) {
   process.stderr.write(`🔴 [Background] Query: ${JSON.stringify(req.query)}\n`);
   
   try {
-   // Log imediato para debug - FORÇAR SAÍDA
-   console.error('📥 [Background] ========== INÍCIO handleCronOrders ==========');
-   console.error('📥 [Background] Requisição recebida (cron-orders):', {
-     method: req.method,
-     url: req.url,
-     originalUrl: req.originalUrl,
-     query: req.query,
-     body: req.body,
-     queryKeys: Object.keys(req.query || {}),
-     bodyKeys: Object.keys(req.body || {}),
-     queryString: req.url.split('?')[1] || 'N/A'
-   });
-   
    // Aceita parâmetros do body (POST) ou query string (GET)
-   // Se req.query estiver vazio mas houver query string na URL, tentar parsear manualmente
    let queryParams = req.query;
-   console.error('🔍 [Background] req.query inicial:', {
-     query: req.query,
-     queryKeys: Object.keys(req.query || {}),
-     url: req.url,
-     originalUrl: req.originalUrl,
-     hasQueryString: req.url.includes('?')
-   });
-   
+
    if (Object.keys(req.query || {}).length === 0 && req.url.includes('?')) {
      const url = require('url');
-     // Tentar com req.url e req.originalUrl
-     const urlToParse = req.originalUrl || req.url;
-     const parsedUrl = url.parse(urlToParse, true);
+     const parsedUrl = url.parse(req.originalUrl || req.url, true);
      queryParams = parsedUrl.query || {};
-     console.error('⚠️ [Background] req.query estava vazio, parseando manualmente:', {
-       queryString: req.url.split('?')[1],
-       originalUrl: req.originalUrl,
-       parsedQuery: queryParams,
-       parsedKeys: Object.keys(queryParams)
-     });
    }
-   
-   // Prioriza query string se body estiver vazio, caso contrário prioriza body
-   const params = Object.keys(req.body || {}).length > 0 
-     ? { ...queryParams, ...req.body }  // Body tem prioridade se não estiver vazio
-     : { ...queryParams };               // Query string se body estiver vazio
-   
-   console.error('📥 [Background] Parâmetros mesclados (cron-orders):', {
-     params,
-     paramsKeys: Object.keys(params)
-   });
+
+   const params = Object.keys(req.body || {}).length > 0
+     ? { ...queryParams, ...req.body }
+     : { ...queryParams };
+
    const {
       maxOrders = 0,
       dateFrom,
@@ -157,21 +123,6 @@ async function handleCronOrders(req, res) {
       endTime,
       store
     } = params;
-    
-    console.error('🔍 [Background] Parâmetros extraídos:', {
-      maxOrders,
-      dateFrom,
-      dateTo,
-      startDate,
-      toDate,
-      brazilianDate,
-      startTime,
-      endTime,
-      store: store || 'hope',
-      hasBrazilianDate: !!brazilianDate,
-      hasStartTime: !!startTime,
-      hasEndTime: !!endTime
-    });
     
     // Converter maxOrders para número se vier da query string
     const maxOrdersNum = parseInt(maxOrders, 10) || 0;
@@ -344,22 +295,8 @@ async function handleCronOrders(req, res) {
           }
         }
       });
-    } else {
-      console.error('✅ [Background] Validação passou - datas definidas:', {
-        finalStartDate,
-        finalToDate
-      });
     }
-    
-    console.error('🚀 [Background] ANTES DO LOG FINAL - Verificando variáveis:', {
-      maxOrdersNum,
-      finalStartDate,
-      finalToDate,
-      brazilianDate,
-      startTime,
-      endTime
-    });
-    
+
     console.log(`🚀 [Background] Iniciando cron sync de pedidos (SQLite): maxOrders=${maxOrdersNum}, dataInicial=${finalStartDate}, dataFinal=${finalToDate}`);
     
     // Gerar ID único para o job
