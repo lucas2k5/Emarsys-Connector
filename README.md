@@ -29,8 +29,8 @@ O **Hope Emarsys Connector** é uma aplicação Node.js/Express que atua como po
 ```
 PRODUTOS (Hope):   VTEX hopelingerie → products.csv (ativos + inativos) → SFTP bu_hope        (diário 02h)
 PRODUTOS (Resort): VTEX lojahr       → products_resort.csv              → SFTP hope_resort    (diário 03h)
-PEDIDOS (Hope):    VTEX hopelingerie → CSV binary → Emarsys merchant 1789FBAF0A6EF683 bearer token  (a cada 10min)
-PEDIDOS (Resort):  VTEX lojahr       → CSV binary → Emarsys merchant 15232C841F7635A9 bearer token  (a cada 10min)
+PEDIDOS (Hope):    VTEX hopelingerie → SQLite → CSV binary → Emarsys merchant 1789FBAF0A6EF683 bearer token  (a cada 30min, em :05 e :35)
+PEDIDOS (Resort):  VTEX lojahr       → SQLite → CSV binary → Emarsys merchant 15232C841F7635A9 bearer token  (a cada 30min, em :05 e :35)
 CONTATOS (push):          VTEX → POST webhook entrada → SQLite → Webhook saída (tempo real + retry por client_type)
 CLIENTES Hope (delta):    VTEX hopelingerie Master Data CL+AD → Webhook saída (cron 30min, 703.145 clientes na base)
 CLIENTES Resort (delta):  VTEX lojahr Master Data CL+AD → Webhook saída (cron 30min, independente do Hope)
@@ -72,7 +72,7 @@ Emarsys-Connector/
 ├── worker.js                   # Processo worker — cron jobs exclusivamente (sem HTTP)
 ├── scripts/
 │   ├── syncProducts.js        # Sync diário Hope (02h) + Resort (03h)
-│   └── syncOrders.js          # Sync 10min Hope + Resort (crons independentes)
+│   └── syncOrders.js          # Sync 30min Hope + Resort (crons independentes)
 ├── services/
 │   ├── vtexProductService.js      # fetchAllProductRows + fetchAllProductRowsResort
 │   ├── vtexOrderService.js        # fetchNewOrderRows + fetchNewOrderRowsResort
@@ -192,39 +192,41 @@ RESORT_STORE_BASE_URL=https://www.lojahr.com.br
 
 ### Processo completo
 
-Roda a cada 10 minutos via `scripts/syncOrders.js` ou manualmente com `npm run sync:orders`.
+Acionado pelo worker a cada 30 minutos via POST interno para `/api/background/cron-orders`. Pode ser rodado manualmente com `npm run sync:orders`.
 
-As duas lojas rodam em **crons independentes** com controle de concorrência separado (`isRunning` / `isRunningResort`) e arquivos de controle distintos:
+As duas lojas rodam em **crons independentes** com controle de concorrência separado e persistência via SQLite:
 
 | | Hope Lingerie | Hope Resort |
 |---|---|---|
 | **VTEX** | `hopelingerie.vtexcommercestable.com.br` | `lojahr.vtexcommercestable.com.br` |
 | **Emarsys merchant** | `1789FBAF0A6EF683` | `15232C841F7635A9` |
-| **Controle de estado** | `data/lastOrderSync.json` | `data/lastOrderSyncResort.json` |
-| **Cron** | a cada 10min | a cada 10min |
+| **Persistência** | SQLite `orders` table (`isSync=false/true`) | SQLite `orders` table |
+| **Cron** | a cada 30min (em :05 e :35) | a cada 30min (em :05 e :35) |
+
+> **Ordem de execução:** `clients-sync` roda em :00/:30, `orders-sync` em :05/:35 — 5 minutos de margem garantem que o contato já exista no Emarsys antes de o pedido ser atribuído.
 
 ```
-A cada 10 minutos (por loja):
+A cada 30 minutos (por loja):
 
-PASSO 1 — Ler lastOrderSync[Resort].json
-  Se não existe: busca últimos 10 minutos (primeira execução)
-  now capturado ANTES de qualquer chamada de API
-
-PASSO 2 — GET /api/oms/pvt/orders
+PASSO 1 — GET /api/oms/pvt/orders
   Filtra por f_creationDate=[lastSync TO now]
+  Apenas pedidos com status=invoiced (faturados) são processados
   Pagina até esgotar (100 por página)
 
-PASSO 3 — GET /api/oms/pvt/orders/{orderId}
-  1 por vez, 300ms entre chamadas
+PASSO 2 — GET /api/oms/pvt/orders/{orderId}
+  Detalhe completo do pedido (paymentData, marketingData, items)
   Retry 3x em erro, aguarda 5s em 429
 
-PASSO 4 — Mapear para linhas CSV
+PASSO 3 — Persistir no SQLite + mapear para linhas CSV
   CPF → SHA256 (nunca usar email — vem mascarado pela VTEX)
   1 linha por item do pedido
+  Campos extras: s_canal, s_loja, s_tipo_pagamento, s_cupom, f_valor_desconto
+  Migration 004 adiciona essas colunas automaticamente no boot
 
-PASSO 5 — Enviar CSV binary para Scarab/HAPI
-  POST via EmarsysOrdersApiService (OAuth2 por loja)
-  Em caso de erro: lastSync NÃO atualizado → reprocessa na próxima execução
+PASSO 4 — Gerar CSV binary e enviar para Scarab/HAPI
+  POST via EmarsysOrdersApiService (token estático ou OAuth2)
+  Sucesso → marca isSync=true no SQLite
+  Em caso de erro → isSync permanece false → reprocessado na próxima execução
 ```
 
 > **Atenção:** o Emarsys trata `order` como chave única — reenviar o mesmo pedido gera duplicata. O sync não usa overlap nem margem de tempo para evitar isso.
@@ -273,11 +275,11 @@ EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
 ### Performance
 
 ```
-A cada 10 minutos em produção:
-  ~5-20 pedidos × 300ms = ~2-6s total ✅
+A cada 30 minutos em produção:
+  ~5-20 pedidos × detalhe individual = ~2-6s total ✅
 
 Pico (campanha):
-  ~200 pedidos × 300ms = ~60s — dentro dos 10min ✅
+  ~200 pedidos × detalhe individual = ~60s — dentro dos 30min ✅
 ```
 
 ---
@@ -590,7 +592,7 @@ npm run prod:logs:worker  # logs do worker (crons)
 | `npm run worker` | Inicia o worker de cron jobs (produção manual) |
 | `npm run worker:dev` | Inicia o worker com nodemon (desenvolvimento) |
 | `npm run sync:products` | Sync manual de produtos (VTEX → CSV → SFTP) |
-| `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 10min) |
+| `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 30min) |
 | `npm run sync:clients` | Sync manual de clientes delta (executa imediatamente + cron 30min) |
 | `npm run clear-logs` | Limpa arquivos de log |
 | `npm run cleanup:exports` | Remove exports antigos |
@@ -741,16 +743,20 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 ## Pendências
 
 - [x] ~~Sync completo de produtos VTEX → CSV → SFTP~~ — ativos + inativos + invisíveis, 27.100 SKUs ✅
-- [x] ~~Sync periódico de pedidos~~ — cron 10min, VTEX OMS → CSV binary → Scarab/HAPI ✅
+- [x] ~~Sync periódico de pedidos~~ — cron 30min (:05/:35), VTEX OMS → SQLite → CSV binary → Scarab/HAPI ✅
 - [x] ~~Webhook de contatos hope/resort~~ — filas separadas por client_type ✅
 - [x] ~~Credenciais SFTP produtos Hope~~ — `bu_hope` em `exchange.si.emarsys.net` ✅
 - [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado com merchant ID separado ✅
 - [x] ~~Sync de produtos Hope Resort~~ — `hope_resort` em `/catalog/`, cron 03h ✅
-- [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 10min ✅
+- [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 30min ✅
 - [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
 - [x] ~~Carga histórica Hope Lingerie Abr/2024–Abr/2025~~ — 170.040 pedidos / 551.493 linhas ✅
 - [x] ~~Token bearer estático Scarab HAPI~~ — Hope (`1789FBAF0A6EF683`) e Resort (`15232C841F7635A9`) ✅
 - [x] ~~Delta sync de clientes VTEX Master Data (CL+AD) → Webhook~~ — Hope (703.145 clientes) + Resort, cron 30min independente por loja ✅
+- [x] ~~Schema CSV de pedidos corrigido~~ — 13 colunas no formato exato da Emarsys Sales Data API ✅
+- [x] ~~customer = sha256(CPF)~~ — hash SHA-256 do CPF extraído diretamente do OMS (sem endpoint legado) ✅
+- [x] ~~Filtro apenas pedidos invoiced~~ — somente pedidos faturados são sincronizados ✅
+- [x] ~~Migration 004 automática~~ — adiciona `customer`, `s_canal`, `s_loja`, `s_tipo_pagamento`, `s_cupom`, `f_valor_desconto` ao SQLite no boot ✅
 - [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
 - [ ] Carga histórica Hope Resort (2 anos)
 - [ ] Validar sync produtos Resort em produção (primeira execução)
