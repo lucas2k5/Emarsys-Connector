@@ -92,17 +92,15 @@ function analyzeCronExpression(cronExpression, now) {
  * Calcula período para execução a cada X minutos
  */
 function calculateMinutesInterval(now, intervalMinutes) {
-  const startOfCurrentHour = now.clone().startOf('hour');
-  const currentMinute = now.minute();
-  
-  // Encontra o último intervalo executado
-  const lastExecutionMinute = Math.floor(currentMinute / intervalMinutes) * intervalMinutes;
-  const lastExecution = startOfCurrentHour.clone().minute(lastExecutionMinute);
-  
-  // Período: desde a última execução até agora
+  // O cron dispara exatamente no boundary (ex: :00, :30).
+  // Usar now - intervalMinutes é sempre correto:
+  //   dispara às :30 → startDate = :00
+  //   dispara às :00 → startDate = :30 do hora anterior
+  const lastExecution = now.clone().subtract(intervalMinutes, 'minutes');
+
   const startDate = lastExecution.toISOString();
   const toDate = now.toISOString();
-  
+
   // Log detalhado para debug
   console.log('📅 [Cron Period] Calculando período de minutos:', {
     agoraLocal: now.format('DD/MM/YYYY HH:mm:ss'),
@@ -111,7 +109,7 @@ function calculateMinutesInterval(now, intervalMinutes) {
     startDateUTC: startDate,
     toDateUTC: toDate
   });
-  
+
   return {
     startDate,
     toDate,
