@@ -1,615 +1,362 @@
-# Guia de Deploy na VPS - Emarsys Connector
+# Deploy em Servidor Linux — Emarsys Connector
 
-Este guia fornece instruções completas para fazer o deploy da aplicação Docker na sua VPS.
+Guia de deploy em produção usando **Node.js + PM2** diretamente no servidor.
 
-## 📋 Pré-requisitos da VPS
+## Requisitos de Hardware
 
-### Requisitos Mínimos de Hardware
-- **CPU**: 2 cores ou mais
-- **RAM**: 2GB mínimo (4GB recomendado)
-- **Disco**: 20GB de espaço livre
-- **Sistema Operacional**: Ubuntu 20.04+ / Debian 11+ / CentOS 8+ (recomendado Ubuntu 22.04 LTS)
+| Recurso | Mínimo | Recomendado |
+|---|---|---|
+| CPU | 2 cores | 4 cores |
+| RAM | 4 GB | 8 GB |
+| Disco | 20 GB | 40 GB |
+| OS | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
 
-### Requisitos de Software
-- Acesso SSH à VPS
-- Usuário com permissões sudo
-- Conexão com internet estável
+---
 
-## 🚀 Passo a Passo Completo
-
-### 1. Conectar na VPS via SSH
+## 1. Preparar o servidor
 
 ```bash
-ssh usuario@ip-da-vps
-# Exemplo: ssh root@192.168.1.100
-```
-
-### 2. Atualizar o Sistema
-
-```bash
-# Ubuntu/Debian
 sudo apt update && sudo apt upgrade -y
-
-# CentOS/RHEL
-sudo yum update -y
+sudo apt install -y git curl build-essential
 ```
 
-### 3. Instalar Docker
-
-#### Para Ubuntu/Debian:
+### Instalar Node.js 22 (LTS)
 
 ```bash
-# Remover versões antigas (se houver)
-sudo apt remove docker docker-engine docker.io containerd runc
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
 
-# Instalar dependências
-sudo apt install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release
-
-# Adicionar chave GPG oficial do Docker
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-# Adicionar repositório Docker
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Instalar Docker Engine e Docker Compose
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Verificar instalação
-docker --version
-docker compose version
+# Verificar
+node -v   # v22.x.x
+npm -v
 ```
 
-#### Para CentOS/RHEL:
+### Instalar PM2 globalmente
 
 ```bash
-# Instalar dependências
-sudo yum install -y yum-utils
-
-# Adicionar repositório Docker
-sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-
-# Instalar Docker
-sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Iniciar e habilitar Docker
-sudo systemctl start docker
-sudo systemctl enable docker
-
-# Verificar instalação
-docker --version
-docker compose version
+npm install -g pm2
 ```
 
-### 4. Configurar Docker (Opcional mas Recomendado)
+---
+
+## 2. Clonar o repositório
 
 ```bash
-# Adicionar seu usuário ao grupo docker (para não precisar usar sudo)
-sudo usermod -aG docker $USER
+mkdir -p ~/apps && cd ~/apps
 
-# Aplicar mudanças (ou fazer logout/login)
-newgrp docker
+git clone https://dev.azure.com/gabrielaraujo-openflow/Hope/_git/Emarsys-Connector
+cd Emarsys-Connector
 
-# Verificar que funciona sem sudo
-docker ps
+npm install
 ```
 
-### 5. Instalar Git (se não estiver instalado)
+---
+
+## 3. Configurar variáveis de ambiente
 
 ```bash
-# Ubuntu/Debian
-sudo apt install -y git
-
-# CentOS/RHEL
-sudo yum install -y git
-```
-
-### 6. Clonar o Repositório
-
-```bash
-# Criar diretório para aplicações (opcional)
-mkdir -p ~/apps
-cd ~/apps
-
-# Clonar o repositório
-git clone <URL_DO_SEU_REPOSITORIO> hope.emarsys-connector
-cd hope.emarsys-connector
-
-# Ou se já tiver o código, fazer upload via SCP/SFTP e extrair
-```
-
-### 7. Configurar Variáveis de Ambiente
-
-```bash
-# Copiar arquivo de exemplo
-cp env.example .env
-
-# Editar o arquivo .env com suas credenciais
+cp .env.example .env
 nano .env
-# ou
-vi .env
 ```
 
-**Configurações essenciais no `.env`:**
+Variáveis obrigatórias para Hope Lingerie:
 
-```bash
-# Server Configuration
+```env
+# Servidor
 PORT=3000
 HOST=0.0.0.0
 NODE_ENV=production
-BASE_URL=https://seu-dominio.com  # ou IP da VPS
+BASE_URL=https://seu-dominio.com.br
 
-# VTEX Configuration
-VTEX_ACCOUNT_NAME=seu_account_name
-VTEX_APP_KEY=seu_app_key
-VTEX_APP_TOKEN=seu_app_token
-VTEX_BASE_URL=https://{account}.myvtex.com
+# VTEX — Hope Lingerie
+VTEX_BASE_URL=https://hopelingerie.vtexcommercestable.com.br
+VTEX_APP_KEY=
+VTEX_APP_TOKEN=
+STORE_BASE_URL=https://www.hopelingerie.com.br
 
-# Emarsys Configuration
-EMARSYS_SALES_TOKEN=seu_token_fixo_emarsys
-EMARSYS_USER=seu_username_emarsys
-EMARSYS_SECRET=sua_senha_emarsys
-EMARSYS_ENDPOINT=https://api.emarsys.net/api/v2
+# Emarsys — Pedidos (token estático tem prioridade sobre OAuth2)
+EMARSYS_ORDERS_API_URL=https://admin.scarabresearch.com/hapi/merchant/1789FBAF0A6EF683/sales-data/api
+EMARSYS_SALES_TOKEN=
+EMARSYS_ORDERS_API_TIMEOUT=60000
 
-# SFTP Configuration para Emarsys
-SFTP_HOST=191.252.83.193
-SFTP_PORT=22
-SFTP_USERNAME=openflowpiccadil1
-SFTP_PASSWORD=8GN8pzotQ9Ju1!!@
-SFTP_REMOTE_PATH=/home/storage/d/aa/5d/openflowpiccadil1/catalog/catalog.csv.gz
+# OAuth2 (fallback — preencher se não usar token estático)
+EMARSYS_OAUTH2_CLIENT_ID=
+EMARSYS_OAUTH2_CLIENT_SECRET=
+EMARSYS_OAUTH2_TOKEN_ENDPOINT=https://auth.emarsys.net/oauth2/token
 
-# Configuração de Cron Jobs (opcional)
-PRODUCTS_SYNC_CRON=0 */8 * * *
-ORDERS_SYNC_CRON=*/30 * * * *
+# SFTP — Produtos
+SFTP_PRODUCTS_HOST=exchange.si.emarsys.net
+SFTP_PRODUCTS_PORT=22
+SFTP_PRODUCTS_USERNAME=bu_hope
+SFTP_PRODUCTS_PASSWORD=
+SFTP_PRODUCTS_REMOTE_PATH=/
+
+# Webhook — Contatos
+CONTACTS_WEBHOOK_URL=
+CONTACTS_WEBHOOK_URL_HOPE=
+CONTACTS_WEBHOOK_CLIENT_TYPE=hope
+CONTACTS_WEBHOOK_AUTH_HEADER=
+CONTACTS_WEBHOOK_TIMEOUT=30000
+
+# Banco de dados
+SQLITE_DB_PATH=./data/orders.db
+
+# Cron jobs
+PRODUCTS_SYNC_CRON=0 2 * * *
+ORDERS_SYNC_CRON=5,35 * * * *
+CONTACTS_RETRY_CRON=*/5 * * * *
+CLIENTS_SYNC_CRON=*/30 * * * *
 CRON_TIMEZONE=America/Sao_Paulo
+ORDERS_SYNC_ENABLED=true        # obrigatório para o cron de pedidos rodar
+CLIENTS_SYNC_ENABLED=true
+
+# Performance
+PRODUCTS_TIMEOUT_MS=600000
+ORDERS_TIMEOUT_MS=900000
+LOG_LEVEL=error
 ```
 
-**Salvar e sair:**
-- Nano: `Ctrl+X`, depois `Y`, depois `Enter`
-- Vi: `Esc`, depois `:wq`, depois `Enter`
+---
 
-### 8. Criar Diretórios Necessários
+## 4. Criar diretórios necessários
 
 ```bash
-# Criar diretórios para persistência de dados
-mkdir -p data exports logs database/migrations
-
-# Ajustar permissões (se necessário)
-chmod -R 755 data exports logs
+mkdir -p data exports logs
 ```
 
-### 9. Build e Iniciar a Aplicação
+---
+
+## 5. Iniciar em produção
 
 ```bash
-# Primeira vez: build e start
-docker compose up --build -d
-
-# Verificar se está rodando
-docker compose ps
-
-# Ver logs
-docker compose logs -f
+npm run prod
 ```
 
-### 10. Verificar se a Aplicação Está Funcionando
+Este comando executa `pm2 start ecosystem.config.js --env production`, que sobe **dois processos**:
+
+| Processo | Script | Responsabilidade |
+|---|---|---|
+| `api` | `server.js` | Express HTTP, rotas, webhooks |
+| `worker` | `worker.js` | Cron jobs: produtos, pedidos, retry de contatos |
+
+Os dois processos são independentes — se um reiniciar, o outro continua.
+
+### Verificar se subiu
 
 ```bash
-# Verificar health check
-curl http://localhost:3000/api/health
+pm2 status
 
-# Ou de fora da VPS (substitua pelo IP da VPS)
-curl http://IP_DA_VPS:3000/api/health
+# Deve mostrar:
+# api     online
+# worker  online
 ```
 
-### 11. Configurar Firewall (Opcional mas Recomendado)
-
-#### Ubuntu/Debian (UFW):
+### Health check
 
 ```bash
-# Instalar UFW (se não estiver instalado)
-sudo apt install -y ufw
-
-# Permitir SSH (importante fazer antes de habilitar!)
-sudo ufw allow 22/tcp
-
-# Permitir porta da aplicação
-sudo ufw allow 3000/tcp
-
-# Habilitar firewall
-sudo ufw enable
-
-# Verificar status
-sudo ufw status
+curl http://localhost:3000/health
+# {"ok": true}
 ```
 
-#### CentOS/RHEL (firewalld):
+---
+
+## 6. Configurar auto-start após reboot
 
 ```bash
-# Permitir SSH
-sudo firewall-cmd --permanent --add-service=ssh
-
-# Permitir porta da aplicação
-sudo firewall-cmd --permanent --add-port=3000/tcp
-
-# Recarregar firewall
-sudo firewall-cmd --reload
-
-# Verificar status
-sudo firewall-cmd --list-all
+pm2 save           # salva lista de processos atual
+pm2 startup        # gera e exibe comando systemd — copie e execute o comando gerado
 ```
 
-## 🔧 Comandos Úteis para Gerenciamento
+O comando gerado tem o formato:
+```bash
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME
+```
 
-### Ver Status dos Containers
+Execute-o e então:
+```bash
+pm2 save           # salva novamente após startup configurado
+```
+
+---
+
+## 7. Nginx como reverse proxy (recomendado)
 
 ```bash
-docker compose ps
-```
-
-### Ver Logs
-
-```bash
-# Todos os logs em tempo real
-docker compose logs -f
-
-# Últimas 100 linhas
-docker compose logs --tail=100
-
-# Logs apenas do serviço app
-docker compose logs -f app
-```
-
-### Parar a Aplicação
-
-```bash
-# Parar containers (mantém dados)
-docker compose stop
-
-# Parar e remover containers (mantém volumes)
-docker compose down
-
-# Parar e remover tudo incluindo volumes (⚠️ apaga dados!)
-docker compose down -v
-```
-
-### Reiniciar a Aplicação
-
-```bash
-# Reiniciar containers
-docker compose restart
-
-# Rebuild e reiniciar (após mudanças no código)
-docker compose up --build -d
-```
-
-### Atualizar a Aplicação
-
-```bash
-# 1. Parar containers
-docker compose down
-
-# 2. Atualizar código (se usando Git)
-git pull origin main
-
-# 3. Rebuild e iniciar
-docker compose up --build -d
-
-# 4. Verificar logs
-docker compose logs -f
-```
-
-## 🔍 Verificação e Monitoramento
-
-### Verificar Saúde da Aplicação
-
-```bash
-# Health check
-curl http://localhost:3000/api/health
-
-# Status dos cron jobs
-curl http://localhost:3000/api/cron-management/status
-
-# Métricas
-curl http://localhost:3000/api/metrics
-```
-
-### Verificar Banco de Dados SQLite
-
-```bash
-# Estatísticas do banco
-docker compose exec app node -e "
-const {getDatabase} = require('./database/sqlite');
-const db = getDatabase();
-db.init().then(() => {
-  const stats = db.getStats();
-  console.log(JSON.stringify(stats, null, 2));
-  db.close();
-});
-"
-```
-
-### Monitorar Uso de Recursos
-
-```bash
-# Estatísticas de uso dos containers
-docker stats
-
-# Apenas containers do projeto
-docker stats $(docker compose ps -q)
-```
-
-## 🔄 Configurar Auto-start (Opcional)
-
-### Usando systemd (Recomendado)
-
-Criar arquivo de serviço systemd:
-
-```bash
-sudo nano /etc/systemd/system/emarsys-connector.service
-```
-
-Conteúdo do arquivo:
-
-```ini
-[Unit]
-Description=Emarsys Connector Docker Compose
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/home/usuario/apps/hope.emarsys-connector
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=0
-User=usuario
-Group=docker
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Substituir:**
-- `/home/usuario/apps/hope.emarsys-connector` pelo caminho real do projeto
-- `usuario` pelo seu usuário
-
-Ativar o serviço:
-
-```bash
-# Recarregar systemd
-sudo systemctl daemon-reload
-
-# Habilitar para iniciar no boot
-sudo systemctl enable emarsys-connector.service
-
-# Iniciar agora
-sudo systemctl start emarsys-connector.service
-
-# Verificar status
-sudo systemctl status emarsys-connector.service
-```
-
-## 🔒 Segurança Adicional
-
-### 1. Configurar Nginx como Reverse Proxy (Recomendado para Produção)
-
-```bash
-# Instalar Nginx
-sudo apt install -y nginx  # Ubuntu/Debian
-# ou
-sudo yum install -y nginx  # CentOS/RHEL
-
-# Criar configuração
+sudo apt install -y nginx
 sudo nano /etc/nginx/sites-available/emarsys-connector
 ```
-
-Configuração do Nginx:
 
 ```nginx
 server {
     listen 80;
-    server_name seu-dominio.com;  # ou IP da VPS
+    server_name seu-dominio.com.br;
 
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 300s;
     }
 }
 ```
 
-Ativar configuração:
-
 ```bash
-# Ubuntu/Debian
 sudo ln -s /etc/nginx/sites-available/emarsys-connector /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
-
-# CentOS/RHEL
-sudo cp /etc/nginx/sites-available/emarsys-connector /etc/nginx/conf.d/emarsys-connector.conf
-sudo nginx -t
-sudo systemctl restart nginx
 ```
 
-### 2. Configurar SSL com Let's Encrypt (Recomendado)
+### SSL com Let's Encrypt
 
 ```bash
-# Instalar Certbot
-sudo apt install -y certbot python3-certbot-nginx  # Ubuntu/Debian
-# ou
-sudo yum install -y certbot python3-certbot-nginx  # CentOS/RHEL
-
-# Obter certificado SSL
-sudo certbot --nginx -d seu-dominio.com
-
-# Renovação automática (já configurado por padrão)
-sudo certbot renew --dry-run
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d seu-dominio.com.br
 ```
 
-### 3. Restringir Acesso por IP (Opcional)
+---
 
-Editar configuração do Nginx para permitir apenas IPs específicos:
-
-```nginx
-location / {
-    allow 192.168.1.0/24;  # Sua rede
-    allow 203.0.113.0/24;  # Outro IP/rede
-    deny all;
-    
-    proxy_pass http://localhost:3000;
-    # ... resto da configuração
-}
-```
-
-## 💾 Backup dos Dados
-
-### Backup Manual
+## 8. Comandos do dia a dia
 
 ```bash
-# Criar diretório de backup
-mkdir -p ~/backups/emarsys-connector
+# Status dos processos
+pm2 status
+npm run prod:status
 
-# Backup do banco SQLite
-docker compose exec app cp /app/data/orders.db /tmp/orders.db
-docker compose cp app:/tmp/orders.db ~/backups/emarsys-connector/orders-$(date +%Y%m%d-%H%M%S).db
+# Logs ao vivo
+npm run prod:logs           # logs da API
+npm run prod:logs:worker    # logs do worker (crons)
+npm run logs                # tail do log combinado do dia
 
-# Backup de exports e logs (opcional)
-tar -czf ~/backups/emarsys-connector/exports-$(date +%Y%m%d).tar.gz exports/
-tar -czf ~/backups/emarsys-connector/logs-$(date +%Y%m%d).tar.gz logs/
+# Reiniciar após atualização de código
+git pull origin main
+npm run prod:restart        # npm install + pm2 restart
+
+# Reload sem downtime (se não houver mudança de dependências)
+npm run prod:reload
+
+# Parar tudo
+npm run prod:stop
+
+# Dashboard interativo PM2
+npm run prod:monit
 ```
 
-### Backup Automatizado com Cron
+---
+
+## 9. Atualizar para nova versão
 
 ```bash
-# Editar crontab
+cd ~/apps/Emarsys-Connector
+
+git pull origin main
+npm run prod:restart
+```
+
+O `prod:restart` executa `npm install` + `pm2 restart api worker`. As **migrations do SQLite rodam automaticamente** no boot — se houver migrations novas, o banco é atualizado sem intervenção manual.
+
+---
+
+## 10. Backup do banco de dados
+
+O SQLite fica em `./data/orders.db`. Recomendado backup diário via crontab:
+
+```bash
 crontab -e
-
-# Adicionar linha para backup diário às 2h da manhã
-0 2 * * * cd ~/apps/hope.emarsys-connector && docker compose exec -T app cp /app/data/orders.db /tmp/orders.db && docker compose cp app:/tmp/orders.db ~/backups/emarsys-connector/orders-$(date +\%Y\%m\%d).db
 ```
-
-## 🐛 Troubleshooting
-
-### Container não inicia
 
 ```bash
-# Ver logs detalhados
-docker compose logs app
+# Backup diário às 3h da manhã
+0 3 * * * cp ~/apps/Emarsys-Connector/data/orders.db ~/backups/orders-$(date +\%Y\%m\%d).db
 
-# Verificar se porta está em uso
-sudo netstat -tulpn | grep 3000
-# ou
-sudo ss -tulpn | grep 3000
-
-# Verificar espaço em disco
-df -h
+# Manter apenas os últimos 30 dias
+0 4 * * * find ~/backups/ -name "orders-*.db" -mtime +30 -delete
 ```
-
-### Erro de permissão
 
 ```bash
-# Ajustar permissões dos diretórios
-sudo chown -R $USER:$USER data/ exports/ logs/
-
-# Ou no container
-docker compose exec app chown -R node:node /app/data
+mkdir -p ~/backups
 ```
 
-### Aplicação não responde
+---
+
+## 11. Firewall
 
 ```bash
-# Verificar se container está rodando
-docker compose ps
-
-# Verificar logs de erro
-docker compose logs --tail=50 app
-
-# Reiniciar container
-docker compose restart app
+sudo ufw allow 22/tcp     # SSH
+sudo ufw allow 80/tcp     # HTTP
+sudo ufw allow 443/tcp    # HTTPS
+sudo ufw enable
+sudo ufw status
 ```
 
-### Problemas de memória
+> Não é necessário expor a porta 3000 externamente se estiver usando Nginx.
+
+---
+
+## 12. Troubleshooting
+
+### Processo não sobe
 
 ```bash
-# Verificar uso de memória
-free -h
-docker stats
-
-# Limpar recursos não utilizados
-docker system prune -a
+pm2 logs api --lines 50
+pm2 logs worker --lines 50
 ```
 
-## 📊 Monitoramento Contínuo
+Causa comum: variável de ambiente obrigatória ausente no `.env`.
 
-### Verificar Status Regularmente
+### Migrations falhando no boot
 
 ```bash
-# Criar script de monitoramento
-nano ~/check-emarsys.sh
+# Ver o erro específico
+pm2 logs worker --lines 20
+
+# Verificar estado das migrations aplicadas
+sqlite3 data/orders.db "SELECT * FROM migrations;"
 ```
 
-Conteúdo:
+### Cron de pedidos não dispara
+
+Verificar se `ORDERS_SYNC_ENABLED=true` está no `.env` e se o worker está online:
 
 ```bash
-#!/bin/bash
-echo "=== Status dos Containers ==="
-docker compose ps
-
-echo -e "\n=== Health Check ==="
-curl -s http://localhost:3000/api/health || echo "ERRO: Aplicação não está respondendo"
-
-echo -e "\n=== Uso de Recursos ==="
-docker stats --no-stream $(docker compose ps -q)
+pm2 status
+curl http://localhost:3000/api/cron-management/status
 ```
 
-Tornar executável:
+### Pedidos não chegando no Emarsys
 
 ```bash
-chmod +x ~/check-emarsys.sh
+# Verificar pedidos pendentes no banco
+sqlite3 data/orders.db "SELECT COUNT(*) FROM orders WHERE isSync=0;"
+
+# Forçar envio manual
+curl -X POST http://localhost:3000/api/emarsys/sales/send-unsynced
 ```
 
-## ✅ Checklist de Deploy
+### Contatos travados em retry
 
-- [ ] Docker e Docker Compose instalados
-- [ ] Repositório clonado/uploadado na VPS
-- [ ] Arquivo `.env` configurado com todas as credenciais
-- [ ] Diretórios `data`, `exports`, `logs` criados
-- [ ] Aplicação buildada e iniciada com sucesso
-- [ ] Health check respondendo corretamente
-- [ ] Firewall configurado (opcional)
-- [ ] Nginx configurado como reverse proxy (opcional)
-- [ ] SSL configurado (opcional)
-- [ ] Auto-start configurado (opcional)
-- [ ] Backup configurado (opcional)
-- [ ] Monitoramento configurado (opcional)
+```bash
+curl http://localhost:3000/api/metrics/contacts/retry-status
+```
 
-## 📚 Próximos Passos
+---
 
-- [Documentação Docker](./docker-setup.md)
-- [Guia de Configuração do Servidor](./server-setup-guide.md)
-- [Exemplos de CURL](./curl-examples.md)
-- [Documentação do Serviço de Sincronização de Pedidos](./orders-sync-service.md)
+## Checklist de go-live
 
-## 🆘 Suporte
-
-Em caso de problemas:
-1. Verificar logs: `docker compose logs -f`
-2. Verificar status: `docker compose ps`
-3. Verificar health: `curl http://localhost:3000/api/health`
-4. Consultar documentação adicional na pasta `docs/`
-
+- [ ] Node.js 22 instalado
+- [ ] PM2 instalado globalmente
+- [ ] Repositório clonado e `npm install` executado
+- [ ] `.env` preenchido com todas as credenciais de produção
+- [ ] `ORDERS_SYNC_ENABLED=true` no `.env`
+- [ ] Diretórios `data/`, `exports/`, `logs/` criados
+- [ ] `npm run prod` — api e worker `online` no `pm2 status`
+- [ ] `curl http://localhost:3000/health` retorna `{"ok":true}`
+- [ ] `pm2 save` + `pm2 startup` configurados
+- [ ] Nginx configurado como reverse proxy
+- [ ] SSL configurado
+- [ ] Firewall habilitado
+- [ ] Backup do SQLite agendado
+- [ ] Cron de pedidos validado: `GET /api/cron-management/status`
