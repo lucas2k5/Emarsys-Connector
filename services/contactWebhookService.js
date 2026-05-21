@@ -363,12 +363,8 @@ class ContactWebhookService {
       headers['Authorization'] = this.authHeader;
     }
 
-    // Mascara dados sensíveis para log
+    // Mascara dados sensíveis para log (email exposto para facilitar diagnóstico)
     const maskedPayload = { ...payload };
-    if (maskedPayload.email) {
-      const [user, domain] = maskedPayload.email.split('@');
-      maskedPayload.email = user && domain ? `${user.slice(0, 2)}***@${domain}` : '***';
-    }
     if (maskedPayload.cpf) {
       const cpfStr = String(maskedPayload.cpf);
       maskedPayload.cpf = cpfStr.slice(0, 3) + '***' + cpfStr.slice(-2);
