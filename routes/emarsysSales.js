@@ -252,4 +252,50 @@ router.get('/latest-csv', async (req, res) => {
   }
 });
 
-module.exports = router; 
+/**
+ * @route GET /api/emarsys/sales/exports
+ * @desc Lista os arquivos CSV gerados em exports/
+ */
+router.get('/exports', async (req, res) => {
+  try {
+    const fs = require('fs-extra');
+    const path = require('path');
+    const exportsDir = process.env.EXPORTS_DIR || path.join(__dirname, '..', 'exports');
+    await fs.ensureDir(exportsDir);
+    const files = await fs.readdir(exportsDir);
+    const csvFiles = files
+      .filter(f => f.endsWith('.csv'))
+      .map(f => {
+        const stat = fs.statSync(path.join(exportsDir, f));
+        return { name: f, size: stat.size, modified: stat.mtime };
+      })
+      .sort((a, b) => b.modified - a.modified);
+    res.json({ success: true, count: csvFiles.length, files: csvFiles });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * @route GET /api/emarsys/sales/exports/:filename
+ * @desc Faz download de um CSV específico de exports/ para inspeção
+ */
+router.get('/exports/:filename', async (req, res) => {
+  try {
+    const fs = require('fs-extra');
+    const path = require('path');
+    const exportsDir = process.env.EXPORTS_DIR || path.join(__dirname, '..', 'exports');
+    const filename = path.basename(req.params.filename); // evita path traversal
+    const filePath = path.join(exportsDir, filename);
+    if (!filename.endsWith('.csv') || !(await fs.pathExists(filePath))) {
+      return res.status(404).json({ success: false, error: 'Arquivo não encontrado' });
+    }
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+module.exports = router;
