@@ -940,13 +940,19 @@ class OrdersSyncService {
           order: orderId,
           item: item,
           email: email,
+          customer: order.customer || null,
           quantity: finalQuantity,
           timestamp: order.timestamp || order.creationDate || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
           price: finalPrice,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'hope',
           s_sales_channel: order.s_sales_channel || 'ecommerce',
-          s_discount: discount
+          s_discount: discount,
+          s_canal: order.s_canal || null,
+          s_loja: order.s_loja || null,
+          s_tipo_pagamento: order.s_tipo_pagamento || null,
+          s_cupom: order.s_cupom || null,
+          f_valor_desconto: order.f_valor_desconto || null
         };
 
         emarsysData.push(saleRecord);
