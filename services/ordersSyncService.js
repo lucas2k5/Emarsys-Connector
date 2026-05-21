@@ -1295,9 +1295,9 @@ class OrdersSyncService {
     for (const order of deduplicatedOrders) {
       const requiredFields = ['order', 'item', 'quantity', 'timestamp', 'price'];
       const missingFields = requiredFields.filter(field => !order[field]);
-      const customer = order.customer || order.email;
+      const customer = order.customer; // sha256(CPF) only — email fallback removido (Emarsys rejeita emails)
       if (missingFields.length > 0 || !customer) {
-        console.warn(`⚠️ Pedido ${order.order} ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer/email' : ''}`);
+        console.warn(`⚠️ Pedido ${order.order} ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer (CPF não disponível)' : ''}`);
         continue;
       }
 

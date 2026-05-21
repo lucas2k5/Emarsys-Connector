@@ -89,6 +89,27 @@ router.get('/sync-status', async (req, res) => {
 });
 
 /**
+ * @route POST /api/emarsys/sales/reset-sync
+ * @desc Reseta isSync=0 para pedidos de um período (permite reenvio ao Emarsys)
+ * @body { startDate: string (ISO), endDate: string (ISO) }
+ */
+router.post('/reset-sync', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.body || {};
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'startDate e endDate são obrigatórios (ISO datetime)' });
+    }
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
+    const result = db.resetSyncByPeriod(startDate, endDate);
+    res.json({ success: result.success, reset: result.reset, startDate, endDate, timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * @route POST /api/emarsys/sales/send-csv-file
  * @desc Envia arquivo CSV específico ou o mais recente para a Emarsys
  * @access Public

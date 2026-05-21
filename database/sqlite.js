@@ -504,6 +504,27 @@ class SQLiteDatabase {
   }
 
   /**
+   * Reseta isSync=0 para pedidos de um período (para reenvio ao Emarsys)
+   * @param {string} startDate - ISO datetime inicial
+   * @param {string} endDate - ISO datetime final
+   * @returns {Object} { success, reset }
+   */
+  resetSyncByPeriod(startDate, endDate) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE orders
+        SET isSync = 0, updated_at = datetime('now')
+        WHERE timestamp >= ? AND timestamp <= ?
+      `);
+      const result = stmt.run(startDate, endDate);
+      return { success: true, reset: result.changes };
+    } catch (error) {
+      console.error('❌ Erro ao resetar isSync:', error);
+      return { success: false, error: error.message, reset: 0 };
+    }
+  }
+
+  /**
    * Busca pedidos por período
    * @param {string} startDate - Data inicial
    * @param {string} endDate - Data final
