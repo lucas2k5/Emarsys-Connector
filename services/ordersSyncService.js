@@ -1446,60 +1446,67 @@ class OrdersSyncService {
       
       console.log(`📊 Pedidos encontrados no SQLite para o período: ${dbOrders.length}`);
       
-      // Se pedidos salvos não têm email, buscar detalhes da VTEX e email via CPF na CL
-      const ordersWithoutEmail = dbOrders.filter(o => !o.email);
-      if (ordersWithoutEmail.length > 0) {
-        const ordersToProcess = ordersWithoutEmail.slice(0, 50); // Limitar a 50 para não sobrecarregar
-        console.log(`📧 ${ordersWithoutEmail.length} pedidos sem email, buscando detalhes da VTEX e email via CPF na CL (processando ${ordersToProcess.length})...`);
+      // Processar pedidos sem email ou sem customer (sha256 CPF)
+      const ordersToEnrich = dbOrders.filter(o => !o.email || !o.customer);
+      if (ordersToEnrich.length > 0) {
+        console.log(`📧 ${ordersToEnrich.length} pedidos precisam de enriquecimento (email/customer), buscando detalhes da VTEX...`);
         const emailSearchStartTime = new Date();
         let emailSearchIndex = 0;
-        
-        for (const dbOrder of ordersToProcess) {
+
+        for (const dbOrder of ordersToEnrich) {
           emailSearchIndex++;
-          const emailProgress = this._calculateProgress(emailSearchIndex, ordersToProcess.length, emailSearchStartTime);
-          console.log(`📧 Buscando email: pedido ${emailProgress.current} de ${emailProgress.total} pedidos`);
-          console.log(`   📊 Progresso: ${emailProgress.percentage}% concluído | ${emailProgress.remainingPercentage}% restante`);
-          console.log(`   ⏰ Previsão de término: ${emailProgress.estimatedEndTimeBR} (horário de São Paulo)`);
-          
+          const emailProgress = this._calculateProgress(emailSearchIndex, ordersToEnrich.length, emailSearchStartTime);
+          console.log(`📧 Enriquecendo: pedido ${emailProgress.current} de ${emailProgress.total}`);
+
           try {
             // 1. Buscar detalhes completos do pedido
             const orderDetail = await this.getOrderById(dbOrder.order);
-            
+
+            // 2. Extrair CPF e calcular customer (sha256)
+            const docRaw = orderDetail?.clientProfileData?.document || '';
+            const cpfDigits = docRaw.replace(/\D+/g, '');
+            const customerHash = cpfDigits ? require('crypto').createHash('sha256').update(cpfDigits).digest('hex') : null;
+
+            // 3. Tentar obter email real do pedido
             let email = null;
-            
-            // 2. Tentar obter email do pedido diretamente
             if (orderDetail?.clientProfileData?.email || orderDetail?.customerEmail) {
               email = orderDetail.clientProfileData?.email || orderDetail.customerEmail;
-              // Validar se não é email hash
               if (email && (email.includes('@ct.vtex.com.br') || !email.includes('@'))) {
-                email = null; // Descartar email hash
+                email = null; // Descartar email mascarado pelo VTEX
               }
             }
-            
-            // 3. Se não encontrou email válido, buscar via CPF na CL
-            if (!email && orderDetail?.clientProfileData?.document) {
-              const document = orderDetail.clientProfileData.document;
-              console.log(`🔍 Buscando email na CL via CPF: ${document}`);
-              const customerData = await this.getCustomerEmailByDocument(document);
-              if (customerData && customerData.email) {
+
+            // 4. Se não tem email válido, buscar via CPF na CL
+            if (!email && cpfDigits) {
+              const customerData = await this.getCustomerEmailByDocument(docRaw);
+              if (customerData?.email) {
                 email = customerData.email;
-                console.log(`✅ Email encontrado na CL via CPF para pedido ${dbOrder.order}: ${email}`);
+                console.log(`✅ Email encontrado na CL via CPF para pedido ${dbOrder.order}`);
               }
             }
-            
-            // 4. Atualizar email no SQLite se encontrou
-            if (email && email.includes('@') && !email.includes('@ct.vtex.com.br')) {
-              await this.db.init();
-              const stmt = this.db.db.prepare('UPDATE orders SET email = ? WHERE "order" = ? AND item = ?');
-              stmt.run(email, dbOrder.order, dbOrder.item);
-              console.log(`✅ Email atualizado para pedido ${dbOrder.order}: ${email}`);
+
+            // 5. Atualizar email e customer no SQLite
+            await this.db.init();
+            const hasEmail = email && email.includes('@') && !email.includes('@ct.vtex.com.br');
+            if (hasEmail && customerHash) {
+              this.db.db.prepare('UPDATE orders SET email = ?, customer = ? WHERE "order" = ? AND item = ?')
+                .run(email, customerHash, dbOrder.order, dbOrder.item);
+              console.log(`✅ Email + customer atualizados para pedido ${dbOrder.order}`);
+            } else if (customerHash) {
+              this.db.db.prepare('UPDATE orders SET customer = ? WHERE "order" = ? AND item = ?')
+                .run(customerHash, dbOrder.order, dbOrder.item);
+              console.log(`✅ Customer atualizado para pedido ${dbOrder.order} (sem email válido)`);
+            } else if (hasEmail) {
+              this.db.db.prepare('UPDATE orders SET email = ? WHERE "order" = ? AND item = ?')
+                .run(email, dbOrder.order, dbOrder.item);
+              console.log(`⚠️ Só email atualizado para pedido ${dbOrder.order} (sem CPF)`);
             } else {
-              console.warn(`⚠️ Email não encontrado para pedido ${dbOrder.order}`);
+              console.warn(`⚠️ Sem email nem CPF para pedido ${dbOrder.order}`);
             }
-            
+
             await new Promise(resolve => setTimeout(resolve, 300)); // Rate limit
           } catch (error) {
-            console.warn(`⚠️ Erro ao buscar email do pedido ${dbOrder.order}:`, error.message);
+            console.warn(`⚠️ Erro ao enriquecer pedido ${dbOrder.order}:`, error.message);
           }
         }
         
