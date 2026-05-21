@@ -139,12 +139,17 @@ const transports = [
 ];
 
 // Criar o logger principal
+const customLevels = {
+  ...winston.config.npm.levels,
+  alert: 1.5  // entre error(0) e warn(1) — mais crítico que warn, menos que error
+};
+
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   transports,
   exitOnError: false,
-  levels: winston.config.npm.levels,
+  levels: customLevels,
 });
 
 // Adicionar cores para níveis customizados
