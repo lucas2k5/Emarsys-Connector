@@ -89,6 +89,23 @@ router.get('/sync-status', async (req, res) => {
 });
 
 /**
+ * @route GET /api/emarsys/sales/db-sample
+ * @desc Diagnóstico: retorna amostra de pedidos do SQLite com campo customer para depuração
+ */
+router.get('/db-sample', async (req, res) => {
+  try {
+    const { getDatabase } = require('../database/sqlite');
+    const db = getDatabase();
+    await db.init();
+    const all = db.db.prepare('SELECT "order", item, email, customer, isSync, timestamp FROM orders ORDER BY rowid DESC LIMIT 10').all();
+    const stats = db.db.prepare('SELECT COUNT(*) as total, SUM(CASE WHEN customer IS NOT NULL THEN 1 ELSE 0 END) as with_customer, SUM(CASE WHEN email IS NOT NULL THEN 1 ELSE 0 END) as with_email, SUM(CASE WHEN isSync=1 THEN 1 ELSE 0 END) as synced FROM orders').get();
+    res.json({ success: true, stats, sample: all });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * @route POST /api/emarsys/sales/reset-sync
  * @desc Reseta isSync=0 para pedidos de um período (permite reenvio ao Emarsys)
  * @body { startDate: string (ISO), endDate: string (ISO) }
