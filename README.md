@@ -617,6 +617,10 @@ npm run prod:logs:worker  # logs do worker (crons)
 | GET | `/api/integration/orders-extract-all` | Extrai e processa pedidos |
 | GET | `/api/emarsys/sales/sync-status` | Status da sincronização |
 | POST | `/api/emarsys/sales/send-unsynced` | Envia pedidos pendentes |
+| GET | `/api/emarsys/sales/exports` | Lista CSVs gerados em `exports/` |
+| GET | `/api/emarsys/sales/exports/:filename` | Download de CSV específico |
+| GET | `/api/emarsys/sales/db-sample` | Diagnóstico: amostra do SQLite com stats de `customer` |
+| POST | `/api/emarsys/sales/reset-sync` | Reseta `isSync=0` por período (reenvio) — body: `{ startDate, endDate }` |
 
 ### Contatos
 
@@ -757,6 +761,7 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 - [x] ~~customer = sha256(CPF)~~ — hash SHA-256 do CPF extraído diretamente do OMS (sem endpoint legado) ✅
 - [x] ~~Filtro apenas pedidos invoiced~~ — somente pedidos faturados são sincronizados ✅
 - [x] ~~Migration 004 automática~~ — adiciona `customer`, `s_canal`, `s_loja`, `s_tipo_pagamento`, `s_cupom`, `f_valor_desconto` ao SQLite no boot ✅
+- [x] ~~Bug `transformOrdersForEmarsysNew` sem campo `customer`~~ — `saleRecord` não mapeava `order.customer` do SQLite; todos os registros eram descartados em `generateEmarsysCsvContent`. Corrigido em 2026-05-21. Primeira sincronização bem-sucedida confirmada: 429 linhas enviadas ao Emarsys, status 200 "Event(s) queued by Live API" ✅
 - [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
 - [ ] Carga histórica Hope Resort (2 anos)
 - [ ] Validar sync produtos Resort em produção (primeira execução)
