@@ -68,6 +68,15 @@ class CronService {
     this.setupContactsRetry();
     configuredCount++;
 
+    // Sync diário de pedidos às 22h Brasília — garante cliente-antes-pedido
+    const dailySyncEnabled = process.env.ORDERS_DAILY_SYNC_ENABLED;
+    if (dailySyncEnabled === 'true' || dailySyncEnabled === '1') {
+      this.setupOrdersDailySync();
+      configuredCount++;
+    } else {
+      console.log('⚠️ [CRON] ORDERS_DAILY_SYNC_ENABLED não definido — sync diário de pedidos desabilitado');
+    }
+
     // Delta sync de clientes VTEX Master Data → Webhook (Hope)
     const clientsSyncEnabled = process.env.CLIENTS_SYNC_ENABLED;
     if (clientsSyncEnabled === 'true' || clientsSyncEnabled === '1') {
@@ -395,6 +404,69 @@ class CronService {
 
     this.jobs.set('clients-sync-resort', job);
     console.log(`🕐 Cron de clientes Resort configurado: ${clientsSyncCron} (${this.cronTimezone})`);
+  }
+
+  /**
+   * Sync diário de pedidos às 22h (Brasília).
+   * Busca todos os pedidos invoiced do dia e envia apenas os não sincronizados.
+   * Garante que os clientes já estejam no Emarsys antes dos pedidos (delta sync roda o dia todo).
+   */
+  setupOrdersDailySync() {
+    const cronExpr = (process.env.ORDERS_DAILY_SYNC_CRON || '0 22 * * *').replace(/['"]/g, '').trim();
+
+    const job = new cron.CronJob(cronExpr, async () => {
+      const serviceName = 'orders-daily-sync';
+
+      if (!crashProtection.canExecute(serviceName)) {
+        console.warn('🚫 [CRON] Sync diário de pedidos bloqueado por proteção contra crashes');
+        return;
+      }
+
+      // Dia completo de hoje em Brasília → UTC
+      const todayStart = moment().tz('America/Sao_Paulo').startOf('day').utc().toISOString();
+      const todayEnd   = moment().tz('America/Sao_Paulo').endOf('day').utc().toISOString();
+      const todayLabel = moment().tz('America/Sao_Paulo').format('DD/MM/YYYY');
+
+      logHelpers.logOrders('info', `🌙 [orders-daily-sync] Iniciando sync diário — ${todayLabel}`, {
+        cronExpression: cronExpr,
+        startDateUTC: todayStart,
+        toDateUTC: todayEnd
+      });
+
+      const url = `${this.baseUrl}/api/background/cron-orders`;
+
+      try {
+        const response = await axios.post(url, {
+          startDate: todayStart,
+          toDate: todayEnd,
+          maxOrders: 0,
+          store: 'hope'
+        }, {
+          timeout: 10000,
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (response.data && response.data.success) {
+          logHelpers.logOrders('info', '✅ [orders-daily-sync] Job criado com sucesso', {
+            jobId: response.data.jobId,
+            checkStatusUrl: response.data.checkStatus
+          });
+          console.log(`✅ [CRON][orders-daily-sync] Job criado: ${response.data.jobId}`);
+        }
+
+        crashProtection.resetCrashCount(serviceName);
+      } catch (error) {
+        logHelpers.logOrdersError(error, {
+          serviceName,
+          endpoint: url,
+          cronExpression: cronExpr
+        });
+        crashProtection.recordCrash(serviceName, error);
+      }
+    }, null, true, this.cronTimezone);
+
+    this.jobs.set('orders-daily-sync', job);
+    console.log(`🕐 Cron de sync diário de pedidos configurado: ${cronExpr} (${this.cronTimezone})`);
   }
 
   /**
