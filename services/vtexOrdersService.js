@@ -2134,12 +2134,12 @@ class VtexOrdersService {
       const order = deduplicatedOrders[i];
 
       try {
-        const customer = order.customer || order.email;
+        const customer = order.customer; // sha256(CPF) apenas — email removido (Emarsys rejeita emails)
         const requiredFields = ['order', 'item', 'quantity', 'timestamp', 'price'];
         const missingFields = requiredFields.filter(field => !order[field]);
 
         if (missingFields.length > 0 || !customer) {
-          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer/email' : ''}`);
+          console.warn(`⚠️ Pedido ${i + 1}/${deduplicatedOrders.length} (${order.order || 'sem ID'}) ignorado: faltam ${missingFields.join(', ')}${!customer ? ' customer (CPF não disponível)' : ''}`);
           continue;
         }
 
@@ -2633,7 +2633,9 @@ class VtexOrdersService {
           for (const orderDetail of orders) {
             const orderId = orderDetail.orderId;
             if (!orderDetail.items || !Array.isArray(orderDetail.items)) continue;
-            const cpf = (orderDetail.clientProfileData?.document || '').replace(/\D+/g, '');
+            const rawDoc = orderDetail.clientProfileData?.document || '';
+            const cpf = rawDoc.replace(/\D+/g, '');
+            if (!cpf) console.warn(`[CPF-DIAG] Pedido ${orderId}: document="${rawDoc}" email="${orderDetail.clientProfileData?.email || ''}"`);
             const customer = cpf ? crypto.createHash('sha256').update(cpf).digest('hex') : null;
             const rawChannel = String(orderDetail.salesChannel || '');
             const salesChannel = SALES_CHANNEL_MAP[rawChannel] || rawChannel;

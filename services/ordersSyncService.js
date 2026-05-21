@@ -490,7 +490,9 @@ class OrdersSyncService {
       const storeHostname = order.hostname || '';
       const pagamento = order.paymentData?.transactions?.[0]?.payments?.[0]?.paymentSystemName || '';
       const cupom = order.marketingData?.coupon || '';
-      const cpf = (order.clientProfileData?.document || '').replace(/\D+/g, '');
+      const rawDoc = order.clientProfileData?.document || '';
+      const cpf = rawDoc.replace(/\D+/g, '');
+      if (!cpf) console.warn(`[CPF-DIAG] Pedido ${order.orderId}: document="${rawDoc}" email="${order.clientProfileData?.email || ''}"`);
       const customer = cpf ? require('crypto').createHash('sha256').update(cpf).digest('hex') : null;
 
       // Calcular desconto total e frete a partir dos totals do pedido

@@ -1779,4 +1779,43 @@ router.get('/restart-log', async (req, res) => {
   }
 });
 
-module.exports = router; 
+/**
+ * @route GET /api/integration/order-profile-sample
+ * @desc Busca 1 pedido recente do VTEX e retorna clientProfileData completo para diagnóstico
+ * @query brazilianDate=YYYY-MM-DD (padrão: hoje)
+ */
+router.get('/order-profile-sample', async (req, res) => {
+  try {
+    const vtexOrdersService = new VtexOrdersService();
+    const brazilianDate = req.query.brazilianDate || require('../utils/dateUtils').getBrazilianTimestamp().substring(0, 10);
+    const moment = require('moment-timezone');
+    const startDate = moment.tz(brazilianDate, 'YYYY-MM-DD', 'America/Sao_Paulo').startOf('day').utc().toISOString();
+    const endDate   = moment.tz(brazilianDate, 'YYYY-MM-DD', 'America/Sao_Paulo').endOf('day').utc().toISOString();
+
+    const orders = await vtexOrdersService.getAllOrdersInPeriod(startDate, endDate, false);
+    if (!orders || orders.length === 0) {
+      return res.json({ success: true, message: 'Nenhum pedido encontrado para essa data', brazilianDate });
+    }
+
+    const sample = orders.slice(0, 3);
+    const details = [];
+    for (const order of sample) {
+      try {
+        const orderId = order.orderId || order.id;
+        const detail = await vtexOrdersService.getOrderById(orderId);
+        details.push({
+          orderId,
+          clientProfileData: detail?.clientProfileData || null,
+          status: detail?.status || null
+        });
+      } catch (e) {
+        details.push({ orderId: order.orderId, error: e.message });
+      }
+    }
+    res.json({ success: true, totalFound: orders.length, sample: details });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+module.exports = router;
