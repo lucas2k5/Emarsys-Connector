@@ -210,13 +210,18 @@ class SystemMonitor {
         });
     }
 
-    // Alerta de heap do processo
-    const heapUsagePercent = (heapUsed / heapTotal) * 100;
-    if (heapUsagePercent >= 90) {
-      logHelpers.logAlert('heap-critical', 'critical', 
-        `Heap crítica: ${heapUsagePercent.toFixed(1)}%`, {
+    // Alerta de heap do processo — usa o limite real (--max-old-space-size) como denominador.
+    // heapTotal é o heap *atualmente alocado* pelo V8 (cresce dinamicamente), não o limite máximo.
+    // Usar heapUsed/heapTotal gera falsos positivos porque o V8 expande o heap antes de OOM.
+    const maxOldSpaceMB = parseInt(process.env.NODE_OPTIONS?.match(/--max-old-space-size=(\d+)/)?.[1] || '512');
+    const maxHeapBytes = maxOldSpaceMB * 1024 * 1024;
+    const heapUsagePercent = (heapUsed / maxHeapBytes) * 100;
+    if (heapUsagePercent >= 85) {
+      logHelpers.logAlert('heap-critical', 'critical',
+        `Heap crítica: ${heapUsagePercent.toFixed(1)}% do limite (${maxOldSpaceMB}MB)`, {
           heapUsed,
           heapTotal,
+          maxHeapBytes,
           heapUsagePercent
         });
     }
