@@ -191,7 +191,7 @@ class EmarsysOrdersApiService {
     await fs.writeFile(filePath, csvContent, 'utf8');
 
     const lines = csvContent.split('\n').filter(l => l.trim());
-    logHelpers.logOrders('info', `[EmarsysOrdersAPI] CSV gerado: ${filename} (${lines.length - 1} pedidos)`, {
+    logHelpers.logStoreOrders(this.store, 'info', `[EmarsysOrdersAPI] CSV gerado: ${filename} (${lines.length - 1} pedidos)`, {
       filename,
       filePath,
       totalOrders: lines.length - 1
@@ -237,7 +237,7 @@ class EmarsysOrdersApiService {
         // Token estático tem prioridade; OAuth2 como fallback
         const token = this.staticToken || await this.oauth2.getAccessToken();
 
-        logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
+        logHelpers.logStoreOrders(this.store, 'info', `[EmarsysOrdersAPI][${this.store}] Enviando CSV (tentativa ${attempt}/${this.maxRetries})`, {
           size: `${(csvBuffer.length / 1024).toFixed(2)} KB`,
           lines: csvContent.split('\n').filter(l => l.trim()).length - 1,
           store: this.store
@@ -254,7 +254,7 @@ class EmarsysOrdersApiService {
           maxContentLength: Infinity
         });
 
-        logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] CSV enviado com sucesso (status: ${response.status})`, {
+        logHelpers.logStoreOrders(this.store, 'info', `[EmarsysOrdersAPI][${this.store}] CSV enviado com sucesso (status: ${response.status})`, {
           status: response.status,
           data: response.data,
           store: this.store
@@ -282,7 +282,7 @@ class EmarsysOrdersApiService {
         const isRetryable = !status || status >= 500 || status === 429 ||
           error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT';
 
-        logHelpers.logOrdersError(error, {
+        logHelpers.logStoreOrdersError(this.store, error, {
           attempt,
           maxRetries: this.maxRetries,
           status,
@@ -338,7 +338,7 @@ class EmarsysOrdersApiService {
       return { success: true, total: 0, message: 'Nenhum pedido para enviar' };
     }
 
-    logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Iniciando fluxo completo: ${orders.length} pedidos`, { store: this.store });
+    logHelpers.logStoreOrders(this.store, 'info', `[EmarsysOrdersAPI][${this.store}] Iniciando fluxo completo: ${orders.length} pedidos`, { store: this.store });
 
     // 1. Gerar CSV
     const csvResult = await this.generateAndSaveCsv(orders, options);
@@ -373,7 +373,7 @@ class EmarsysOrdersApiService {
       };
     }
 
-    logHelpers.logOrders('info', `[EmarsysOrdersAPI][${this.store}] Enviando arquivo CSV: ${path.basename(filePath)}`, { store: this.store });
+    logHelpers.logStoreOrders(this.store, 'info', `[EmarsysOrdersAPI][${this.store}] Enviando arquivo CSV: ${path.basename(filePath)}`, { store: this.store });
     return this.sendCsvToApi(filePath);
   }
 

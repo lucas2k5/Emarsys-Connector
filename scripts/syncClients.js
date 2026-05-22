@@ -23,6 +23,7 @@ const path = require('path');
 
 const { fetchDeltaClients, fetchDeltaClientsResort } = require('../services/vtexClientService');
 const contactWebhookService = require('../services/contactWebhookService');
+const { logHelpers } = require('../utils/logger');
 
 const SYNC_CONTROL_FILE        = path.join(__dirname, '..', 'data', 'lastClientSync.json');
 const SYNC_CONTROL_FILE_RESORT = path.join(__dirname, '..', 'data', 'lastClientSyncResort.json');
@@ -52,6 +53,9 @@ function saveLastSyncDate(file, date, count) {
 const INDEXING_LAG_OVERLAP_MS = 60 * 60 * 1000; // 60 minutos
 
 async function runSync(tag, controlFile, fetchFn) {
+  // Deriva o store do tag: 'clients-sync:hope' → 'hope', 'clients-sync:resort' → 'resort'
+  const store = tag.includes('resort') ? 'resort' : 'hope';
+
   const startedAt = new Date();
   const now       = startedAt.toISOString();
   const lastSync  = getLastSyncDate(controlFile);
@@ -59,18 +63,18 @@ async function runSync(tag, controlFile, fetchFn) {
   // Aplica overlap: subtrai 60min do lastSync para compensar lag de indexação
   const lastSyncWithOverlap = new Date(new Date(lastSync).getTime() - INDEXING_LAG_OVERLAP_MS).toISOString();
 
-  console.log(`[${tag}] Delta: ${lastSyncWithOverlap} → ${now} (overlap: 60min sobre ${lastSync})`);
+  logHelpers.logStoreClients(store, 'info', `[${tag}] Delta: ${lastSyncWithOverlap} → ${now} (overlap: 60min sobre ${lastSync})`);
 
   try {
     const payloads = await fetchFn(lastSyncWithOverlap);
 
     if (payloads.length === 0) {
-      console.log(`[${tag}] Nenhum cliente atualizado`);
+      logHelpers.logStoreClients(store, 'info', `[${tag}] Nenhum cliente atualizado`);
       saveLastSyncDate(controlFile, now, 0);
       return;
     }
 
-    console.log(`[${tag}] ${payloads.length} clientes para enviar`);
+    logHelpers.logStoreClients(store, 'info', `[${tag}] ${payloads.length} clientes para enviar`);
 
     let sent   = 0;
     let errors = 0;
@@ -81,11 +85,11 @@ async function runSync(tag, controlFile, fetchFn) {
         if (result.success) sent++;
         else {
           errors++;
-          console.warn(`[${tag}] Falha ao enviar ${payload.email}: ${result.error}`);
+          logHelpers.logStoreClients(store, 'warn', `[${tag}] Falha ao enviar ${payload.email}: ${result.error}`);
         }
       } catch (err) {
         errors++;
-        console.warn(`[${tag}] Erro ao enviar ${payload.email}: ${err.message}`);
+        logHelpers.logStoreClients(store, 'warn', `[${tag}] Erro ao enviar ${payload.email}: ${err.message}`);
       }
       await sleep(100);
     }
@@ -93,10 +97,10 @@ async function runSync(tag, controlFile, fetchFn) {
     saveLastSyncDate(controlFile, now, sent);
 
     const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.log(`[${tag}] ✓ ${sent} enviados, ${errors} erros — ${duration}s`);
+    logHelpers.logStoreClients(store, 'info', `[${tag}] Concluido: ${sent} enviados, ${errors} erros — ${duration}s`);
 
   } catch (err) {
-    console.error(`[${tag}] ✗ ERRO:`, err.message);
+    logHelpers.logStoreClientsError(store, err, { tag, controlFile });
     // NÃO atualiza o arquivo de controle em erro geral — reprocessa na próxima execução
   }
 }

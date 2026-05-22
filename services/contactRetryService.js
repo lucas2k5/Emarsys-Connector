@@ -124,7 +124,7 @@ async function processClientTypeQueue(clientType) {
     return { clientType, processed: 0, sent: 0, failed: 0, dead: 0, skipped: 0 };
   }
 
-  logHelpers.logClients('info', `[ContactRetry][${clientType}] Reprocessando ${contacts.length} contato(s)`, {
+  logHelpers.logStoreClients(clientType, 'info', `[ContactRetry][${clientType}] Reprocessando ${contacts.length} contato(s)`, {
     clientType,
     total: contacts.length,
     webhookUrl
@@ -167,14 +167,14 @@ async function processClientTypeQueue(clientType) {
       const response = await axios.post(webhookUrl, payload, { headers, timeout });
       updateStatus(contact.id, 'sent');
       sent++;
-      logHelpers.logClients('info', `[ContactRetry][${clientType}] Contato id=${contact.id} reenviado com sucesso (status: ${response.status})`);
+      logHelpers.logStoreClients(clientType, 'info', `[ContactRetry][${clientType}] Contato id=${contact.id} reenviado com sucesso (status: ${response.status})`);
     } catch (error) {
       const nextAttempts = contact.attempts + 1;
 
       if (nextAttempts >= MAX_ATTEMPTS) {
         updateStatus(contact.id, 'dead', error.message);
         dead++;
-        logHelpers.logClients('error', `[ContactRetry][${clientType}] Contato id=${contact.id} marcado como DEAD após ${nextAttempts} tentativas`, {
+        logHelpers.logStoreClients(clientType, 'error', `[ContactRetry][${clientType}] Contato id=${contact.id} marcado como DEAD após ${nextAttempts} tentativas`, {
           contactId: contact.id,
           email: contact.email,
           clientType,
@@ -189,7 +189,7 @@ async function processClientTypeQueue(clientType) {
       } else {
         updateStatus(contact.id, 'failed', error.message);
         failed++;
-        logHelpers.logClients('warn', `[ContactRetry][${clientType}] Contato id=${contact.id} falhou novamente (tentativa ${nextAttempts}/${MAX_ATTEMPTS})`, {
+        logHelpers.logStoreClients(clientType, 'warn', `[ContactRetry][${clientType}] Contato id=${contact.id} falhou novamente (tentativa ${nextAttempts}/${MAX_ATTEMPTS})`, {
           contactId: contact.id,
           clientType,
           error: error.message
@@ -199,7 +199,7 @@ async function processClientTypeQueue(clientType) {
   }
 
   const result = { clientType, processed: contacts.length, sent, failed, dead, skipped };
-  logHelpers.logClients('info', `[ContactRetry][${clientType}] Concluído`, result);
+  logHelpers.logStoreClients(clientType, 'info', `[ContactRetry][${clientType}] Concluído`, result);
 
   return result;
 }

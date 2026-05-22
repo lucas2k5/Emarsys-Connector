@@ -133,15 +133,15 @@ class CronService {
 
       // Sync Hope (sempre)
       try {
-        logHelpers.logProducts('info', '🚀 [hope] Iniciando sync direto VTEX → CSV → SFTP');
+        logHelpers.logStoreProducts('hope', 'info', '🚀 [hope] Iniciando sync direto VTEX → CSV → SFTP');
         const startedAt = Date.now();
         const rows = await fetchAllProductRows();
         const { filePath, fileName } = generateCsv(rows);
         await uploadToSftp(filePath, fileName);
         const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
-        logHelpers.logProducts('info', `✅ [hope] Concluído em ${duration}s — ${rows.length} SKUs exportados`);
+        logHelpers.logStoreProducts('hope', 'info', `✅ [hope] Concluído em ${duration}s — ${rows.length} SKUs exportados`);
       } catch (error) {
-        logHelpers.logProductsError(error, { serviceName, store: 'hope', cronExpression: this.productsSyncCron });
+        logHelpers.logStoreProductsError('hope', error, { serviceName, store: 'hope', cronExpression: this.productsSyncCron });
         crashProtection.recordCrash(serviceName, error);
         return;
       }
@@ -149,18 +149,18 @@ class CronService {
       // Sync Resort (somente se as credenciais estiverem configuradas)
       if (process.env.RESORT_VTEX_BASE_URL && process.env.RESORT_VTEX_APP_KEY) {
         try {
-          logHelpers.logProducts('info', '🚀 [resort] Iniciando sync direto VTEX → CSV → SFTP');
+          logHelpers.logStoreProducts('resort', 'info', '🚀 [resort] Iniciando sync direto VTEX → CSV → SFTP');
           const startedAt = Date.now();
           const rows = await fetchAllProductRowsResort();
           const { filePath, fileName } = generateCsv(rows, 'product.csv');
           await uploadToSftpResort(filePath, fileName);
           const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
-          logHelpers.logProducts('info', `✅ [resort] Concluído em ${duration}s — ${rows.length} SKUs exportados`);
+          logHelpers.logStoreProducts('resort', 'info', `✅ [resort] Concluído em ${duration}s — ${rows.length} SKUs exportados`);
         } catch (resortError) {
-          logHelpers.logProductsError(resortError, { serviceName: 'products-sync-resort', store: 'resort', cronExpression: this.productsSyncCron });
+          logHelpers.logStoreProductsError('resort', resortError, { serviceName: 'products-sync-resort', store: 'resort', cronExpression: this.productsSyncCron });
         }
       } else {
-        logHelpers.logProducts('info', '⏭️ [resort] Sync Resort ignorado — RESORT_VTEX_BASE_URL ou RESORT_VTEX_APP_KEY não configurados');
+        logHelpers.logStoreProducts('hope', 'info', '⏭️ [resort] Sync Resort ignorado — RESORT_VTEX_BASE_URL ou RESORT_VTEX_APP_KEY não configurados');
       }
 
       crashProtection.resetCrashCount(serviceName);
@@ -192,6 +192,14 @@ class CronService {
       if (!ordersSyncEnabled) {
         console.log(`⏸️ [CRON] Sincronização de orders está desativada (ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue})`);
         logHelpers.logOrders('info', '⏸️ [CRON] Sincronização de orders desativada', {
+          reason: `ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}`,
+          cronExpression: this.ordersSyncCron
+        });
+        logHelpers.logStoreOrders('hope', 'info', '⏸️ [CRON] Sincronização de orders desativada', {
+          reason: `ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}`,
+          cronExpression: this.ordersSyncCron
+        });
+        logHelpers.logStoreOrders('resort', 'info', '⏸️ [CRON] Sincronização de orders desativada', {
           reason: `ORDERS_SYNC_ENABLED=${ordersSyncEnabledValue}`,
           cronExpression: this.ordersSyncCron
         });
@@ -255,7 +263,7 @@ class CronService {
 
         if (hopeResponse.data && hopeResponse.data.success) {
           const jobId = hopeResponse.data.jobId;
-          logHelpers.logOrders('info', '✅ [hope] Job de sincronização de orders criado com sucesso', {
+          logHelpers.logStoreOrders('hope', 'info', '✅ [hope] Job de sincronização de orders criado com sucesso', {
             jobId,
             checkStatusUrl: hopeResponse.data.checkStatus,
             status: hopeResponse.status,
@@ -272,7 +280,7 @@ class CronService {
 
             console.log(`⏰ [CRON] O próximo cron de pedidos será executado dia ${nextDateFormatted}`);
 
-            logHelpers.logOrders('info', '⏰ Previsão da próxima extração', {
+            logHelpers.logStoreOrders('hope', 'info', '⏰ Previsão da próxima extração', {
               nextExecution: nextExecution.nextExecution,
               nextExecutionFormatted: nextDateFormatted,
               description: nextExecution.description,
@@ -286,7 +294,7 @@ class CronService {
 
         // Resort (só se credenciais VTEX de pedidos estiverem configuradas)
         if (process.env.VTEX_BASE_URL_RESORT_ORDERS && process.env.VTEX_APP_KEY_RESORT_ORDERS) {
-          logHelpers.logOrders('info', '🚀 [resort] Iniciando sincronização de orders via CRON', {
+          logHelpers.logStoreOrders('resort', 'info', '🚀 [resort] Iniciando sincronização de orders via CRON', {
             endpoint: url,
             store: 'resort'
           });
@@ -298,7 +306,7 @@ class CronService {
             });
 
             if (resortResponse.data && resortResponse.data.success) {
-              logHelpers.logOrders('info', '✅ [resort] Job de sincronização de orders criado com sucesso', {
+              logHelpers.logStoreOrders('resort', 'info', '✅ [resort] Job de sincronização de orders criado com sucesso', {
                 jobId: resortResponse.data.jobId,
                 checkStatusUrl: resortResponse.data.checkStatus,
                 status: resortResponse.status,
@@ -307,7 +315,7 @@ class CronService {
               console.log(`✅ [CRON][resort] Job criado: ${resortResponse.data.jobId}`);
             }
           } catch (resortError) {
-            logHelpers.logOrdersError(resortError, {
+            logHelpers.logStoreOrdersError('resort', resortError, {
               serviceName: 'orders-sync-resort',
               store: 'resort',
               endpoint: url,
@@ -315,7 +323,7 @@ class CronService {
             });
           }
         } else {
-          logHelpers.logOrders('info', '⏭️ [resort] Sync Resort de orders ignorado — VTEX_BASE_URL_RESORT_ORDERS ou VTEX_APP_KEY_RESORT_ORDERS não configurados');
+          logHelpers.logStoreOrders('hope', 'info', '⏭️ [resort] Sync Resort de orders ignorado — VTEX_BASE_URL_RESORT_ORDERS ou VTEX_APP_KEY_RESORT_ORDERS não configurados');
         }
 
         // Resetar contador de crashes em caso de sucesso
@@ -363,7 +371,7 @@ class CronService {
         await runDeltaSync();
         crashProtection.resetCrashCount(serviceName);
       } catch (error) {
-        logHelpers.logClients('error', '❌ [CRON] Erro no delta sync de clientes', {
+        logHelpers.logStoreClients('hope', 'error', '❌ [CRON] Erro no delta sync de clientes', {
           error: error.message,
           cronExpression: clientsSyncCron
         });
@@ -394,7 +402,7 @@ class CronService {
         await runDeltaSyncResort();
         crashProtection.resetCrashCount(serviceName);
       } catch (error) {
-        logHelpers.logClients('error', '❌ [CRON] Erro no delta sync de clientes Resort', {
+        logHelpers.logStoreClients('resort', 'error', '❌ [CRON] Erro no delta sync de clientes Resort', {
           error: error.message,
           cronExpression: clientsSyncCron
         });
@@ -448,7 +456,7 @@ class CronService {
         });
 
         if (hopeRes.data && hopeRes.data.success) {
-          logHelpers.logOrders('info', '✅ [orders-daily-sync][hope] Job criado com sucesso', {
+          logHelpers.logStoreOrders('hope', 'info', '✅ [orders-daily-sync][hope] Job criado com sucesso', {
             jobId: hopeRes.data.jobId,
             checkStatusUrl: hopeRes.data.checkStatus
           });
@@ -467,7 +475,7 @@ class CronService {
         });
 
         if (resortRes.data && resortRes.data.success) {
-          logHelpers.logOrders('info', '✅ [orders-daily-sync][resort] Job criado com sucesso', {
+          logHelpers.logStoreOrders('resort', 'info', '✅ [orders-daily-sync][resort] Job criado com sucesso', {
             jobId: resortRes.data.jobId,
             checkStatusUrl: resortRes.data.checkStatus
           });

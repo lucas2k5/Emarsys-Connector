@@ -307,6 +307,117 @@ const clientsLogger = winston.createLogger({
   ],
 });
 
+// Logger específico para HOPE LINGERIE — ORDERS
+// Escreve apenas no arquivo isolado por loja.
+// O ems-pcy-combined e o ems-pcy-cro-orders são escritos pelo ordersLogger
+// dentro dos helpers logStoreOrders / logStoreOrdersError.
+const hopeOrdersLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-hope-orders-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para HOPE RESORT — ORDERS
+const resortOrdersLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-resort-orders-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para HOPE LINGERIE — PRODUCTS
+const hopeProductsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-hope-products-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para HOPE RESORT — PRODUCTS
+const resortProductsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-resort-products-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para HOPE LINGERIE — CLIENTS
+const hopeClientsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-hope-clients-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
+// Logger específico para HOPE RESORT — CLIENTS
+const resortClientsLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    brazilianTimestamp,
+    dividerFormat
+  ),
+  transports: [
+    new DailyRotateFile({
+      filename: path.join('logs', 'ems-pcy-resort-clients-%DATE%.log'),
+      datePattern: 'DD-MM-YYYY',
+      maxSize: '50m',
+      maxFiles: '30d',
+      level: 'info',
+    }),
+  ],
+});
+
 // Logger específico para ACESSOS e REQUESTS
 const accessLogger = winston.createLogger({
   level: 'info',
@@ -532,6 +643,143 @@ const logHelpers = {
     });
   },
 
+  // ─── Helpers por loja (hope / resort) ───────────────────────────────────────
+  // Roteiam para o arquivo correto por loja E mantêm escrita no combined.
+  // Stores desconhecidos fazem fallback para os loggers genéricos existentes.
+
+  // Log de orders por loja
+  logStoreOrders: (store, level, message, details = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeOrdersLogger
+      : store === 'resort'
+        ? resortOrdersLogger
+        : ordersLogger;
+    storeLogger.log(level, message, {
+      module: 'orders',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+    // Garante que o combined genérico também recebe (via ordersLogger que já escreve nele)
+    ordersLogger.log(level, message, {
+      module: 'orders',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de products por loja
+  logStoreProducts: (store, level, message, details = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeProductsLogger
+      : store === 'resort'
+        ? resortProductsLogger
+        : productsLogger;
+    storeLogger.log(level, message, {
+      module: 'products',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+    productsLogger.log(level, message, {
+      module: 'products',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de clients por loja
+  logStoreClients: (store, level, message, details = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeClientsLogger
+      : store === 'resort'
+        ? resortClientsLogger
+        : clientsLogger;
+    storeLogger.log(level, message, {
+      module: 'clients',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+    clientsLogger.log(level, message, {
+      module: 'clients',
+      store,
+      ...details,
+      timestamp: getBrazilianTimestamp()
+    });
+  },
+
+  // Log de erro de orders por loja
+  logStoreOrdersError: (store, error, context = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeOrdersLogger
+      : store === 'resort'
+        ? resortOrdersLogger
+        : ordersLogger;
+    const errorPayload = {
+      module: 'orders',
+      store,
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    };
+    storeLogger.error('ORDERS ERROR', errorPayload);
+    ordersLogger.error('ORDERS ERROR', errorPayload);
+  },
+
+  // Log de erro de products por loja
+  logStoreProductsError: (store, error, context = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeProductsLogger
+      : store === 'resort'
+        ? resortProductsLogger
+        : productsLogger;
+    const errorPayload = {
+      module: 'products',
+      store,
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    };
+    storeLogger.error('PRODUCTS ERROR', errorPayload);
+    productsLogger.error('PRODUCTS ERROR', errorPayload);
+  },
+
+  // Log de erro de clients por loja
+  logStoreClientsError: (store, error, context = {}) => {
+    const storeLogger = store === 'hope'
+      ? hopeClientsLogger
+      : store === 'resort'
+        ? resortClientsLogger
+        : clientsLogger;
+    const errorPayload = {
+      module: 'clients',
+      store,
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name
+      },
+      context,
+      timestamp: getBrazilianTimestamp()
+    };
+    storeLogger.error('CLIENTS ERROR', errorPayload);
+    clientsLogger.error('CLIENTS ERROR', errorPayload);
+  },
+
   // Log de tentativas de acesso a rotas inválidas
   logAccessAttempt: (req, statusCode, blocked = false, attemptCount = 0) => {
     const level = statusCode === 429 ? 'warn' : 'info';
@@ -570,5 +818,11 @@ module.exports = {
   productsLogger,
   clientsLogger,
   accessLogger,
+  hopeOrdersLogger,
+  resortOrdersLogger,
+  hopeProductsLogger,
+  resortProductsLogger,
+  hopeClientsLogger,
+  resortClientsLogger,
   logHelpers,
 };
