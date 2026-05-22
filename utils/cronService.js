@@ -436,7 +436,8 @@ class CronService {
       const url = `${this.baseUrl}/api/background/cron-orders`;
 
       try {
-        const response = await axios.post(url, {
+        // Hope Lingerie
+        const hopeRes = await axios.post(url, {
           startDate: todayStart,
           toDate: todayEnd,
           maxOrders: 0,
@@ -446,12 +447,31 @@ class CronService {
           headers: { 'Content-Type': 'application/json' }
         });
 
-        if (response.data && response.data.success) {
-          logHelpers.logOrders('info', '✅ [orders-daily-sync] Job criado com sucesso', {
-            jobId: response.data.jobId,
-            checkStatusUrl: response.data.checkStatus
+        if (hopeRes.data && hopeRes.data.success) {
+          logHelpers.logOrders('info', '✅ [orders-daily-sync][hope] Job criado com sucesso', {
+            jobId: hopeRes.data.jobId,
+            checkStatusUrl: hopeRes.data.checkStatus
           });
-          console.log(`✅ [CRON][orders-daily-sync] Job criado: ${response.data.jobId}`);
+          console.log(`✅ [CRON][orders-daily-sync][hope] Job criado: ${hopeRes.data.jobId}`);
+        }
+
+        // Hope Resort
+        const resortRes = await axios.post(url, {
+          startDate: todayStart,
+          toDate: todayEnd,
+          maxOrders: 0,
+          store: 'resort'
+        }, {
+          timeout: 10000,
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (resortRes.data && resortRes.data.success) {
+          logHelpers.logOrders('info', '✅ [orders-daily-sync][resort] Job criado com sucesso', {
+            jobId: resortRes.data.jobId,
+            checkStatusUrl: resortRes.data.checkStatus
+          });
+          console.log(`✅ [CRON][orders-daily-sync][resort] Job criado: ${resortRes.data.jobId}`);
         }
 
         crashProtection.resetCrashCount(serviceName);
