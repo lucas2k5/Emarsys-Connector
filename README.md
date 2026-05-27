@@ -587,16 +587,79 @@ npm run prod:logs:worker  # logs do worker (crons)
 
 ## Scripts
 
+### Produção / Desenvolvimento
+
 | Script | Descrição |
 |---|---|
-| `npm run worker` | Inicia o worker de cron jobs (produção manual) |
-| `npm run worker:dev` | Inicia o worker com nodemon (desenvolvimento) |
-| `npm run sync:products` | Sync manual de produtos (VTEX → CSV → SFTP) |
-| `npm run sync:orders` | Sync manual de pedidos (executa imediatamente + cron 30min) |
-| `npm run sync:clients` | Sync manual de clientes delta (executa imediatamente + cron 30min) |
-| `npm run clear-logs` | Limpa arquivos de log |
-| `npm run cleanup:exports` | Remove exports antigos |
-| `npm run logs` | Tail do log combinado do dia |
+| `npm run dev` | Inicia o servidor Express com nodemon (desenvolvimento) |
+| `npm run worker:dev` | Inicia o worker de cron jobs com nodemon (desenvolvimento) |
+| `npm run prod` | Inicia api + worker via PM2 (produção) |
+| `npm run prod:reload` | Zero-downtime reload de api + worker |
+| `npm run prod:restart` | Reinstall + restart de api + worker |
+| `npm run prod:stop` | Para os processos PM2 |
+| `npm run prod:logs` | Logs da API (PM2) |
+| `npm run prod:logs:worker` | Logs do worker/crons (PM2) |
+| `npm run prod:status` | Status dos processos PM2 |
+| `npm run prod:monit` | Dashboard interativo PM2 |
+
+### Sync Manual
+
+| Script | Descrição |
+|---|---|
+| `npm run sync:products` | Sync completo de produtos Hope + Resort (VTEX → CSV → SFTP) |
+| `npm run sync:orders` | Sync de pedidos Hope + Resort (VTEX OMS → SQLite → Scarab HAPI) |
+| `npm run sync:clients` | Delta sync de clientes Hope + Resort (VTEX Master Data → Webhook) |
+
+### Diagnóstico e SQLite
+
+Scripts para inspecionar e corrigir o banco em produção. Não alteram estado externo.
+
+| Script | Descrição |
+|---|---|
+| `node scripts/db-query.js stats` | Estatísticas do SQLite: total, pendentes, sincronizados |
+| `node scripts/db-query.js pending` | Lista pedidos pendentes de sync |
+| `node scripts/db-query.js all` | Lista todos os pedidos (limitado) |
+| `node scripts/db-clear.js --pending` | Remove apenas pedidos pendentes (`isSync=0`) |
+| `node scripts/db-clear.js --all` | Remove todos os registros da tabela |
+| `node scripts/db-clear.js --drop` | Remove o arquivo `.db` completamente (recria no próximo boot) |
+| `node scripts/generate-csv-from-pending.js` | Gera CSV dos pedidos pendentes no SQLite sem enviar ao Emarsys |
+| `node scripts/sample-orders.js` | Busca os 50 pedidos mais recentes da Hope e salva em `tmp/` — sem alterar estado |
+
+### Backfill e Carga Histórica
+
+Scripts de uso pontual para reprocessamento de dados históricos ou recuperação de janelas perdidas.
+
+| Script | Descrição |
+|---|---|
+| `node scripts/backfill-clients.js --from YYYY-MM-DD --to YYYY-MM-DD` | Reprocessa clientes atualizados/criados no período e envia ao webhook |
+| `node scripts/simulate-clients-sync.js` | Simula delta sync do início do dia **sem enviar** ao webhook nem atualizar `lastClientSync.json` |
+| `node scripts/simulate-clients-sync.js --since 2h` | Simula delta sync das últimas 2 horas (aceita `2h`, `30m`, etc.) |
+| `node scripts/historical-orders-load.js` | Carga histórica de pedidos Hope — dry-run (não envia) |
+| `node scripts/historical-orders-load.js --send --from 2024-06 --to 2024-09` | Carga histórica Hope — envia mês a mês para o Scarab HAPI |
+| `node scripts/historical-orders-load-resort.js --send --from 2024-05 --to 2026-05` | Carga histórica Resort — envia mês a mês para o Scarab HAPI merchant Resort |
+
+> **Atenção (`historical-orders-load`):** o Emarsys trata `order` como chave única — reenviar o mesmo pedido gera duplicata. Sempre use dry-run primeiro para validar o intervalo antes de `--send`.
+
+### Exportação e Análise Interna
+
+Scripts de extração pontual. Não enviam dados nem alteram estado — apenas geram arquivos em `tmp/`.
+
+| Script | Descrição |
+|---|---|
+| `node scripts/export-clients-full.js` | Extração full de clientes Hope (CL) → CSV. Divide em fatias semestrais para contornar limite de scroll da VTEX (~700k registros) |
+| `node scripts/export-clients-resort-full.js` | Extração full Hope Resort (CL + AD em duas fases) → CSV |
+| `node scripts/export-backfill-clients-csv.js` | Exporta clientes do período de backfill para CSV sem envio ao webhook |
+| `node scripts/export-orders-with-cpf.js --from YYYY-MM --to YYYY-MM` | Exporta pedidos do período com CPF em texto plano (uso interno/análise) |
+| `node scripts/enrich-addresses.js` | Enriquece um CSV de clientes com endereços do VTEX Master Data AD (CL → AD lookup, 10 paralelas) |
+
+### Utilitários
+
+| Script | Descrição |
+|---|---|
+| `npm run clear-logs` | Limpa todos os arquivos de log em `logs/` |
+| `npm run cleanup:exports` | Remove exports antigos de `exports/` |
+| `npm run cleanup:exports:dry` | Dry-run: mostra o que seria removido sem deletar |
+| `npm run logs` | Tail ao vivo do log combinado do dia |
 
 ---
 
