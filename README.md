@@ -807,30 +807,4 @@ Veja [docs/deploy-vps.md](docs/deploy-vps.md) e [docs/docker-setup.md](docs/dock
 
 ---
 
-## Pendências
-
-- [x] ~~Sync completo de produtos VTEX → CSV → SFTP~~ — ativos + inativos + invisíveis, 27.100 SKUs ✅
-- [x] ~~Sync periódico de pedidos~~ — cron 30min (:05/:35), VTEX OMS → SQLite → CSV binary → Scarab/HAPI ✅
-- [x] ~~Webhook de contatos hope/resort~~ — filas separadas por client_type ✅
-- [x] ~~Credenciais SFTP produtos Hope~~ — `bu_hope` em `exchange.si.emarsys.net` ✅
-- [x] ~~OAuth2 Emarsys Hope Resort~~ — configurado com merchant ID separado ✅
-- [x] ~~Sync de produtos Hope Resort~~ — `hope_resort` em `/catalog/`, cron 03h ✅
-- [x] ~~Sync de pedidos Hope Resort~~ — VTEX lojahr → Scarab merchant Resort, cron 30min ✅
-- [x] ~~Credenciais SFTP Hope Resort~~ — `hope_resort` / `exchange.si.emarsys.net` /catalog/ ✅
-- [x] ~~Carga histórica Hope Lingerie Abr/2024–Abr/2025~~ — 170.040 pedidos / 551.493 linhas ✅
-- [x] ~~Token bearer estático Scarab HAPI~~ — Hope (`1789FBAF0A6EF683`) e Resort (`15232C841F7635A9`) ✅
-- [x] ~~Delta sync de clientes VTEX Master Data (CL+AD) → Webhook~~ — Hope (703.145 clientes) + Resort, cron 30min independente por loja ✅
-- [x] ~~Schema CSV de pedidos corrigido~~ — 13 colunas no formato exato da Emarsys Sales Data API ✅
-- [x] ~~customer = sha256(CPF)~~ — hash SHA-256 do CPF extraído diretamente do OMS (sem endpoint legado) ✅
-- [x] ~~Filtro apenas pedidos invoiced~~ — somente pedidos faturados são sincronizados ✅
-- [x] ~~Migration 004 automática~~ — adiciona `customer`, `s_canal`, `s_loja`, `s_tipo_pagamento`, `s_cupom`, `f_valor_desconto` ao SQLite no boot ✅
-- [x] ~~Bug `transformOrdersForEmarsysNew` sem campo `customer`~~ — `saleRecord` não mapeava `order.customer` do SQLite; todos os registros eram descartados em `generateEmarsysCsvContent`. Corrigido em 2026-05-21. Primeira sincronização bem-sucedida confirmada: 429 linhas enviadas ao Emarsys, status 200 "Event(s) queued by Live API" ✅
-- [ ] Carga histórica Hope Lingerie Abr/2023–Mar/2024 (2º ano)
-- [ ] Carga histórica Hope Resort (2 anos)
-- [ ] Validar sync produtos Resort em produção (primeira execução)
-- [ ] Validar sync pedidos Resort em produção (primeira execução)
-- [ ] Implementar suite de testes automatizados
-
----
-
 Desenvolvido por Lucas Fernandes - Openflow - Tech Lead SAP
