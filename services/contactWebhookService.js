@@ -168,18 +168,10 @@ class ContactWebhookService {
   }
 
   /**
-   * Normaliza country para código numérico Emarsys (24 = Brasil)
-   * @param {string|number} country
+   * Retorna sempre 24 — código Emarsys para Brasil.
    * @returns {number}
    */
-  normalizeCountry(country) {
-    if (!country) return 24; // Brasil padrão
-    if (typeof country === 'number') return country;
-
-    const normalized = String(country).trim().toLowerCase();
-    if (normalized === 'brasil' || normalized === 'brazil' || normalized === 'br') return 24;
-    const parsed = parseInt(normalized, 10);
-    if (!isNaN(parsed)) return parsed;
+  normalizeCountry() {
     return 24;
   }
 
