@@ -245,27 +245,31 @@ class ContactWebhookService {
    * @returns {Object} Payload formatado para o webhook
    */
   buildWebhookPayload(contactData) {
-    // Se o payload já vem no formato padronizado (com customer_id e client_type),
-    // usa direto sem transformações — a VTEX envia já formatado.
-    if (contactData.customer_id && contactData.client_type) {
+    // Payload padronizado da VTEX — aplica mesma lógica do sync (vtexClientService):
+    //   customer_id = cpf (dígitos) || email  (lead quando sem CPF)
+    //   campos opcionais omitidos quando vazios/null
+    //   opt_in: true apenas quando explicitamente verdadeiro
+    if (contactData.client_type) {
+      const email      = (contactData.email || '').trim().toLowerCase();
       const cpfCleaned = contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') : '';
       const genderNorm = this.normalizeGenderShort(contactData.gender || '');
+      const customer_id = cpfCleaned || email;
       return {
-        customer_id: String(contactData.customer_id),
+        customer_id,
         client_type: contactData.client_type,
-        email: (contactData.email || '').trim().toLowerCase(),
+        email,
         ...(cpfCleaned ? { cpf: cpfCleaned } : {}),
         ...(contactData.first_name ? { first_name: contactData.first_name } : {}),
-        ...(contactData.last_name ? { last_name: contactData.last_name } : {}),
-        ...(contactData.phone ? { phone: contactData.phone } : {}),
-        ...(contactData.mobile ? { mobile: contactData.mobile } : {}),
-        ...(genderNorm ? { gender: genderNorm } : {}),
-        ...(contactData.address ? { address: contactData.address } : {}),
-        ...(contactData.city ? { city: contactData.city } : {}),
-        ...(contactData.state ? { state: contactData.state } : {}),
+        ...(contactData.last_name  ? { last_name:  contactData.last_name  } : {}),
+        ...(contactData.phone      ? { phone:      contactData.phone      } : {}),
+        ...(contactData.mobile     ? { mobile:     contactData.mobile     } : {}),
+        ...(genderNorm             ? { gender:     genderNorm             } : {}),
+        ...(contactData.address    ? { address:    contactData.address    } : {}),
+        ...(contactData.city       ? { city:       contactData.city       } : {}),
+        ...(contactData.state      ? { state:      contactData.state      } : {}),
         country: this.normalizeCountry(contactData.country),
         ...(contactData.postal_code ? { postal_code: contactData.postal_code } : {}),
-        opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true
+        opt_in: this.normalizeOptIn(contactData.opt_in ?? contactData.optin) ?? false,
       };
     }
 
