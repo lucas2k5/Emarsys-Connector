@@ -248,21 +248,23 @@ class ContactWebhookService {
     // Se o payload já vem no formato padronizado (com customer_id e client_type),
     // usa direto sem transformações — a VTEX envia já formatado.
     if (contactData.customer_id && contactData.client_type) {
+      const cpfCleaned = contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') : '';
+      const genderNorm = this.normalizeGenderShort(contactData.gender || '');
       return {
         customer_id: String(contactData.customer_id),
         client_type: contactData.client_type,
         email: (contactData.email || '').trim().toLowerCase(),
-        cpf: contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') || null : null,
-        first_name: contactData.first_name || null,
-        last_name: contactData.last_name || null,
-        phone: contactData.phone || null,
-        mobile: contactData.mobile || null,
-        gender: this.normalizeGenderShort(contactData.gender || '') || null,
-        address: contactData.address || null,
-        city: contactData.city || null,
-        state: contactData.state || null,
+        ...(cpfCleaned ? { cpf: cpfCleaned } : {}),
+        ...(contactData.first_name ? { first_name: contactData.first_name } : {}),
+        ...(contactData.last_name ? { last_name: contactData.last_name } : {}),
+        ...(contactData.phone ? { phone: contactData.phone } : {}),
+        ...(contactData.mobile ? { mobile: contactData.mobile } : {}),
+        ...(genderNorm ? { gender: genderNorm } : {}),
+        ...(contactData.address ? { address: contactData.address } : {}),
+        ...(contactData.city ? { city: contactData.city } : {}),
+        ...(contactData.state ? { state: contactData.state } : {}),
         country: this.normalizeCountry(contactData.country),
-        postal_code: contactData.postal_code || null,
+        ...(contactData.postal_code ? { postal_code: contactData.postal_code } : {}),
         opt_in: contactData.opt_in !== undefined ? contactData.opt_in : true
       };
     }
