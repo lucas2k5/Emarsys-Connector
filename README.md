@@ -513,29 +513,84 @@ VTEX Master Data (cliente criado/atualizado)
                       └─ Excedeu → dead (alerta crítico)
 ```
 
-### Payload do Webhook
+### Payload de Entrada (VTEX → conector)
+
+O único campo obrigatório é `email`. Todos os outros são opcionais.
 
 ```json
 {
-  "customer_id": "a3f8c2e1d94b76f0e5a1c3d2b8f4e9a7c6d1b2e3f5a0c4d7e8b9f2a1c3e6d4",
   "client_type": "hope",
-  "email": "cliente@email.com",
-  "cpf": "38439322113",
-  "first_name": "Gabriel",
-  "last_name": "Lima",
+  "email": "cliente@exemplo.com",
+  "cpf": "42570399817",
+  "customer_id": "42570399817",
+  "first_name": "Wesley",
+  "last_name": "Lopes",
   "phone": "+551133334444",
-  "mobile": "+5511999998888",
+  "mobile": "+5511917127262",
   "gender": "M",
-  "address": "Avenida Paulista, 1000",
+  "address": "Rua X, 123, Ap 45",
   "city": "São Paulo",
   "state": "SP",
   "country": 24,
-  "postal_code": "01310-100",
+  "postal_code": "04709-011",
   "opt_in": true
 }
 ```
 
-> Campos opcionais enviam `null` quando não preenchidos. `country` deve sempre ser `24` (código Emarsys para Brasil) — o conector atende exclusivamente clientes brasileiros.
+### Transformação aplicada pelo conector
+
+O conector **não passa o payload direto** — aplica a mesma lógica do delta sync de clientes antes de entregar ao webhook de saída:
+
+| Campo saída | Regra |
+|---|---|
+| `customer_id` | `cpf` (só dígitos) se disponível; senão `email` — **ignora o `customer_id` recebido** |
+| `email` | lowercase + trim |
+| `cpf` | somente dígitos (`cleanDocument`) — omitido se vazio |
+| `first_name` / `last_name` | passados diretamente — omitidos se vazios |
+| `phone` / `mobile` | passados diretamente — omitidos se vazios |
+| `gender` | normalizado para `M` ou `F` — omitido se vazio |
+| `address` / `city` / `state` / `postal_code` | passados diretamente — omitidos se vazios |
+| `country` | sempre `24` (Brasil fixo — código Emarsys) |
+| `opt_in` | `true` só se explicitamente verdadeiro; padrão `false`. Aceita `opt_in` ou `optin` |
+
+> **Campos com valor `null` ou ausentes não são enviados** ao webhook de saída — o clients-connector usa Zod com `z.string().min(1).optional()` que rejeita `null`.
+
+### Payload de Saída (conector → webhook Emarsys)
+
+**Cliente completo (com CPF):**
+
+```json
+{
+  "customer_id": "42570399817",
+  "client_type": "hope",
+  "email": "cliente@exemplo.com",
+  "cpf": "42570399817",
+  "first_name": "Wesley",
+  "last_name": "Lopes",
+  "phone": "+551133334444",
+  "mobile": "+5511917127262",
+  "gender": "M",
+  "address": "Rua X, 123, Ap 45",
+  "city": "São Paulo",
+  "state": "SP",
+  "country": 24,
+  "postal_code": "04709-011",
+  "opt_in": true
+}
+```
+
+**Lead (sem CPF):**
+
+```json
+{
+  "customer_id": "lead@exemplo.com",
+  "client_type": "hope",
+  "email": "lead@exemplo.com",
+  "first_name": "Ana",
+  "country": 24,
+  "opt_in": false
+}
+```
 
 ### Configuração
 
