@@ -353,7 +353,7 @@ class ContactWebhookService {
 
     // Monta headers
     const headers = {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/json; charset=utf-8',
       'Accept': 'application/json',
       'ngrok-skip-browser-warning': 'true'
     };
