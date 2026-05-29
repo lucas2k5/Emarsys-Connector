@@ -267,7 +267,7 @@ class ContactWebhookService {
         ...(cpfCleaned ? { cpf: cpfCleaned } : {}),
         ...(contactData.first_name ? { first_name: contactData.first_name } : {}),
         ...(contactData.last_name  ? { last_name:  contactData.last_name  } : {}),
-        bday,
+        ...(bday ? { bday } : {}),
         ...(contactData.phone      ? { phone:      contactData.phone      } : {}),
         ...(contactData.mobile     ? { mobile:     contactData.mobile     } : {}),
         ...(genderNorm             ? { gender:     genderNorm             } : {}),
