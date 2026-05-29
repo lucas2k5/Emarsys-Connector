@@ -259,7 +259,7 @@ class ContactWebhookService {
       const cpfCleaned = contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') : '';
       const genderNorm = this.normalizeGenderShort(contactData.gender || '');
       const customer_id = cpfCleaned || email;
-      const bday = this.normalizeDate(contactData.bday || contactData.birth_date || contactData.birthDate) || null;
+      const bday = this.normalizeDate(contactData.bday || contactData.birth_date || contactData.birthDate || contactData.date_of_birth) || null;
       return {
         customer_id,
         client_type: contactData.client_type,
