@@ -101,6 +101,7 @@ function createFetcher(baseUrl, appKey, appToken, clientType) {
       cpf:          cpf   || null,
       first_name:   client.firstName || null,
       last_name:    client.lastName  || null,
+      bday:         contactWebhookService.normalizeDate(client.birthDate) || null,
       phone:        contactWebhookService.normalizePhone(client.homePhone) || null,
       mobile:       contactWebhookService.normalizePhone(client.phone)     || null,
       gender:       contactWebhookService.normalizeGenderShort(client.gender) || null,

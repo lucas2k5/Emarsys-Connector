@@ -213,6 +213,19 @@ class ContactWebhookService {
   }
 
   /**
+   * Detecta erro semântico no body de uma resposta 2xx do downstream.
+   * O downstream pode retornar HTTP 200 com body de erro.
+   * @param {*} body
+   * @returns {string|null} mensagem de erro ou null se OK
+   */
+  _detectDownstreamBodyError(body) {
+    if (!body || typeof body !== 'object') return null;
+    if (body.success === false) return body.message || body.error || 'Downstream reportou success=false';
+    if (typeof body.message === 'string' && /^erro/i.test(body.message.trim())) return body.message;
+    return null;
+  }
+
+  /**
    * Normaliza data para formato YYYY-MM-DD
    * @param {string} dateInput
    * @returns {string}
@@ -246,6 +259,7 @@ class ContactWebhookService {
       const cpfCleaned = contactData.cpf != null ? String(contactData.cpf).replace(/[^\d]/g, '') : '';
       const genderNorm = this.normalizeGenderShort(contactData.gender || '');
       const customer_id = cpfCleaned || email;
+      const bday = this.normalizeDate(contactData.bday || contactData.birth_date || contactData.birthDate) || null;
       return {
         customer_id,
         client_type: contactData.client_type,
@@ -253,6 +267,7 @@ class ContactWebhookService {
         ...(cpfCleaned ? { cpf: cpfCleaned } : {}),
         ...(contactData.first_name ? { first_name: contactData.first_name } : {}),
         ...(contactData.last_name  ? { last_name:  contactData.last_name  } : {}),
+        bday,
         ...(contactData.phone      ? { phone:      contactData.phone      } : {}),
         ...(contactData.mobile     ? { mobile:     contactData.mobile     } : {}),
         ...(genderNorm             ? { gender:     genderNorm             } : {}),
@@ -381,6 +396,23 @@ class ContactWebhookService {
           headers,
           timeout: this.timeout
         });
+
+        // Detecta erro semântico: downstream retorna 2xx mas body indica falha
+        const bodyErrorMsg = this._detectDownstreamBodyError(response.data);
+        if (bodyErrorMsg) {
+          logger.warn(`[ContactWebhook] Downstream retornou 2xx mas body indica erro (tentativa ${attempt}/${maxRetries})`, {
+            contactId,
+            email: payload.email,
+            status: response.status,
+            bodyError: bodyErrorMsg
+          });
+          lastError = new Error(bodyErrorMsg);
+          if (attempt < maxRetries) {
+            const delay = retryDelay * Math.pow(2, attempt - 1);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+          continue;
+        }
 
         console.log(`✅ [ContactWebhook] Contato enviado com sucesso (status: ${response.status})`);
 
