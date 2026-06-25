@@ -918,8 +918,9 @@ router.get('/orders-extract-all', async (req, res) => {
                         order_status: orderDetail.status || orderDetail.orderStatus || null,
                         s_channel_source: orderDetail.salesChannel || orderDetail.channel || 'web',
                         s_store_id: 'hope',
-                        s_sales_channel: orderDetail.salesChannel || 'ecommerce',
-                        s_discount: itemDiscount // Desconto calculado dos priceTags
+                        s_sales_channel: 'Online',
+                        s_canal: (() => { const MAP = {'1':'Conta Principal','4':'TikTok','5':'APP','8':'Mercado Livre'}; return MAP[String(orderDetail.salesChannel||'')] || String(orderDetail.salesChannel||''); })(),
+                        s_discount: itemDiscount
                       });
                     }
                   } else {

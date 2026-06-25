@@ -124,7 +124,6 @@ function mapOrderToRows(order, tag) {
   const rawChannel   = String(order.salesChannel || '');
   const salesChannel = SALES_CHANNEL_MAP[rawChannel] || rawChannel;
   const storeId      = order.hostname || '';
-  const canal        = 'Online';
   const loja         = order.hostname || '';
 
   const pagamento = order.paymentData
@@ -145,9 +144,9 @@ function mapOrderToRows(order, tag) {
       timestamp:        timestamp,
       customer:         customer,
       quantity:         item.quantity,
-      s_sales_channel: salesChannel,
+      s_sales_channel: 'Online',
       s_store_id:       storeId,
-      s_canal:          canal,
+      s_canal:          salesChannel,
       s_loja:           loja,
       s_tipo_pagamento: pagamento,
       s_cupom:          cupom,

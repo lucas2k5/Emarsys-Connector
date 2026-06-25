@@ -747,10 +747,11 @@ class OrdersSyncService {
   async getPendingSyncOrders(options = {}) {
     try {
       await this.initDatabase();
-      
-      // SEMPRE usar listPendingSync para garantir que apenas pedidos pendentes (isSync = 0) sejam retornados
-      // Mesmo se período for especificado, filtra por isSync = 0
-      return this.db.listPendingSync(options);
+
+      const STORE_ID_MAP = { hope: 'hopelingerie', resort: 'lojahr' };
+      const storeId = STORE_ID_MAP[this.store] || null;
+
+      return this.db.listPendingSync({ ...options, storeId });
     } catch (error) {
       console.error('❌ Erro ao buscar pedidos pendentes:', error);
       return [];
@@ -946,7 +947,7 @@ class OrdersSyncService {
           price: finalPrice,
           s_channel_source: order.s_channel_source || order.marketplace?.name || order.affiliateId || 'web',
           s_store_id: order.s_store_id || 'hope',
-          s_sales_channel: order.s_sales_channel || 'ecommerce',
+          s_sales_channel: 'Online',
           s_discount: discount,
           s_canal: order.s_canal || null,
           s_loja: order.s_loja || null,
