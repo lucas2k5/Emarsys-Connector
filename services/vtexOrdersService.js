@@ -2883,7 +2883,7 @@ class VtexOrdersService {
       
       const csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
         ...options,
-        autoSend: true, 
+        autoSend: false,
         startDate: options.dataInicial,
         endDate: options.dataFinal
       });
