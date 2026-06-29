@@ -13,7 +13,7 @@ const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://www.hopelingerie.c
 const RESORT_BASE_URL       = process.env.RESORT_VTEX_BASE_URL   || '';
 const RESORT_APP_KEY        = process.env.RESORT_VTEX_APP_KEY    || '';
 const RESORT_APP_TOKEN      = process.env.RESORT_VTEX_APP_TOKEN  || '';
-const RESORT_STORE_BASE_URL = process.env.RESORT_STORE_BASE_URL  || 'https://www.lojahr.com.br';
+const RESORT_STORE_BASE_URL = process.env.RESORT_STORE_BASE_URL  || 'https://www.hoperesort.com.br';
 
 const CATEGORIAS_INVALIDAS = ['INATIVO', 'OUT'];
 
