@@ -154,8 +154,11 @@ async function fetchAllSkuIds(baseUrl, headers, tag) {
 }
 
 // PASSO 2 — products/search em lotes de 50
-function mapSearchProductToRows(product) {
+function mapSearchProductToRows(product, storeBaseUrl) {
   if (!product.items || !Array.isArray(product.items)) return [];
+  const link = product.linkText
+    ? storeBaseUrl + '/' + product.linkText + '/p'
+    : product.link || '';
   return product.items
     .map((sku) => {
       const offer = sku.sellers?.[0]?.commertialOffer;
@@ -164,7 +167,7 @@ function mapSearchProductToRows(product) {
       return {
         item:         refId,
         title:        product.productName || '',
-        link:         product.link || '',
+        link:         link,
         image:        encodeImageUrl(sku.images?.[0]?.imageUrl || ''),
         category:     formatCategoryPath(product.categories?.[0]),
         available:    String(offer.IsAvailable ?? false),
@@ -180,7 +183,7 @@ function mapSearchProductToRows(product) {
     .filter(Boolean);
 }
 
-async function fetchActiveProductRows(allSkuIds, baseUrl, headers, tag) {
+async function fetchActiveProductRows(allSkuIds, baseUrl, headers, storeBaseUrl, tag) {
   const batches = chunkArray(allSkuIds, CONFIG.SEARCH_BATCH_SIZE);
   const rows = [];
   const totalBatches = batches.length;
@@ -195,7 +198,7 @@ async function fetchActiveProductRows(allSkuIds, baseUrl, headers, tag) {
     try {
       const products = await fetchWithRetry(url, { headers }, 0, tag);
       if (Array.isArray(products)) {
-        for (const product of products) rows.push(...mapSearchProductToRows(product));
+        for (const product of products) rows.push(...mapSearchProductToRows(product, storeBaseUrl));
       }
     } catch (err) {
       console.warn(`[${tag}] Lote search ${i + 1}/${totalBatches} falhou: ${err.message}`);
@@ -270,7 +273,7 @@ async function fetchInactiveProductRows(inactiveSkuIds, baseUrl, headers, storeB
 // Lógica compartilhada — recebe credenciais como parâmetro
 async function _fetchAllProductRows({ baseUrl, headers, storeBaseUrl, tag }) {
   const allSkuIds  = await fetchAllSkuIds(baseUrl, headers, tag);
-  const activeRows = await fetchActiveProductRows(allSkuIds, baseUrl, headers, tag);
+  const activeRows = await fetchActiveProductRows(allSkuIds, baseUrl, headers, storeBaseUrl, tag);
 
   const returnedSkuIds = new Set(activeRows.map((r) => String(r.item)));
   const inactiveSkuIds = allSkuIds.filter((id) => !returnedSkuIds.has(String(id)));
