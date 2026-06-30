@@ -1533,7 +1533,7 @@ class OrdersSyncService {
       if (transformedOrders.emarsysData && transformedOrders.emarsysData.length > 0) {
         csvResult = await this.generateCsvFromOrders(transformedOrders.emarsysData, {
           ...options,
-          autoSend: true,
+          autoSend: process.env.EMARSYS_AUTO_SEND !== 'false',
           store: this.store,
           startDate: options.dataInicial,
           endDate: options.dataFinal,
